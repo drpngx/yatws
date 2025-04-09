@@ -10,6 +10,9 @@ rust_library(
         "src/contract.rs",
         "src/order.rs",
         "src/account.rs",
+        "src/protocol.rs",
+        "src/protocol_encoder.rs",
+        "src/protocol_decoder.rs",
     ],
     edition = "2021",
     proc_macro_deps = [
@@ -18,6 +21,7 @@ rust_library(
     deps = [
         "@crates//:chrono",
         "@crates//:thiserror",
+        "@crates//:num-traits",
         "@crates//:serde",
         "@crates//:bincode",
         "@crates//:tokio",

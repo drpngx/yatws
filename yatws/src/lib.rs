@@ -15,6 +15,10 @@ mod base;
 mod contract;
 mod order;
 mod account;
+mod protocol;
+mod protocol_encoder;
+mod protocol_decoder;
+
 
 // Re-export the core data structures
 pub use base::*;

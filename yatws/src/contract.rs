@@ -3,143 +3,10 @@
 
 use chrono::{DateTime, Utc};
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
-/// A financial instrument contract
-#[derive(Debug, Clone, PartialEq)]
-pub struct Contract {
-  pub con_id: i32,               // Contract ID
-  pub symbol: String,            // Symbol
-  pub sec_type: SecurityType,    // Security type
-  pub exchange: String,          // Exchange
-  pub currency: String,          // Currency
-  pub local_symbol: Option<String>, // Local symbol
-  pub primary_exchange: Option<String>, // Primary exchange
-  pub include_expired: bool,     // Include expired contracts
-
-  // Optional fields for specific security types
-  pub strike: Option<f64>,       // Option strike price
-  pub expiry: Option<DateTime<Utc>>, // Option/Future expiry
-  pub right: Option<OptionRight>, // Option right
-  pub multiplier: Option<String>, // Contract multiplier
-
-  // Bond specific fields
-  pub issuer: Option<String>,    // Bond issuer
-  pub cusip: Option<String>,     // Bond CUSIP
-
-  // Combo specific fields
-  pub combo_legs: Vec<ComboLeg>, // Combo legs
-}
-
-impl Contract {
-  /// Create a new stock contract
-  pub fn stock(symbol: &str) -> Self {
-    Self::stock_with_exchange(symbol, "SMART", "USD")
-  }
-
-  /// Create a new stock contract with specified exchange and currency
-  pub fn stock_with_exchange(symbol: &str, exchange: &str, currency: &str) -> Self {
-    Contract {
-      con_id: 0,
-      symbol: symbol.to_string(),
-      sec_type: SecurityType::Stock,
-      exchange: exchange.to_string(),
-      currency: currency.to_string(),
-      local_symbol: None,
-      primary_exchange: None,
-      include_expired: false,
-      strike: None,
-      expiry: None,
-      right: None,
-      multiplier: None,
-      issuer: None,
-      cusip: None,
-      combo_legs: Vec::new(),
-    }
-  }
-
-  /// Create a new option contract
-  pub fn option(
-    symbol: &str,
-    expiry: DateTime<Utc>,
-    strike: f64,
-    right: OptionRight,
-    exchange: &str,
-    currency: &str,
-  ) -> Self {
-    Contract {
-      con_id: 0,
-      symbol: symbol.to_string(),
-      sec_type: SecurityType::Option,
-      exchange: exchange.to_string(),
-      currency: currency.to_string(),
-      local_symbol: None,
-      primary_exchange: None,
-      include_expired: false,
-      strike: Some(strike),
-      expiry: Some(expiry),
-      right: Some(right),
-      multiplier: Some("100".to_string()), // Default for US options
-      issuer: None,
-      cusip: None,
-      combo_legs: Vec::new(),
-    }
-  }
-
-  /// Create a new future contract
-  pub fn future(
-    symbol: &str,
-    expiry: DateTime<Utc>,
-    exchange: &str,
-    currency: &str,
-  ) -> Self {
-    Contract {
-      con_id: 0,
-      symbol: symbol.to_string(),
-      sec_type: SecurityType::Future,
-      exchange: exchange.to_string(),
-      currency: currency.to_string(),
-      local_symbol: None,
-      primary_exchange: None,
-      include_expired: false,
-      strike: None,
-      expiry: Some(expiry),
-      right: None,
-      multiplier: None,
-      issuer: None,
-      cusip: None,
-      combo_legs: Vec::new(),
-    }
-  }
-
-  /// Create a new forex contract
-  pub fn forex(symbol_pair: &str) -> Self {
-    let currency_pair: Vec<&str> = symbol_pair.split('/').collect();
-    let base = currency_pair.get(0).cloned().unwrap_or("USD");
-    let quote = currency_pair.get(1).cloned().unwrap_or("USD");
-
-    Contract {
-      con_id: 0,
-      symbol: base.to_string(),
-      sec_type: SecurityType::Forex,
-      exchange: "IDEALPRO".to_string(),
-      currency: quote.to_string(),
-      local_symbol: None,
-      primary_exchange: None,
-      include_expired: false,
-      strike: None,
-      expiry: None,
-      right: None,
-      multiplier: None,
-      issuer: None,
-      cusip: None,
-      combo_legs: Vec::new(),
-    }
-  }
-}
-
-/// Security type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SecurityType {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecType {
   Stock,
   Option,
   Future,
@@ -153,24 +20,362 @@ pub enum SecurityType {
   Combo,
 }
 
-impl fmt::Display for SecurityType {
+impl fmt::Display for SecType {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let s = match self {
-      SecurityType::Stock => "STK",
-      SecurityType::Option => "OPT",
-      SecurityType::Future => "FUT",
-      SecurityType::Index => "IND",
-      SecurityType::FutureOption => "FOP",
-      SecurityType::Forex => "CASH",
-      SecurityType::Commodity => "CMDTY",
-      SecurityType::Bond => "BOND",
-      SecurityType::Warrant => "WAR",
-      SecurityType::Fund => "FUND",
-      SecurityType::Combo => "BAG",
+      SecType::Stock => "STK",
+      SecType::Option => "OPT",
+      SecType::Future => "FUT",
+      SecType::Index => "IND",
+      SecType::FutureOption => "FOP",
+      SecType::Forex => "CASH",
+      SecType::Commodity => "CMDTY",
+      SecType::Bond => "BOND",
+      SecType::Warrant => "WAR",
+      SecType::Fund => "FUND",
+      SecType::Combo => "BAG",
     };
     write!(f, "{}", s)
   }
 }
+
+impl std::str::FromStr for SecType {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "STK" => Ok(SecType::Stock),
+      "OPT" => Ok(SecType::Option),
+      "FUT" => Ok(SecType::Future),
+      "IND" => Ok(SecType::Index),
+      "FOP" => Ok(SecType::FutureOption),
+      "CASH" => Ok(SecType::Forex),
+      "CMDTY" => Ok(SecType::Commodity),
+      "BOND" => Ok(SecType::Bond),
+      "WAR" => Ok(SecType::Warrant),
+      "FUND" => Ok(SecType::Fund),
+      "BAG" => Ok(SecType::Combo),
+      _ => Err(format!("Unknown security type: {}", s)),
+    }
+  }
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecIdType {
+  Cusip,
+  Sedol,
+  Isin,
+  Ric,
+}
+
+impl fmt::Display for SecIdType {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    let s = match self {
+      SecIdType::Cusip => "CUSIP",
+      SecIdType::Sedol => "SEDOL",
+      SecIdType::Isin => "ISIN",
+      SecIdType::Ric => "RIC",
+    };
+    write!(f, "{}", s)
+  }
+}
+
+impl std::str::FromStr for SecIdType {
+  type Err = String;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "CUSIP" => Ok(SecIdType::Cusip),
+      "SEDOL" => Ok(SecIdType::Sedol),
+      "ISIN" => Ok(SecIdType::Isin),
+      "RIC" => Ok(SecIdType::Ric),
+      _ => Err(format!("Unknown security ID type: {}", s)),
+    }
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ComboLeg {
+  pub con_id: i32,
+  pub ratio: i32,
+  pub action: String,  // "BUY" or "SELL"
+  pub exchange: String,
+  pub open_close: i32,
+  pub short_sale_slot: i32,
+  pub designated_location: String,
+  pub exempt_code: i32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeltaNeutralContract {
+  pub con_id: i32,
+  pub delta: f64,
+  pub price: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Contract {
+  pub con_id: i32,
+  pub symbol: String,
+  pub sec_type: SecType,
+  pub last_trade_date_or_contract_month: Option<String>,
+  pub last_trade_date: Option<String>,
+  pub strike: Option<f64>,
+  pub right: Option<OptionRight>,
+  pub multiplier: Option<String>,
+  pub exchange: String,
+  pub primary_exchange: Option<String>,
+  pub currency: String,
+  pub local_symbol: Option<String>,
+  pub trading_class: Option<String>,
+  pub sec_id_type: Option<SecIdType>,
+  pub sec_id: Option<String>,
+  pub description: Option<String>,
+  pub issuer_id: Option<String>,
+  pub delta_neutral_contract: Option<DeltaNeutralContract>,
+  pub include_expired: bool,
+  pub combo_legs_descrip: Option<String>,
+  pub combo_legs: Vec<ComboLeg>,
+}
+
+impl Contract {
+  pub fn new() -> Self {
+    Self {
+      con_id: 0,
+      symbol: String::new(),
+      sec_type: SecType::Stock,
+      last_trade_date_or_contract_month: None,
+      last_trade_date: None,
+      strike: None,
+      right: None,
+      multiplier: None,
+      exchange: String::new(),
+      primary_exchange: None,
+      currency: String::new(),
+      local_symbol: None,
+      trading_class: None,
+      sec_id_type: None,
+      sec_id: None,
+      description: None,
+      issuer_id: None,
+      delta_neutral_contract: None,
+      include_expired: false,
+      combo_legs_descrip: None,
+      combo_legs: Vec::new(),
+    }
+  }
+
+  /// Create a new stock contract
+  pub fn stock(symbol: &str) -> Self {
+    Self::stock_with_exchange(symbol, "SMART", "USD")
+  }
+
+  /// Create a new stock contract with specified exchange and currency
+  pub fn stock_with_exchange(symbol: &str, exchange: &str, currency: &str) -> Self {
+    Contract {
+      con_id: 0,
+      symbol: symbol.to_string(),
+      sec_type: SecType::Stock,
+      exchange: exchange.to_string(),
+      currency: currency.to_string(),
+      last_trade_date_or_contract_month: None,
+      last_trade_date: None,
+      strike: None,
+      right: None,
+      multiplier: None,
+      primary_exchange: None,
+      local_symbol: None,
+      trading_class: None,
+      sec_id_type: None,
+      sec_id: None,
+      description: None,
+      issuer_id: None,
+      delta_neutral_contract: None,
+      include_expired: false,
+      combo_legs_descrip: None,
+      combo_legs: Vec::new(),
+    }
+  }
+
+  /// Create a new option contract
+  pub fn option(
+    symbol: &str,
+    expiry: &str,
+    strike: f64,
+    right: OptionRight,
+    exchange: &str,
+    currency: &str,
+  ) -> Self {
+    Contract {
+      con_id: 0,
+      symbol: symbol.to_string(),
+      sec_type: SecType::Option,
+      last_trade_date_or_contract_month: Some(expiry.to_string()),
+      exchange: exchange.to_string(),
+      currency: currency.to_string(),
+      strike: Some(strike),
+      right: Some(right),
+      multiplier: Some("100".to_string()), // Default for US options
+      last_trade_date: None,
+      primary_exchange: None,
+      local_symbol: None,
+      trading_class: None,
+      sec_id_type: None,
+      sec_id: None,
+      description: None,
+      issuer_id: None,
+      delta_neutral_contract: None,
+      include_expired: false,
+      combo_legs_descrip: None,
+      combo_legs: Vec::new(),
+    }
+  }
+
+  /// Is this a combo contract?
+  pub fn is_combo(&self) -> bool {
+    !self.combo_legs.is_empty()
+  }
+
+  /// Get a text description that can be used for display
+  pub fn text_description(&self) -> String {
+    let mut sb = String::new();
+
+    if self.is_combo() {
+      for (i, leg) in self.combo_legs.iter().enumerate() {
+        if i > 0 {
+          sb.push_str("/");
+        }
+        sb.push_str(&format!("{}", leg.con_id));
+      }
+    } else {
+      sb.push_str(&self.symbol);
+      app(&mut sb, &self.sec_type.to_string());
+      app(&mut sb, &self.exchange);
+
+      if self.exchange == "SMART" && self.primary_exchange.is_some() {
+        app(&mut sb, &self.primary_exchange.as_ref().unwrap());
+      }
+
+      if let Some(date) = &self.last_trade_date_or_contract_month {
+        app(&mut sb, date);
+      }
+
+      if let Some(date) = &self.last_trade_date {
+        app(&mut sb, date);
+      }
+
+      if let Some(strike) = &self.strike {
+        app(&mut sb, &strike.to_string());
+      }
+
+      if let Some(right) = &self.right {
+        app(&mut sb, &right.to_string());
+      }
+
+      app(&mut sb, &self.currency);
+    }
+
+    sb
+  }
+}
+
+impl PartialEq for Contract {
+  fn eq(&self, other: &Self) -> bool {
+    // Start with basic fields
+    if self.con_id != other.con_id {
+      return false;
+    }
+
+    if self.sec_type != other.sec_type {
+      return false;
+    }
+
+    if self.symbol != other.symbol ||
+      self.exchange != other.exchange ||
+      self.primary_exchange != other.primary_exchange ||
+      self.currency != other.currency {
+        return false;
+      }
+
+    // Skip additional fields for BOND
+    if self.sec_type != SecType::Bond {
+      if self.strike != other.strike {
+        return false;
+      }
+
+      if self.last_trade_date_or_contract_month != other.last_trade_date_or_contract_month ||
+        self.last_trade_date != other.last_trade_date ||
+        self.right != other.right ||
+        self.multiplier != other.multiplier ||
+        self.local_symbol != other.local_symbol ||
+        self.trading_class != other.trading_class {
+          return false;
+        }
+    }
+
+    if self.sec_id_type != other.sec_id_type {
+      return false;
+    }
+
+    if self.sec_id != other.sec_id {
+      return false;
+    }
+
+    // Compare combo legs
+    if self.combo_legs.len() != other.combo_legs.len() {
+      return false;
+    }
+
+    // This is unordered comparison, as in the Java code
+    for leg in &self.combo_legs {
+      if !other.combo_legs.iter().any(|other_leg| other_leg == leg) {
+        return false;
+      }
+    }
+
+    // Compare delta neutral contract
+    match (&self.delta_neutral_contract, &other.delta_neutral_contract) {
+      (Some(a), Some(b)) => if a != b { return false; },
+      (None, None) => {},
+      _ => return false,
+    }
+
+    if self.description != other.description {
+      return false;
+    }
+
+    if self.issuer_id != other.issuer_id {
+      return false;
+    }
+
+    true
+  }
+}
+
+impl Eq for Contract {}
+
+impl Hash for Contract {
+  fn hash<H: Hasher>(&self, state: &mut H) {
+    // Use a few fields only as a compromise between performance and hashCode quality.
+    self.con_id.hash(state);
+    if !self.symbol.is_empty() {
+      self.symbol.hash(state);
+    }
+    if let Some(strike) = self.strike {
+      strike.to_bits().hash(state);
+    }
+  }
+}
+
+// Helper function for text_description
+fn app(buf: &mut String, obj: &str) {
+  if !obj.is_empty() {
+    buf.push(' ');
+    buf.push_str(obj);
+  }
+}
+
 
 /// Option right enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,14 +393,6 @@ impl fmt::Display for OptionRight {
   }
 }
 
-/// A combo leg for a combo contract
-#[derive(Debug, Clone, PartialEq)]
-pub struct ComboLeg {
-  pub con_id: i32,
-  pub ratio: i32,
-  pub action: String,  // "BUY" or "SELL"
-  pub exchange: String,
-}
 
 /// Detailed contract information
 #[derive(Debug, Clone)]
@@ -218,6 +415,15 @@ pub struct ContractDetails {
   pub ev_rule: String,
   pub ev_multiplier: f64,
   pub sec_id_list: Vec<(String, String)>, // List of (sec_id_type, sec_id)
+  pub min_size: f64,
+  pub size_increment: f64,
+  pub suggested_size_increment: f64,
+  pub aggGroup: Option<i32>,
+  pub market_rule_ids: String,
+  pub fund_name: Option<String>,
+  pub fund_family: Option<String>,
+  pub fund_type: Option<String>,
+  pub ineligibility_reason_list: Vec<(String, String)>,
   pub bond_details: Option<BondDetails>,
 }
 
@@ -225,8 +431,8 @@ pub struct ContractDetails {
 #[derive(Debug, Clone)]
 pub struct BondDetails {
   pub cusip: String,
-  pub maturity: DateTime<Utc>,
-  pub issue_date: DateTime<Utc>,
+  pub maturity: String,
+  pub issue_date: String,
   pub coupon: f64,
   pub next_option_date: Option<DateTime<Utc>>,
   pub next_option_type: Option<String>,
@@ -238,6 +444,62 @@ pub struct BondDetails {
   pub bond_type: String,
   pub coupon_type: String,
   pub duration: f64,
+}
+
+impl Default for ContractDetails {
+  fn default() -> Self {
+    ContractDetails {
+      contract: Contract::new(),
+      market_name: String::new(),
+      min_tick: 0.0,
+      price_magnifier: 1,
+      order_types: String::new(),
+      valid_exchanges: String::new(),
+      underlying_con_id: 0,
+      long_name: String::new(),
+      contract_month: String::new(),
+      industry: String::new(),
+      category: String::new(),
+      subcategory: String::new(),
+      time_zone_id: String::new(),
+      trading_hours: String::new(),
+      liquid_hours: String::new(),
+      ev_rule: String::new(),
+      ev_multiplier: 0.0,
+      sec_id_list: Vec::new(),
+      bond_details: None,
+      min_size: 0.0,
+      size_increment: 0.0,
+      suggested_size_increment: 0.0,
+      aggGroup: None,
+      market_rule_ids: String::new(),
+      fund_name: None,
+      fund_family: None,
+      fund_type: None,
+      ineligibility_reason_list: Vec::new(),
+    }
+  }
+}
+
+impl Default for BondDetails {
+  fn default() -> Self {
+    BondDetails {
+      cusip: String::new(),
+      maturity: String::new(),
+      issue_date: String::new(),
+      coupon: 0.0,
+      next_option_date: None,
+      next_option_type: None,
+      callable: false,
+      puttable: false,
+      convertible: false,
+      ratings: String::new(),
+      desc_append: String::new(),
+      bond_type: String::new(),
+      coupon_type: String::new(),
+      duration: 0.0,
+    }
+  }
 }
 
 /// Bar data for historical data requests
