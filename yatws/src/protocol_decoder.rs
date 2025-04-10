@@ -3,8 +3,10 @@
 
 use crate::base::IBKRError;
 use crate::contract::{Contract, ContractDetails, OptionRight, SecType, SecIdType, ComboLeg, Bar, BarSize, WhatToShow};
-use crate::order::{Order, OrderRequest, OrderState, OrderStatus, OrderType, OrderSide, TimeInForce, Execution};
-use crate::account::{AccountInfo, AccountValue, Position, MarketDataSubscription, MarketDataType, NewsArticle};
+use crate::order::{Order, OrderRequest, OrderState, OrderStatus, OrderType, OrderSide, TimeInForce};
+use crate::account::{AccountInfo, AccountValue, Execution, Position};
+use crate::data::MarketDataType;
+use crate::news::NewsArticle;
 use crate::min_server_ver::min_server_ver;
 
 use log::{debug, warn, error, trace};

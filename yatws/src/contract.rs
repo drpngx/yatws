@@ -99,12 +99,13 @@ impl std::str::FromStr for SecIdType {
 pub struct ComboLeg {
   pub con_id: i32,
   pub ratio: i32,
-  pub action: String,  // "BUY" or "SELL"
+  pub action: String,
   pub exchange: String,
-  pub open_close: i32,
-  pub short_sale_slot: i32,
+  pub open_close: i32, // 0=Same, 1=Open, 2=Close, 3=Unknown
+  pub short_sale_slot: i32, // 1=Retail, 2=Institution
   pub designated_location: String,
   pub exempt_code: i32,
+  pub price: Option<f64>, // Added optional price per leg
 }
 
 #[derive(Debug, Clone, PartialEq)]

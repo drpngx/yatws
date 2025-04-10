@@ -524,21 +524,6 @@ impl fmt::Display for OrderStatus {
   }
 }
 
-/// Trade execution information
-#[derive(Debug, Clone)]
-pub struct Execution {
-  pub execution_id: String,
-  pub order_id: String,
-  pub symbol: String,
-  pub side: OrderSide,
-  pub quantity: f64,
-  pub price: f64,
-  pub time: DateTime<Utc>,
-  pub commission: f64,
-  pub exchange: String,
-  pub account: String,
-}
-
 /// Observer trait for order notifications
 pub trait OrderObserver: Send + Sync {
   fn on_order_update(&self, order: &Order);

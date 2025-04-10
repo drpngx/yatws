@@ -290,8 +290,6 @@ pub struct AccountManager {
     account_state: RwLock<AccountState>,
     positions: RwLock<HashMap<String, Arc<RwLock<Position>>>>,
     observers: RwLock<Vec<Box<dyn AccountObserver + Send + Sync>>>,
-    refresh_interval: AtomicU64,
-    background_updater: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl AccountManager {
@@ -301,8 +299,6 @@ impl AccountManager {
             account_state: RwLock::new(AccountState::default()),
             positions: RwLock::new(HashMap::new()),
             observers: RwLock::new(Vec::new()),
-            refresh_interval: AtomicU64::new(60), // Default 60 seconds
-            background_updater: Mutex::new(None),
         }
     }
 
@@ -326,10 +322,6 @@ impl AccountManager {
     // Subscription methods
     pub fn add_observer<T: AccountObserver + Send + Sync + 'static>(&self, observer: T) -> usize;
     pub fn remove_observer(&self, observer_id: usize) -> bool;
-
-    // Background update control
-    pub fn start_background_updates(&self) -> Result<(), IBKRError>;
-    pub fn stop_background_updates(&self) -> Result<(), IBKRError>;
 
     // Manual refresh
     pub fn refresh(&self) -> Result<(), IBKRError>;

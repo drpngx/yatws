@@ -2,7 +2,7 @@
 // Account data structures for the IBKR API
 
 use crate::contract::Contract;
-use crate::order::Execution;
+use crate::order::OrderSide;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
@@ -55,118 +55,42 @@ pub struct Position {
   pub updated_at: DateTime<Utc>,
 }
 
+/// Trade execution information
+#[derive(Debug, Clone)]
+pub struct Execution {
+  pub execution_id: String,
+  pub order_id: String,
+  pub symbol: String,
+  pub side: OrderSide,
+  pub quantity: f64,
+  pub price: f64,
+  pub time: DateTime<Utc>,
+  pub commission: f64,
+  pub exchange: String,
+  pub account: String,
+}
+
+// Dummy struct for TickAttrib if not defined
+#[derive(Debug, Clone, Default)]
+pub struct TickAttrib {
+    // Add fields as needed, e.g., can_auto_execute, past_limit, pre_open
+}
+
+// Dummy struct for CommissionReport if not defined
+#[derive(Debug, Clone, Default)]
+pub struct CommissionReport {
+    pub exec_id: String,
+    pub commission: f64,
+    pub currency: String,
+    pub realized_pnl: Option<f64>,
+    pub yield_amount: Option<f64>,
+    pub yield_redemption_date: Option<i32>, // Format?
+}
+
+
 /// Account observer trait for notifications
 pub trait AccountObserver: Send + Sync {
   fn on_account_update(&self, account_info: &AccountInfo);
   fn on_position_update(&self, position: &Position);
   fn on_execution(&self, execution: &Execution);
-}
-
-/// News article
-#[derive(Debug, Clone)]
-pub struct NewsArticle {
-  pub id: String,
-  pub time: DateTime<Utc>,
-  pub provider_code: String,
-  pub article_id: String,
-  pub headline: String,
-  pub summary: Option<String>,
-  pub content: Option<String>,
-}
-
-/// News subscription
-#[derive(Debug, Clone)]
-pub struct NewsSubscription {
-  pub id: String,
-  pub sources: Vec<String>,
-}
-
-/// News observer trait
-pub trait NewsObserver: Send + Sync {
-  fn on_news_article(&self, article: &NewsArticle);
-}
-
-/// Market data subscription
-#[derive(Debug, Clone)]
-pub struct MarketDataSubscription {
-  pub id: String,
-  pub contract: Contract,
-  pub data_types: Vec<MarketDataType>,
-  pub last_price: Option<f64>,
-  pub bid: Option<f64>,
-  pub ask: Option<f64>,
-  pub bid_size: Option<i32>,
-  pub ask_size: Option<i32>,
-  pub high: Option<f64>,
-  pub low: Option<f64>,
-  pub volume: Option<i64>,
-  pub last_timestamp: Option<DateTime<Utc>>,
-  pub halted: bool,
-}
-
-/// Market data type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarketDataType {
-  BidAsk,
-  LastPrice,
-  HighLow,
-  Volume,
-  HistoricalVolatility,
-  ImpliedVolatility,
-  OptionChain,
-  PutCallRatio,
-  DividendSchedule,
-  Fundamentals,
-  News,
-}
-
-/// Market data observer trait
-pub trait MarketDataObserver: Send + Sync {
-  fn on_price_update(&self, subscription: &MarketDataSubscription);
-}
-
-/// Request handle for async requests
-pub struct RequestHandle<T> {
-  receiver: std::sync::mpsc::Receiver<T>,
-  error: Option<crate::base::IBKRError>,
-}
-
-impl<T> RequestHandle<T> {
-  /// Create a new request handle
-  pub fn new(receiver: std::sync::mpsc::Receiver<T>) -> Self {
-    RequestHandle {
-      receiver,
-      error: None,
-    }
-  }
-
-  /// Create a new request handle with an error
-  pub fn new_error(error: crate::base::IBKRError) -> Self {
-    RequestHandle {
-      receiver: std::sync::mpsc::channel().1,
-      error: Some(error),
-    }
-  }
-
-  /// Wait for the response with a timeout
-  pub fn wait_for_response(&self, timeout: std::time::Duration) -> Result<T, crate::base::IBKRError> {
-    if let Some(ref error) = self.error {
-      return Err(error.clone());
-    }
-
-    match self.receiver.recv_timeout(timeout) {
-      Ok(response) => Ok(response),
-      Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-        Err(crate::base::IBKRError::Timeout("Request timed out".to_string()))
-      }
-      Err(_) => Err(crate::base::IBKRError::InternalError(
-        "Channel error".to_string(),
-      )),
-    }
-  }
-
-  /// Check if the response is ready
-  pub fn is_ready(&self) -> bool {
-    self.error.is_some() || self.receiver.try_recv().is_ok()
-  }
 }

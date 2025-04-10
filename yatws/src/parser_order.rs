@@ -6,7 +6,7 @@ use std::str::FromStr;
 use crate::base::IBKRError;
 use crate::protocol_dec_parser::FieldParser;
 use crate::contract::{Contract, OptionRight, SecType};
-use crate::order::{Order, OrderType, OrderSide, TimeInForce, Execution, OrderRequest};
+use crate::order::{Order, OrderType, OrderSide, TimeInForce, OrderRequest};
 use crate::min_server_ver::min_server_ver;
 
 
@@ -147,114 +147,10 @@ pub fn process_open_order(handler: &mut Box<dyn OrderHandler>, parser: &mut Fiel
   Ok(())
 }
 
-/// Process execution data message
-pub fn process_execution_data(handler: &mut Box<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
-  let version = parser.read_int()?;
-
-  let mut req_id = -1;
-  if version >= 7 {
-    req_id = parser.read_int()?;
-  }
-
-  let order_id = parser.read_int()?;
-
-  // Read contract fields
-  let mut contract = Contract::new();
-
-  if version >= 5 {
-    contract.con_id = parser.read_int()?;
-  }
-
-  contract.symbol = parser.read_string()?;
-
-  let sec_type_str = parser.read_string()?;
-  contract.sec_type = SecType::from_str(&sec_type_str).unwrap_or(SecType::Stock);
-
-  let expiry = parser.read_string()?;
-  if !expiry.is_empty() {
-    contract.last_trade_date_or_contract_month = Some(expiry);
-  }
-
-  let strike = parser.read_double()?;
-  if strike > 0.0 {
-    contract.strike = Some(strike);
-  }
-
-  let right_str = parser.read_string()?;
-  if !right_str.is_empty() {
-    contract.right = match right_str.as_str() {
-      "C" => Some(OptionRight::Call),
-      "P" => Some(OptionRight::Put),
-      _ => None,
-    };
-  }
-
-  if version >= 9 {
-    let multiplier = parser.read_string()?;
-    if !multiplier.is_empty() {
-      contract.multiplier = Some(multiplier);
-    }
-  }
-
-  contract.exchange = parser.read_string()?;
-  contract.currency = parser.read_string()?;
-
-  let local_symbol = parser.read_string()?;
-  if !local_symbol.is_empty() {
-    contract.local_symbol = Some(local_symbol);
-  }
-
-  if version >= 10 {
-    let trading_class = parser.read_string()?;
-    if !trading_class.is_empty() {
-      contract.trading_class = Some(trading_class);
-    }
-  }
-
-  // Read execution fields
-  let mut execution = Execution {
-    execution_id: parser.read_string()?,
-    order_id: order_id.to_string(),
-    symbol: contract.symbol.clone(),
-    side: match parser.read_string()?.as_str() {
-      "BOT" => OrderSide::Buy,
-      "SLD" => OrderSide::Sell,
-      "SSHORT" => OrderSide::SellShort,
-      _ => OrderSide::Buy,
-    },
-    quantity: parser.read_double()?,
-    price: parser.read_double()?,
-    time: Utc::now(), // Default time
-    commission: 0.0,
-    exchange: parser.read_string()?,
-    account: parser.read_string()?,
-  };
-
-  if version >= 6 {
-    // More execution fields can be parsed here
-  }
-
-  log::debug!("Execution Data: ReqID={}, OrderID={}, Symbol={}, Side={}, Quantity={}, Price={}",
-         req_id, order_id, contract.symbol, execution.side, execution.quantity, execution.price);
-
-  Ok(())
-}
 
 /// Process open order end message
 pub fn process_open_order_end(handler: &mut Box<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::debug!("Open Order End");
-  Ok(())
-}
-
-/// Process execution data end message
-pub fn process_execution_data_end(handler: &mut Box<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-
-  log::debug!("Execution Data End: {}", req_id);
-
   Ok(())
 }
 
