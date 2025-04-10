@@ -113,16 +113,6 @@ impl Encoder {
     // Removed: next_valid_id initialization
   }
 
-  // --- Keep set_server_version if needed, but usually set at construction ---
-  // pub fn set_server_version(&mut self, version: i32) { ... }
-
-  // --- Remove ID management ---
-  // pub fn set_next_valid_id(&mut self, id: i32) { ... }
-  // pub fn get_next_valid_id(&mut self) -> i32 { ... }
-
-
-  // --- Modify encoding methods to return Vec<u8> ---
-
   // Helper to start encoding into a buffer
   fn start_encoding(&self, msg_type: i32) -> Result<Cursor<Vec<u8>>, IBKRError> {
     let mut buffer = Vec::new();
@@ -490,5 +480,12 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
+  pub fn encode_request_current_time(&self) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request current time message");
+    // Version 1 is implicit by field count
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestCurrentTime as i32)?;
+    self.write_int_to_cursor(&mut cursor, 1)?; // Version field
+    Ok(self.finish_encoding(cursor))
+  }
 
 } // end impl Encoder

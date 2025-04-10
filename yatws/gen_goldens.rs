@@ -3,9 +3,10 @@
 use yatws::conn::SocketConnection;
 use yatws::conn::Connection;
 use std::time::Duration;
+use yatws::client::IBKRClient;
 
 
-fn main() {
+fn _main() {
   // Initialize logging
   env_logger::init();
 
@@ -20,4 +21,28 @@ fn main() {
   let conn = SocketConnection::new(host, port, client_id).unwrap();
 
   println!("Server: {}", conn.get_server_version());
+}
+
+fn main() {
+  // Initialize logging
+  env_logger::init();
+
+  // Connection parameters
+  let host = "127.0.0.1";
+  //let port = 4002;
+  let port = 3002;
+  let client_id = 123;
+
+  println!("Connecting to TWS at {}:{} with client ID {}", host, port, client_id);
+
+  // Create a new connection
+  let client = IBKRClient::new(host, port, client_id).unwrap();
+
+  // let acct = client.account();
+  // acct.refresh().unwrap();
+  // log::info!("Refresh requested");
+  // std::thread::sleep(Duration::from_millis(3000));
+  // println!("Value: {:?}", acct.get_account_info());
+  let cl = client.client();
+  println!("Time: {:?}", cl.request_current_time());
 }

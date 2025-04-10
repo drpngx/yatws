@@ -1,5 +1,5 @@
 // yatws/src/parser_account.rs
-
+use std::sync::Arc;
 use std::str::FromStr;
 use chrono::Utc;
 use crate::handler::AccountHandler;
@@ -11,8 +11,7 @@ use crate::account::Execution;
 use crate::order::OrderSide;
 
 /// Process account value message
-pub fn process_account_value(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_account_value(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let version = parser.read_int()?;
 
   let key = parser.read_string()?;
@@ -37,8 +36,7 @@ pub fn process_account_value(handler: &mut Box<dyn AccountHandler>, parser: &mut
 }
 
 /// Process portfolio value message
-pub fn process_portfolio_value(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let version = parser.read_int()?;
 
   // --- Parse Contract ---
@@ -134,8 +132,7 @@ pub fn process_portfolio_value(handler: &mut Box<dyn AccountHandler>, parser: &m
 }
 
 /// Process account update time message
-pub fn process_account_update_time(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_account_update_time(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let time_stamp = parser.read_string()?;
 
@@ -149,8 +146,7 @@ pub fn process_account_update_time(handler: &mut Box<dyn AccountHandler>, parser
 }
 
 /// Process account download end message
-pub fn process_account_download_end(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_account_download_end(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let account = parser.read_string()?;
 
@@ -163,8 +159,7 @@ pub fn process_account_download_end(handler: &mut Box<dyn AccountHandler>, parse
 }
 
 /// Process managed accounts message
-pub fn process_managed_accounts(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_managed_accounts(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let accounts_list = parser.read_string()?;
 
@@ -178,8 +173,7 @@ pub fn process_managed_accounts(handler: &mut Box<dyn AccountHandler>, parser: &
 
 
 /// Process position message
-pub fn process_position(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_position(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let version = parser.read_int()?;
   let account = parser.read_string()?;
 
@@ -242,7 +236,7 @@ pub fn process_position(handler: &mut Box<dyn AccountHandler>, parser: &mut Fiel
 }
 
 /// Process position end message
-pub fn process_position_end(handler: &mut Box<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_position_end(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // --- Call the handler ---
   handler.position_end();
   // ---
@@ -252,8 +246,7 @@ pub fn process_position_end(handler: &mut Box<dyn AccountHandler>, _parser: &mut
 
 
 /// Process account summary message
-pub fn process_account_summary(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_account_summary(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
   let account = parser.read_string()?;
@@ -271,8 +264,7 @@ pub fn process_account_summary(handler: &mut Box<dyn AccountHandler>, parser: &m
 }
 
 /// Process account summary end message
-pub fn process_account_summary_end(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_account_summary_end(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
 
@@ -286,8 +278,7 @@ pub fn process_account_summary_end(handler: &mut Box<dyn AccountHandler>, parser
 
 
 /// Process PnL message
-pub fn process_pnl(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_pnl(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
   let daily_pnl = parser.read_double()?;
@@ -325,8 +316,7 @@ pub fn process_pnl(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldPars
 }
 
 /// Process PnL single message
-pub fn process_pnl_single(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
   let pos = parser.read_int()?;
@@ -378,39 +368,38 @@ pub fn process_pnl_single(handler: &mut Box<dyn AccountHandler>, parser: &mut Fi
 // Need definitions for CommissionReport struct etc.
 
 // Add a placeholder implementation for CommissionReport parsing if needed
-pub fn process_commission_report(handler: &mut Box<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_commission_report(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing CommissionReport not implemented yet.");
   // Implementation would parse commission report data and call handler.commission_report()
   Ok(())
 }
 
-pub fn process_position_multi(handler: &mut Box<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_position_multi(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing PositionMulti not implemented yet.");
   // Implementation would parse position multi message and call handler.position_multi()
   Ok(())
 }
 
-pub fn process_position_multi_end(handler: &mut Box<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_position_multi_end(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing PositionMultiEnd not implemented yet.");
   // Implementation would parse position multi end message and call handler.position_multi_end()
   Ok(())
 }
 
-pub fn process_account_update_multi(handler: &mut Box<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_account_update_multi(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing AccountUpdateMulti not implemented yet.");
   // Implementation would parse account update multi message and call handler.account_update_multi()
   Ok(())
 }
 
-pub fn process_account_update_multi_end(handler: &mut Box<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_account_update_multi_end(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing AccountUpdateMultiEnd not implemented yet.");
   // Implementation would parse account update multi end message and call handler.account_update_multi_end()
   Ok(())
 }
 
 /// Process execution data message
-pub fn process_execution_data(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_execution_data(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let version = parser.read_int()?;
 
   let mut req_id = -1;
@@ -503,8 +492,7 @@ pub fn process_execution_data(handler: &mut Box<dyn AccountHandler>, parser: &mu
 }
 
 /// Process execution data end message
-pub fn process_execution_data_end(handler: &mut Box<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_execution_data_end(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
 

@@ -1,5 +1,5 @@
 // yatws/src/parser_data_market.rs
-
+use std::sync::Arc;
 use chrono::{DateTime,NaiveDateTime, Utc};
 
 use crate::handler::MarketDataHandler;
@@ -10,8 +10,7 @@ use crate::contract::{ContractDetails, OptionRight, Bar, SecType};
 
 
 /// Process tick price message
-pub fn process_tick_price(handler: &mut Box<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_tick_price(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let ticker_id = parser.read_int()?;
   let tick_type = parser.read_int()?;
@@ -23,8 +22,7 @@ pub fn process_tick_price(handler: &mut Box<dyn MarketDataHandler>, parser: &mut
 }
 
 /// Process tick size message
-pub fn process_tick_size(handler: &mut Box<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_tick_size(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let ticker_id = parser.read_int()?;
   let tick_type = parser.read_int()?;
@@ -35,8 +33,7 @@ pub fn process_tick_size(handler: &mut Box<dyn MarketDataHandler>, parser: &mut 
   Ok(())
 }
 
-pub fn process_historical_data(handler: &mut Box<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_historical_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
 
   let req_id = parser.read_int()?;
@@ -96,50 +93,49 @@ pub fn process_historical_data(handler: &mut Box<dyn MarketDataHandler>, parser:
 }
 
 /// Process market depth message
-pub fn process_market_depth(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_market_depth(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse market depth data
   Ok(())
 }
 
 /// Process market depth L2 message
-pub fn process_market_depth_l2(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_market_depth_l2(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse L2 market depth data
   Ok(())
 }
 
 /// Process scanner parameters message
-pub fn process_scanner_parameters(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_scanner_parameters(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse scanner parameters
   Ok(())
 }
 
 /// Process scanner data message
-pub fn process_scanner_data(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_scanner_data(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse scanner data
   Ok(())
 }
 
 /// Process tick EFP message
-pub fn process_tick_efp(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse EFP tick data
   Ok(())
 }
 
 /// Process real-time bars message
-pub fn process_real_time_bars(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_real_time_bars(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse real-time bar data
   Ok(())
 }
 
 /// Process delta neutral validation message
-pub fn process_delta_neutral_validation(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_delta_neutral_validation(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse delta neutral validation data
   Ok(())
 }
 
 /// Process tick snapshot end message
-pub fn process_tick_snapshot_end(handler: &mut Box<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_tick_snapshot_end(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
 
@@ -149,8 +145,7 @@ pub fn process_tick_snapshot_end(handler: &mut Box<dyn MarketDataHandler>, parse
 }
 
 /// Process market data type message
-pub fn process_market_data_type(handler: &mut Box<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_market_data_type(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
   let market_data_type = parser.read_int()?;
@@ -161,73 +156,73 @@ pub fn process_market_data_type(handler: &mut Box<dyn MarketDataHandler>, parser
 }
 
 /// Process market depth exchanges message
-pub fn process_mkt_depth_exchanges(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_mkt_depth_exchanges(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse market depth exchanges message
   Ok(())
 }
 
 /// Process tick req params message
-pub fn process_tick_req_params(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_tick_req_params(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse tick req params message
   Ok(())
 }
 
 /// Process histogram data message
-pub fn process_histogram_data(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_histogram_data(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse histogram data message
   Ok(())
 }
 
 /// Process historical data update message
-pub fn process_historical_data_update(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_historical_data_update(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse historical data update message
   Ok(())
 }
 
 /// Process reroute market data request message
-pub fn process_reroute_mkt_data_req(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_reroute_mkt_data_req(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse reroute market data request message
   Ok(())
 }
 
 /// Process reroute market depth request message
-pub fn process_reroute_mkt_depth_req(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_reroute_mkt_depth_req(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse reroute market depth request message
   Ok(())
 }
 
 /// Process historical ticks message
-pub fn process_historical_ticks(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_historical_ticks(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse historical ticks message
   Ok(())
 }
 
 /// Process historical ticks bid ask message
-pub fn process_historical_ticks_bid_ask(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_historical_ticks_bid_ask(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse historical ticks bid ask message
   Ok(())
 }
 
 /// Process historical ticks last message
-pub fn process_historical_ticks_last(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_historical_ticks_last(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse historical ticks last message
   Ok(())
 }
 
 /// Process tick by tick message
-pub fn process_tick_by_tick(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse tick by tick message
   Ok(())
 }
 
 /// Process tick generic message
-pub fn process_tick_generic(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_tick_generic(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse generic tick data
   Ok(())
 }
 
 /// Process tick string message
-pub fn process_tick_string(handler: &mut Box<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_tick_string(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse string tick data
   Ok(())
 }

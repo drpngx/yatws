@@ -3,27 +3,35 @@
 use crate::contract::Contract;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
-
+use std::sync::Arc;
 
 /// Meta messages such as errors and time.
 pub trait ClientHandler: Send + Sync {
-  // fn error(&mut self, id: i32, error_code: i32, error_msg: &str);
-  //  fn connection_closed(&mut self);
-  // ... other methods ...
+  fn error(&self, id: i32, error_code: i32, error_msg: &str);
+  fn connection_closed(&self);
+  fn current_time(&self, time_unix: i64);
+  fn verify_message_api(&self, _api_data: &str);
+  fn verify_completed(&self, is_successful: bool, error_text: &str);
+  fn verify_and_auth_message_api(&self, _api_data: &str, _xyz_challenge: &str);
+  fn verify_and_auth_completed(&self, is_successful: bool, error_text: &str);
+  fn display_group_list(&self, req_id: i32, groups: &str);
+  fn display_group_updated(&self, req_id: i32, contract_info: &str);
+  fn head_timestamp(&self, req_id: i32, timestamp_str: &str);
+  fn user_info(&self, _req_id: i32, white_branding_id: &str);
 }
 
 /// Order processing.
 pub trait OrderHandler: Send + Sync {
-    // fn next_valid_id(&mut self, order_id: i32);
-    // // ... Add Send + Sync if needed ...
-    // fn open_order(&mut self, order_id: i32, contract: &Contract, order: &Order, order_state: &OrderState);
-    // fn open_order_end(&mut self);
-    // fn order_status(&mut self, order_id: i32, status: &str, filled: f64, remaining: f64, avg_fill_price: f64, perm_id: i32, parent_id: i32, last_fill_price: f64, client_id: i32, why_held: &str, mkt_cap_price: f64);
-    // fn execution_details(&mut self, req_id: i32, contract: &Contract, execution: &Execution);
-    // fn execution_details_end(&mut self, req_id: i32);
-    // fn commission_report(&mut self, commission_report: &CommissionReport);
-    // fn completed_order(&mut self, contract: &Contract, order: &Order, order_state: &OrderState);
-    // fn completed_orders_end(&mut self);
+  // fn next_valid_id(&self, order_id: i32);
+  // // ... Add Send + Sync if needed ...
+  // fn open_order(&self, order_id: i32, contract: &Contract, order: &Order, order_state: &OrderState);
+  // fn open_order_end(&self);
+  // fn order_status(&self, order_id: i32, status: &str, filled: f64, remaining: f64, avg_fill_price: f64, perm_id: i32, parent_id: i32, last_fill_price: f64, client_id: i32, why_held: &str, mkt_cap_price: f64);
+  // fn execution_details(&self, req_id: i32, contract: &Contract, execution: &Execution);
+  // fn execution_details_end(&self, req_id: i32);
+  // fn commission_report(&self, commission_report: &CommissionReport);
+  // fn completed_order(&self, contract: &Contract, order: &Order, order_state: &OrderState);
+  // fn completed_orders_end(&self);
 }
 
 /// Information about the account such as open positions and cash balance.
@@ -70,10 +78,10 @@ pub trait AccountHandler: Send + Sync {
 
 /// Contract types etc.
 pub trait ReferenceDataHandler: Send + Sync {
-    // fn contract_details(&mut self, req_id: i32, contract_details: &ContractDetails);
-    // fn contract_details_end(&mut self, req_id: i32);
-    // fn bond_contract_details(&mut self, req_id: i32, contract_details: &ContractDetails);
-    // // ... other methods ...
+  // fn contract_details(&self, req_id: i32, contract_details: &ContractDetails);
+  // fn contract_details_end(&self, req_id: i32);
+  // fn bond_contract_details(&self, req_id: i32, contract_details: &ContractDetails);
+  // // ... other methods ...
 }
 
 /// Micro-structure: quotes etc.
@@ -90,18 +98,41 @@ pub trait NewsDataHandler: Send + Sync {
 pub trait FinancialAdvisorHandler: Send + Sync {
 }
 
+struct Dummy {}
+impl FinancialAdvisorHandler for Dummy {}
+impl ReferenceDataHandler for Dummy {}
+impl MarketDataHandler for Dummy {}
+impl NewsDataHandler for Dummy {}
+impl FinancialDataHandler for Dummy {}
+impl OrderHandler for Dummy {}
+
 pub struct MessageHandler {
-  pub client: Box<dyn ClientHandler>,
-  pub order: Box<dyn OrderHandler>,
-  pub account: Box<dyn AccountHandler>,
-  pub fin_adv: Box<dyn FinancialAdvisorHandler>,
-  pub data_ref: Box<dyn ReferenceDataHandler>,
-  pub data_market: Box<dyn MarketDataHandler>,
-  pub data_news: Box<dyn NewsDataHandler>,
-  pub data_fin: Box<dyn FinancialDataHandler>,
+  pub client: Arc<dyn ClientHandler>,
+  pub order: Arc<dyn OrderHandler>,
+  pub account: Arc<dyn AccountHandler>,
+  pub fin_adv: Arc<dyn FinancialAdvisorHandler>,
+  pub data_ref: Arc<dyn ReferenceDataHandler>,
+  pub data_market: Arc<dyn MarketDataHandler>,
+  pub data_news: Arc<dyn NewsDataHandler>,
+  pub data_fin: Arc<dyn FinancialDataHandler>,
 }
 
 impl MessageHandler {
+  pub fn new(client: Arc<dyn ClientHandler>,
+             account: Arc<dyn AccountHandler>) -> Self {
+    let dummy = Arc::new(Dummy {});
+    MessageHandler {
+      client,
+      account,
+      order: dummy.clone(),
+      fin_adv: dummy.clone(),
+      data_ref: dummy.clone(),
+      data_market: dummy.clone(),
+      data_news: dummy.clone(),
+      data_fin: dummy.clone(),
+    }
+  }
+  // TODO: move this to ClientManager.
   pub fn connection_closed(&mut self) {
   }
 }

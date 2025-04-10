@@ -21,8 +21,13 @@ impl MessageBroker {
     Self {
       // Now creating Arc<Mutex<Box<dyn T>>> which is valid
       connection: Arc::new(Mutex::new(connection)),
-      next_req_id: Arc::new(AtomicUsize::new(1)),
+      next_req_id: Arc::new(AtomicUsize::new(9000)),
     }
+  }
+
+  pub fn set_message_handler(&self, handler: MessageHandler) {
+    let mut conn_guard = self.connection.lock();
+    conn_guard.set_message_handler(handler);
   }
 
   // Methods now operate on the Box inside the guard
@@ -341,10 +346,12 @@ mod socket {
 
     /// Start the reader thread. Assumes lock on inner_state is NOT held when called.
     fn start_reader_thread(&self) -> Result<(), IBKRError> {
+      log::info!("Starting the reader thread.");
       // Check if already running
       if self.reader_thread.lock().is_some() { // lock() returns guard
         return Ok(());
       }
+      log::info!("Locking the state.");
 
       // Lock state to check conditions and move handler/stream
       let mut state = self.inner_state.lock(); // lock() returns guard
@@ -391,18 +398,9 @@ mod socket {
             Ok(msg_data) => {
               if msg_data.is_empty() { continue; } // Skip empty keep-alives?
 
-              let mut cursor = Cursor::new(&msg_data);
-              match cursor.read_i32::<BigEndian>() {
-                Ok(msg_type_id) => {
-                  if let Err(e) = process_message(&mut handler, msg_type_id, &msg_data) {
-                    error!("Error processing message type {}: {:?}", msg_type_id, e);
-                    // Decide if error is fatal? break; ?
-                  }
-                }
-                Err(e) => {
-                  error!("Error reading message type ID: {} - Data: {:02X?}", e, msg_data);
-                  thread_sleep(Duration::from_millis(100));
-                }
+              if let Err(e) = process_message(&mut handler, &msg_data) {
+                error!("Error processing message type: {:?}", e);
+                // Decide if error is fatal? break; ?
               }
             },
             Err(IBKRError::Timeout(_)) => {

@@ -1,6 +1,6 @@
 // yatws/src/parser_data_ref.rs
 use std::str::FromStr;
-
+use std::sync::Arc;
 use crate::handler::ReferenceDataHandler;
 
 use crate::base::IBKRError;
@@ -8,20 +8,19 @@ use crate::protocol_dec_parser::FieldParser;
 use crate::contract::{ContractDetails, SecType, OptionRight};
 
 /// Process bond contract data message
-pub fn process_bond_contract_data(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse bond contract data
   Ok(())
 }
 
 /// Process tick option computation message
-pub fn process_tick_option_computation(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_tick_option_computation(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse option computation data
   Ok(())
 }
 
 /// Process contract data end message
-pub fn process_contract_data_end(handler: &mut Box<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_contract_data_end(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
 
@@ -31,56 +30,55 @@ pub fn process_contract_data_end(handler: &mut Box<dyn ReferenceDataHandler>, pa
 }
 
 /// Process security definition option parameter message
-pub fn process_security_definition_option_parameter(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_security_definition_option_parameter(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse security definition option parameter message
   Ok(())
 }
 
 /// Process security definition option parameter end message
-pub fn process_security_definition_option_parameter_end(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_security_definition_option_parameter_end(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse security definition option parameter end message
   Ok(())
 }
 
 /// Process soft dollar tiers message
-pub fn process_soft_dollar_tiers(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_soft_dollar_tiers(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse soft dollar tiers message
   Ok(())
 }
 
 /// Process family codes message
-pub fn process_family_codes(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_family_codes(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse family codes message
   Ok(())
 }
 
 /// Process symbol samples message
-pub fn process_symbol_samples(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_symbol_samples(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse symbol samples message
   Ok(())
 }
 
 /// Process smart components message
-pub fn process_smart_components(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_smart_components(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse smart components message
   Ok(())
 }
 
 /// Process market rule message
-pub fn process_market_rule(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_market_rule(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse market rule message
   Ok(())
 }
 
 /// Process historical schedule message
-pub fn process_historical_schedule(handler: &mut Box<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_historical_schedule(handler: &Arc<dyn ReferenceDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse historical schedule message
   Ok(())
 }
 
 /// Process contract data message
-pub fn process_contract_data(handler: &mut Box<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let version = parser.read_int()?;
 
   let mut req_id = -1;

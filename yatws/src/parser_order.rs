@@ -1,5 +1,5 @@
 // yatws/src/parser_order.rs
-
+use std::sync::Arc;
 use crate::handler::OrderHandler;
 use chrono::Utc;
 use std::str::FromStr;
@@ -11,8 +11,7 @@ use crate::min_server_ver::min_server_ver;
 
 
 /// Process next valid ID message
-pub fn process_next_valid_id(handler: &mut Box<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_next_valid_id(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let id = parser.read_int()?;
 
@@ -22,8 +21,7 @@ pub fn process_next_valid_id(handler: &mut Box<dyn OrderHandler>, parser: &mut F
 }
 
 /// Process order status message
-pub fn process_order_status(handler: &mut Box<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_order_status(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let id = parser.read_int()?;
   let status = parser.read_string()?;
@@ -38,8 +36,7 @@ pub fn process_order_status(handler: &mut Box<dyn OrderHandler>, parser: &mut Fi
 }
 
 /// Process open order message
-pub fn process_open_order(handler: &mut Box<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _msg_type = parser.read_int()?; // Skip message type
+pub fn process_open_order(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let version = parser.read_int()?;
   let order_id = parser.read_int()?;
 
@@ -149,25 +146,25 @@ pub fn process_open_order(handler: &mut Box<dyn OrderHandler>, parser: &mut Fiel
 
 
 /// Process open order end message
-pub fn process_open_order_end(handler: &mut Box<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_open_order_end(handler: &Arc<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::debug!("Open Order End");
   Ok(())
 }
 
 /// Process order bound message
-pub fn process_order_bound(handler: &mut Box<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_order_bound(handler: &Arc<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse order bound message
   Ok(())
 }
 
 /// Process completed order message
-pub fn process_completed_order(handler: &mut Box<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_completed_order(handler: &Arc<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse completed order message
   Ok(())
 }
 
 /// Process completed orders end message
-pub fn process_completed_orders_end(handler: &mut Box<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_completed_orders_end(handler: &Arc<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Implementation would parse completed orders end message
   Ok(())
 }

@@ -91,6 +91,7 @@ rust_binary(
     deps = [
         ":yatws",
         "@crates//:env_logger",
+        "@crates//:log",
     ],
     visibility = ["//visibility:public"],
 )
