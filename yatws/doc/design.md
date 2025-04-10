@@ -92,10 +92,6 @@ This document outlines the design for a robust, easy-to-use interface to the Int
 ### 3.1 High-Level Components
 
 ```
-┌───────────────────────────────────────┐
-│ Python Application                     │
-└───────────▲───────────────────────────┘
-            │
 ┌───────────▼───────────────────────────┐
 │ IBKRClient (Main API Entry Point)      │
 ├───────────┬───────────────┬───────────┤
@@ -157,9 +153,9 @@ Handles the low-level socket connection to IBKR TWS/Gateway. Manages reconnectio
 
 ```rust
 pub struct IBKRClient {
-    order_api: Arc<OrderAPI>,
-    account_api: Arc<AccountAPI>,
-    data_api: Arc<DataAPI>,
+    order_mgr: Arc<OrderManager>,
+    account_mgr: Arc<AccountManager>,
+    data_mgr: Arc<DataManager>,
     message_broker: Arc<MessageBroker>,
     connection_manager: Arc<ConnectionManager>,
     config: ClientConfig,
@@ -171,14 +167,14 @@ impl IBKRClient {
         let connection_manager = Arc::new(ConnectionManager::new(host, port, client_id, ConnectionConfig::default())?);
         let message_broker = Arc::new(MessageBroker::new(connection_manager.clone())?);
 
-        let order_api = Arc::new(OrderAPI::new(message_broker.clone()));
-        let account_api = Arc::new(AccountAPI::new(message_broker.clone()));
-        let data_api = Arc::new(DataAPI::new(message_broker.clone()));
+        let order_mgr = Arc::new(OrderManager::new(message_broker.clone()));
+        let account_mgr = Arc::new(AccountManager::new(message_broker.clone()));
+        let data_mgr = Arc::new(DataManager::new(message_broker.clone()));
 
         Ok(IBKRClient {
-            order_api,
-            account_api,
-            data_api,
+            order_mgr,
+            account_mgr,
+            data_mgr,
             message_broker,
             connection_manager,
             config,
@@ -207,36 +203,36 @@ impl IBKRClient {
 }
 ```
 
-### 4.2 OrderAPI
+### 4.2 Order API
 
 ```rust
-pub struct OrderAPI {
+pub struct OrderManager {
     message_broker: Arc<MessageBroker>,
     order_book: RwLock<HashMap<String, Arc<RwLock<Order>>>>,
     observers: RwLock<Vec<Box<dyn OrderObserver + Send + Sync>>>,
 }
 
-impl OrderAPI {
+impl OrderManager {
     pub fn new(message_broker: Arc<MessageBroker>) -> Self {
-        OrderAPI {
+        OrderManager {
             message_broker,
             order_book: RwLock::new(HashMap::new()),
             observers: RwLock::new(Vec::new()),
         }
     }
 
-    // Order placement methods
-    pub fn place_market_order(&self, symbol: &str, quantity: f64, side: OrderSide) -> Result<Arc<RwLock<Order>>, IBKRError>;
-    pub fn place_limit_order(&self, symbol: &str, quantity: f64, price: f64, side: OrderSide) -> Result<Arc<RwLock<Order>>, IBKRError>;
-    pub fn place_stop_order(&self, symbol: &str, quantity: f64, stop_price: f64, side: OrderSide) -> Result<Arc<RwLock<Order>>, IBKRError>;
-    pub fn place_custom_order(&self, contract: Contract, order: OrderRequest) -> Result<Arc<RwLock<Order>>, IBKRError>;
+    // Order placement methods: return the order ID.
+    pub fn place_market_order(&self, symbol: &str, quantity: f64, side: OrderSide) -> Result<String, IBKRError>;
+    pub fn place_limit_order(&self, symbol: &str, quantity: f64, price: f64, side: OrderSide) -> Result<String, IBKRError>;
+    pub fn place_stop_order(&self, symbol: &str, quantity: f64, stop_price: f64, side: OrderSide) -> Result<String, IBKRError>;
+    pub fn place_custom_order(&self, contract: Contract, order: OrderRequest) -> Result<String, IBKRError>;
 
     // Order management methods
     pub fn cancel_order(&self, order_id: &str) -> Result<bool, IBKRError>;
     pub fn modify_order(&self, order_id: &str, updates: OrderUpdates) -> Result<Arc<RwLock<Order>>, IBKRError>;
-    pub fn get_order(&self, order_id: &str) -> Option<Arc<RwLock<Order>>>;
-    pub fn get_all_orders(&self) -> Vec<Arc<RwLock<Order>>>;
-    pub fn get_active_orders(&self) -> Vec<Arc<RwLock<Order>>>;
+    pub fn get_order(&self, order_id: &str) -> Option<Order>;
+    pub fn get_all_orders(&self) -> Vec<Order>;
+    pub fn get_open_orders(&self) -> Vec<Order>;
 
     // Subscription methods
     pub fn add_observer<T: OrderObserver + Send + Sync + 'static>(&self, observer: T) -> usize;
@@ -286,10 +282,10 @@ pub trait OrderObserver: Send + Sync {
 }
 ```
 
-### 4.3 AccountAPI
+### 4.3 Account API
 
 ```rust
-pub struct AccountAPI {
+pub struct AccountManager {
     message_broker: Arc<MessageBroker>,
     account_state: RwLock<AccountState>,
     positions: RwLock<HashMap<String, Arc<RwLock<Position>>>>,
@@ -298,9 +294,9 @@ pub struct AccountAPI {
     background_updater: Mutex<Option<JoinHandle<()>>>,
 }
 
-impl AccountAPI {
+impl AccountManager {
     pub fn new(message_broker: Arc<MessageBroker>) -> Self {
-        AccountAPI {
+        AccountManager {
             message_broker,
             account_state: RwLock::new(AccountState::default()),
             positions: RwLock::new(HashMap::new()),
@@ -317,8 +313,7 @@ impl AccountAPI {
     pub fn get_equity(&self) -> Result<f64, IBKRError>;
 
     // Position methods
-    pub fn get_positions(&self) -> Result<Vec<Arc<RwLock<Position>>>, IBKRError>;
-    pub fn get_position(&self, symbol: &str) -> Result<Option<Arc<RwLock<Position>>>, IBKRError>;
+    pub fn list_open_positions(&self) -> Result<Vec<Position>, IBKRError>;
 
     // PnL methods
     pub fn get_daily_pnl(&self) -> Result<f64, IBKRError>;
@@ -387,18 +382,18 @@ pub trait AccountObserver: Send + Sync {
 }
 ```
 
-### 4.4 DataAPI
+### 4.4 Data API
 
 ```rust
-pub struct DataAPI {
+pub struct DataManager {
     message_broker: Arc<MessageBroker>,
     rate_limiter: RwLock<RateLimiter>,
     market_data_subscriptions: RwLock<HashMap<String, Arc<RwLock<MarketDataSubscription>>>>,
 }
 
-impl DataAPI {
+impl DataManager {
     pub fn new(message_broker: Arc<MessageBroker>) -> Self {
-        DataAPI {
+        DataManager {
             message_broker,
             rate_limiter: RwLock::new(RateLimiter::new(50, Duration::from_secs(1))), // Default 50 requests per second
             market_data_subscriptions: RwLock::new(HashMap::new()),
@@ -1789,324 +1784,6 @@ Errors should be propagated to the caller with context and appropriate suggestio
 - Implement efficient buffer management for message processing
 - Use thread pools for background processing to avoid thread creation overhead
 
-### 6.4 Python Bindings
-
-The API will expose its functionality to Python using PyO3:
-
-```rust
-#[pyclass]
-struct PyIBKRClient {
-    client: IBKRClient,
-}
-
-#[pymethods]
-impl PyIBKRClient {
-    #[new]
-    fn new(host: &str, port: i32, client_id: i32) -> PyResult<Self> {
-        let config = ClientConfig::default();
-        let client = IBKRClient::new(host, port, client_id, config)
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-        Ok(PyIBKRClient { client })
-    }
-
-    fn connect(&mut self) -> PyResult<()> {
-        self.client.connect()
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))
-    }
-
-    fn disconnect(&mut self) -> PyResult<()> {
-        self.client.disconnect();
-        Ok(())
-    }
-
-    fn is_connected(&self) -> bool {
-        self.client.is_connected()
-    }
-
-    fn set_logging(&mut self, enabled: bool, db_path: Option<&str>) -> PyResult<()> {
-        self.client.set_logging(enabled, db_path)
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))
-    }
-
-    // Order methods
-    fn place_market_order(&self, symbol: &str, quantity: f64, side: &str) -> PyResult<PyOrder> {
-        let side = match side.to_lowercase().as_str() {
-            "buy" => OrderSide::Buy,
-            "sell" => OrderSide::Sell,
-            _ => return Err(PyErr::new::<PyValueError, _>("Invalid order side")),
-        };
-
-        let order_result = self.client.orders().place_market_order(symbol, quantity, side)
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-
-        let order_guard = order_result.read().unwrap();
-        Ok(PyOrder::from(&*order_guard))
-    }
-
-    fn place_limit_order(&self, symbol: &str, quantity: f64, price: f64, side: &str) -> PyResult<PyOrder> {
-        let side = match side.to_lowercase().as_str() {
-            "buy" => OrderSide::Buy,
-            "sell" => OrderSide::Sell,
-            _ => return Err(PyErr::new::<PyValueError, _>("Invalid order side")),
-        };
-
-        let order_result = self.client.orders().place_limit_order(symbol, quantity, price, side)
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-
-        let order_guard = order_result.read().unwrap();
-        Ok(PyOrder::from(&*order_guard))
-    }
-
-    fn cancel_order(&self, order_id: &str) -> PyResult<bool> {
-        self.client.orders().cancel_order(order_id)
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))
-    }
-
-    fn get_order(&self, order_id: &str) -> PyResult<Option<PyOrder>> {
-        match self.client.orders().get_order(order_id) {
-            Some(order) => {
-                let order_guard = order.read().unwrap();
-                Ok(Some(PyOrder::from(&*order_guard)))
-            },
-            None => Ok(None),
-        }
-    }
-
-    fn get_all_orders(&self) -> PyResult<Vec<PyOrder>> {
-        let orders = self.client.orders().get_all_orders();
-        let py_orders = orders.iter()
-            .map(|order| {
-                let order_guard = order.read().unwrap();
-                PyOrder::from(&*order_guard)
-            })
-            .collect();
-        Ok(py_orders)
-    }
-
-    // Account methods
-    fn get_account_info(&self) -> PyResult<PyAccountInfo> {
-        let account_info = self.client.account().get_account_info()
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-        Ok(PyAccountInfo::from(account_info))
-    }
-
-    fn get_positions(&self) -> PyResult<Vec<PyPosition>> {
-        let positions = self.client.account().get_positions()
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-
-        let py_positions = positions.iter()
-            .map(|position| {
-                let position_guard = position.read().unwrap();
-                PyPosition::from(&*position_guard)
-            })
-            .collect();
-
-        Ok(py_positions)
-    }
-
-    fn refresh_account(&self) -> PyResult<()> {
-        self.client.account().refresh()
-            .map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))
-    }
-
-    // Data methods
-    fn get_historical_data(
-        &self,
-        symbol: &str,
-        end_date: Option<&str>,
-        duration_days: i32,
-        bar_size: &str,
-        what_to_show: &str,
-        use_rth: bool
-    ) -> PyResult<Vec<PyBar>> {
-        // Create contract
-        let contract = Contract::stock(symbol);
-
-        // Parse end date
-        let end_date_time = match end_date {
-            Some(date_str) => Some(DateTime::parse_from_rfc3339(date_str)
-                .map_err(|e| PyErr::new::<PyValueError, _>(format!("Invalid date format: {}", e)))?
-                .with_timezone(&Utc)),
-            None => None,
-        };
-
-        // Parse bar size
-        let bar_size = match bar_size {
-            "1 min" => BarSize::OneMinute,
-            "5 min" => BarSize::FiveMinutes,
-            "15 min" => BarSize::FifteenMinutes,
-            "30 min" => BarSize::ThirtyMinutes,
-            "1 hour" => BarSize::OneHour,
-            "1 day" => BarSize::OneDay,
-            _ => return Err(PyErr::new::<PyValueError, _>("Invalid bar size")),
-        };
-
-        // Parse what to show
-        let what_to_show = match what_to_show {
-            "trades" => WhatToShow::Trades,
-            "midpoint" => WhatToShow::Midpoint,
-            "bid" => WhatToShow::Bid,
-            "ask" => WhatToShow::Ask,
-            _ => return Err(PyErr::new::<PyValueError, _>("Invalid what to show")),
-        };
-
-        // Get historical data
-        let bars = self.client.data().get_historical_data(
-            &contract,
-            end_date_time,
-            Duration::days(duration_days),
-            bar_size,
-            what_to_show,
-            use_rth
-        ).map_err(|e| PyErr::new::<PyValueError, _>(e.to_string()))?;
-
-        // Convert to Python bars
-        let py_bars = bars.into_iter().map(PyBar::from).collect();
-
-        Ok(py_bars)
-    }
-}
-
-#[pyclass]
-struct PyOrder {
-    #[pyo3(get)]
-    id: String,
-    #[pyo3(get)]
-    symbol: String,
-    #[pyo3(get)]
-    quantity: f64,
-    #[pyo3(get)]
-    side: String,
-    #[pyo3(get)]
-    order_type: String,
-    #[pyo3(get)]
-    status: String,
-    #[pyo3(get)]
-    filled_quantity: f64,
-    #[pyo3(get)]
-    average_fill_price: f64,
-    #[pyo3(get)]
-    created_at: String,
-    #[pyo3(get)]
-    updated_at: String,
-}
-
-impl<'a> From<&'a Order> for PyOrder {
-    fn from(order: &'a Order) -> Self {
-        PyOrder {
-            id: order.id.clone(),
-            symbol: order.contract.symbol.clone(),
-            quantity: order.request.quantity,
-            side: format!("{:?}", order.request.side).to_lowercase(),
-            order_type: format!("{:?}", order.request.order_type).to_lowercase(),
-            status: format!("{:?}", order.state.status).to_lowercase(),
-            filled_quantity: order.state.filled_quantity,
-            average_fill_price: order.state.average_fill_price,
-            created_at: order.created_at.to_rfc3339(),
-            updated_at: order.updated_at.to_rfc3339(),
-        }
-    }
-}
-
-#[pyclass]
-struct PyPosition {
-    #[pyo3(get)]
-    symbol: String,
-    #[pyo3(get)]
-    quantity: f64,
-    #[pyo3(get)]
-    average_cost: f64,
-    #[pyo3(get)]
-    market_price: f64,
-    #[pyo3(get)]
-    market_value: f64,
-    #[pyo3(get)]
-    unrealized_pnl: f64,
-    #[pyo3(get)]
-    realized_pnl: f64,
-    #[pyo3(get)]
-    updated_at: String,
-}
-
-impl<'a> From<&'a Position> for PyPosition {
-    fn from(position: &'a Position) -> Self {
-        PyPosition {
-            symbol: position.symbol.clone(),
-            quantity: position.quantity,
-            average_cost: position.average_cost,
-            market_price: position.market_price,
-            market_value: position.market_value,
-            unrealized_pnl: position.unrealized_pnl,
-            realized_pnl: position.realized_pnl,
-            updated_at: position.updated_at.to_rfc3339(),
-        }
-    }
-}
-
-#[pyclass]
-struct PyAccountInfo {
-    #[pyo3(get)]
-    account_id: String,
-    #[pyo3(get)]
-    account_type: String,
-    #[pyo3(get)]
-    base_currency: String,
-    #[pyo3(get)]
-    equity: f64,
-    #[pyo3(get)]
-    buying_power: f64,
-    #[pyo3(get)]
-    cash_balance: f64,
-    #[pyo3(get)]
-    day_trades_remaining: i32,
-    #[pyo3(get)]
-    updated_at: String,
-}
-
-impl From<AccountInfo> for PyAccountInfo {
-    fn from(info: AccountInfo) -> Self {
-        PyAccountInfo {
-            account_id: info.account_id,
-            account_type: info.account_type,
-            base_currency: info.base_currency,
-            equity: info.equity,
-            buying_power: info.buying_power,
-            cash_balance: info.cash_balance,
-            day_trades_remaining: info.day_trades_remaining,
-            updated_at: info.updated_at.to_rfc3339(),
-        }
-    }
-}
-
-#[pyclass]
-struct PyBar {
-    #[pyo3(get)]
-    time: String,
-    #[pyo3(get)]
-    open: f64,
-    #[pyo3(get)]
-    high: f64,
-    #[pyo3(get)]
-    low: f64,
-    #[pyo3(get)]
-    close: f64,
-    #[pyo3(get)]
-    volume: i64,
-}
-
-impl From<Bar> for PyBar {
-    fn from(bar: Bar) -> Self {
-        PyBar {
-            time: bar.time.to_rfc3339(),
-            open: bar.open,
-            high: bar.high,
-            low: bar.low,
-            close: bar.close,
-            volume: bar.volume,
-        }
-    }
-}
-```
 
 ## 7. Testing Strategy
 
@@ -2167,5 +1844,3 @@ This API design addresses the core issues with the current synchronous IBKR API:
 3. **Improves robustness** with proper error handling and reconnection logic
 4. **Enhances observability** with comprehensive logging and replay
 5. **Manages complexity** by abstracting the underlying message protocol
-
-The implementation maintains a synchronous interface for Python compatibility while leveraging multi-threading for background tasks. It provides a solid foundation for building trading applications that interact with Interactive Brokers.
