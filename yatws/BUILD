@@ -35,6 +35,7 @@ rust_library(
         "@crates//:chrono",
         "@crates//:thiserror",
         "@crates//:num-traits",
+        "@crates//:byteorder",
         "@crates//:serde",
         "@crates//:bincode",
         "@crates//:tokio",
@@ -62,4 +63,29 @@ rust_test(
 rust_doc(
     name = "yatws_docs",
     crate = ":yatws",
+)
+
+rust_binary(
+    name = "tws_snoop",
+    srcs = ["tws_snoop.rs"],
+    edition = "2021",
+    deps = [
+        ":yatws",
+        "@crates//:byteorder",
+        "@crates//:clap",
+        "@crates//:log",
+        "@crates//:env_logger",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "gen_goldens",
+    srcs = ["gen_goldens.rs"],
+    edition = "2021",
+    deps = [
+        ":yatws",
+        "@crates//:env_logger",
+    ],
+    visibility = ["//visibility:public"],
 )

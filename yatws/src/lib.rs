@@ -20,8 +20,6 @@ mod protocol_encoder;
 mod protocol_decoder;
 mod protocol_dec_parser;
 mod min_server_ver;
-mod handler;
-mod conn;
 mod message_parser;
 mod parser_client;
 mod parser_order;
@@ -31,12 +29,14 @@ mod parser_data_ref;
 mod parser_data_market;
 mod parser_data_fin;
 mod parser_data_news;
+pub mod handler;
+pub mod conn;
 
 // Re-export the core data structures
-pub use base::*;
-pub use contract::*;
-pub use order::*;
-pub use account::*;
+// pub use base::*;
+// pub use contract::*;
+// pub use order::*;
+// pub use account::*;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

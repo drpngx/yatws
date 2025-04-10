@@ -17,11 +17,11 @@ pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
 # Merge it with requirements.txt into requirements_lock.txt
 # bazel run requirements.update
 pip.parse(
-    hub_name = "pip_deps",
+    hub_name = "yatws_pip_deps",
     python_version = kPythonVersion,
     requirements_lock = "//:requirements_lock.txt",
 )
-use_repo(pip, "pip_deps")
+use_repo(pip, "yatws_pip_deps")
 
 ########## RUST
 bazel_dep(name = "rules_rust", version = "0.59.2")
@@ -60,5 +60,7 @@ crate.spec(package = "tokio-test", version = "0.4.4")
 crate.spec(package = "mockall", version = "0.13.1")
 crate.spec(package = "serial_test", version = "3.2.0")
 crate.spec(package = "tempfile", version = "3.19.1")
+crate.spec(package = "clap", version = "4.5.31", features = ["derive"])
+crate.spec(package = "byteorder", version = "1.5.0")
 crate.from_specs()
 use_repo(crate, "crates")
