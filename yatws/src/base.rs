@@ -1,7 +1,11 @@
 // yatws/src/base.rs
+// Base types and error definitions for the TWS API
 
 use thiserror::Error;
 use std::fmt;
+use std::io::{Read, Write};
+use std::time::Duration;
+
 
 /// Errors that can occur in the IBKR API
 #[derive(Error, Debug, Clone)]
@@ -50,6 +54,18 @@ pub enum IBKRError {
 
   #[error("Internal error: {0}")]
   InternalError(String),
+
+  #[error("Update TWS: {0}")]
+  UpdateTws(String),
+
+  #[error("Invalid contract: {0}")]
+  InvalidContract(String),
+
+  #[error("Invalid order: {0}")]
+  InvalidOrder(String),
+
+  #[error("Invalid account: {0}")]
+  InvalidAccount(String),
 }
 
 /// Direction of a message (incoming or outgoing)
@@ -93,7 +109,6 @@ pub trait Notification: Send + Sync + 'static {}
 #[derive(Debug, Clone)]
 pub struct IBKRRawMessage {
   fields: Vec<String>,
-  #[allow(dead_code)]
   version: i32,
 }
 
@@ -114,7 +129,6 @@ impl IBKRRawMessage {
   /// Get the message type
   pub fn message_type(&self) -> MessageType {
     // In a real implementation, this would analyze the message structure
-    // This is a placeholder implementation
     if self.fields.is_empty() {
       return MessageType::Notification;
     }
@@ -134,7 +148,6 @@ impl IBKRRawMessage {
   /// Get the request ID if present
   pub fn request_id(&self) -> Option<i32> {
     // In a real implementation, this would extract the request ID from the message
-    // This is a placeholder implementation
     if self.fields.len() > 1 {
       self.fields[1].parse::<i32>().ok()
     } else {
@@ -145,7 +158,6 @@ impl IBKRRawMessage {
   /// Parse a raw message from bytes
   pub fn parse(data: &[u8]) -> Result<Self, IBKRError> {
     // In a real implementation, this would parse the IBKR message format
-    // This is a placeholder implementation
     let s = String::from_utf8_lossy(data);
     let fields: Vec<String> = s.split('\0').map(|s| s.to_string()).collect();
 
@@ -158,7 +170,6 @@ impl IBKRRawMessage {
   /// Serialize the message to bytes
   pub fn serialize(&self) -> Vec<u8> {
     // In a real implementation, this would serialize to the IBKR message format
-    // This is a placeholder implementation
     let mut result = Vec::new();
     for field in &self.fields {
       result.extend_from_slice(field.as_bytes());
@@ -226,13 +237,13 @@ impl Default for ReconnectConfig {
 #[derive(Debug)]
 pub struct RateLimiter {
   requests_per_period: usize,
-  period: std::time::Duration,
+  period: Duration,
   request_times: Vec<std::time::Instant>,
 }
 
 impl RateLimiter {
   /// Create a new rate limiter
-  pub fn new(requests_per_period: usize, period: std::time::Duration) -> Self {
+  pub fn new(requests_per_period: usize, period: Duration) -> Self {
     RateLimiter {
       requests_per_period,
       period,
@@ -260,7 +271,106 @@ impl RateLimiter {
   /// Wait until a request can be made
   pub fn wait(&mut self) {
     while !self.check() {
-      std::thread::sleep(std::time::Duration::from_millis(10));
+      std::thread::sleep(Duration::from_millis(10));
     }
+  }
+}
+
+/// Transport for sending and receiving TWS messages
+pub trait ETransport: Send + Sync {
+  /// Send a message
+  fn send(&mut self, message: &[u8]) -> Result<(), IBKRError>;
+
+  /// Receive a message
+  fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, IBKRError>;
+
+  /// Check if connected
+  fn is_connected(&self) -> bool;
+
+  /// Close the transport
+  fn close(&mut self) -> Result<(), IBKRError>;
+}
+
+/// Basic TCP transport implementation for TWS
+pub struct TcpTransport {
+  stream: Option<std::net::TcpStream>,
+  connected: bool,
+}
+
+impl TcpTransport {
+  /// Create a new TCP transport
+  pub fn new() -> Self {
+    Self {
+      stream: None,
+      connected: false,
+    }
+  }
+
+  /// Connect to TWS
+  pub fn connect(&mut self, host: &str, port: u16) -> Result<(), IBKRError> {
+    if self.connected {
+      return Err(IBKRError::AlreadyConnected);
+    }
+
+    let addr = format!("{}:{}", host, port);
+    match std::net::TcpStream::connect(&addr) {
+      Ok(stream) => {
+        // Set timeouts
+        if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(5))) {
+          return Err(IBKRError::ConnectionFailed(format!("Failed to set read timeout: {}", e)));
+        }
+
+        if let Err(e) = stream.set_write_timeout(Some(Duration::from_secs(5))) {
+          return Err(IBKRError::ConnectionFailed(format!("Failed to set write timeout: {}", e)));
+        }
+
+        self.stream = Some(stream);
+        self.connected = true;
+        Ok(())
+      }
+      Err(e) => Err(IBKRError::ConnectionFailed(format!("Failed to connect to {}: {}", addr, e))),
+    }
+  }
+}
+
+impl ETransport for TcpTransport {
+  fn send(&mut self, message: &[u8]) -> Result<(), IBKRError> {
+    if !self.connected {
+      return Err(IBKRError::NotConnected);
+    }
+
+    if let Some(stream) = &mut self.stream {
+      match stream.write_all(message) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(IBKRError::SocketError(format!("Write error: {}", e))),
+      }
+    } else {
+      Err(IBKRError::NotConnected)
+    }
+  }
+
+  fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, IBKRError> {
+    if !self.connected {
+      return Err(IBKRError::NotConnected);
+    }
+
+    if let Some(stream) = &mut self.stream {
+      match stream.read(buffer) {
+        Ok(n) => Ok(n),
+        Err(e) => Err(IBKRError::SocketError(format!("Read error: {}", e))),
+      }
+    } else {
+      Err(IBKRError::NotConnected)
+    }
+  }
+
+  fn is_connected(&self) -> bool {
+    self.connected
+  }
+
+  fn close(&mut self) -> Result<(), IBKRError> {
+    self.stream = None;
+    self.connected = false;
+    Ok(())
   }
 }

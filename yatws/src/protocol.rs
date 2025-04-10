@@ -21,7 +21,7 @@ pub struct Connection {
   server_version: i32,
   connected: bool,
   stream: Option<TcpStream>,
-  encoder: Option<Encoder<TcpStream>>,
+  encoder: Option<Encoder>,
   next_request_id: i32,
 }
 
