@@ -42,3 +42,5 @@ pub struct MessageHandler {
   pub data_news: Box<dyn NewsDataHandler>,
   pub data_fin: Box<dyn FinancialDataHandler>,
 }
+
+unsafe impl Send for MessageHandler {}

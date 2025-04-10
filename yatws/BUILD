@@ -25,6 +25,7 @@ rust_library(
         "src/parser_data_fin.rs",
         "src/parser_data_news.rs",
         "src/min_server_ver.rs",
+        "src/conn.rs",
     ],
     edition = "2021",
     proc_macro_deps = [

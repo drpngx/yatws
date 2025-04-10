@@ -132,4 +132,7 @@ pub mod min_server_ver {
   pub const BOND_ACCRUED_INTEREST: i32 = 185;
   pub const INELIGIBILITY_REASONS: i32 = 186;
   pub const RFQ_FIELDS: i32 = 187;
+  // If you add anything, please edit the MAX_SUPPORTED_VERSION.
+
+  pub const MAX_SUPPORTED_VERSION: i32 = 187;
 }

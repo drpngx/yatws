@@ -21,6 +21,7 @@ mod protocol_decoder;
 mod protocol_dec_parser;
 mod min_server_ver;
 mod handler;
+mod conn;
 mod message_parser;
 mod parser_client;
 mod parser_order;
