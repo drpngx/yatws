@@ -20,8 +20,17 @@ def ComponentFiles(comp):
       'yatws/src/min_server_ver.rs',
       'yatws/src/conn.rs',
       'yatws/src/order.rs',
+      'yatws/src/order_builder.rs',
       'yatws/src/lib.rs',
       'yatws/src/contract.rs',
+    ],
+    'client': [
+      'yatws/src/order_manager.rs',
+      'yatws/src/news.rs',
+      'yatws/src/data_manager.rs',
+      'yatws/src/account_manager.rs',
+      'yatws/src/data.rs',
+      'yatws/src/client.rs'
     ],
     'tcp': [
       'yatws/src/protocol_encoder.rs',
@@ -62,6 +71,17 @@ def PrintAvailableModels(client):
 
 def RunListModels(client, _argv):
   PrintAvailableModels(client)
+
+
+def _CheckCompFiles():
+  files = ComponentFiles('all')
+  found_files = glob.glob('yatws/**/*.rs')
+  missing = []
+  files = set(files)
+  for f in found_files:
+    if f not in files:
+      missing.append(f)
+  assert not missing, missing
 
 
 def RunChat(client, argv):
@@ -120,6 +140,7 @@ def RunChat(client, argv):
 
 
 def Run(argv):
+  _CheckCompFiles()
   client = genai.Client(api_key=os.environ.get('GEMINI_API_KEY'))
   match argv[1]:
     case 'chat':

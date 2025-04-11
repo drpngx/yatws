@@ -30,12 +30,17 @@ mod parser_data_ref;
 mod parser_data_market;
 mod parser_data_fin;
 mod parser_data_news;
+mod order_builder;
 pub mod order_manager;
 pub mod account_manager;
 pub mod data_manager;
 pub mod client;
 pub mod handler;
 pub mod conn;
+
+pub use order_builder::OrderBuilder;
+pub use order::Order;
+pub use contract::Contract;
 
 // Re-export the core data structures
 // pub use base::*;

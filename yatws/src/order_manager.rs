@@ -25,6 +25,7 @@ impl OrderManager {
   // pub fn place_limit_order(&self, symbol: &str, quantity: f64, price: f64, side: OrderSide) -> Result<String, IBKRError>;
   // pub fn place_stop_order(&self, symbol: &str, quantity: f64, stop_price: f64, side: OrderSide) -> Result<String, IBKRError>;
   // pub fn place_custom_order(&self, contract: Contract, order: OrderRequest) -> Result<String, IBKRError>;
+  // pub fn wait_order_submitted(&self, order_id: &str) -> Result<(), IBKRError>;
 
   // Order management methods
   // pub fn cancel_order(&self, order_id: &str) -> Result<bool, IBKRError>;

@@ -9,6 +9,7 @@ rust_library(
         "src/base.rs",
         "src/contract.rs",
         "src/order.rs",
+        "src/order_builder.rs",
         "src/account.rs",
         "src/news.rs",
         "src/data.rs",
