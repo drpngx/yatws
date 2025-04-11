@@ -18,14 +18,16 @@ pub struct IBKRClient {
 impl IBKRClient {
   pub fn new(host: &str, port: u16, client_id: i32) -> Result<Self, IBKRError> {
     let conn = Box::new(SocketConnection::new(host, port, client_id)?);
+    let server_version = conn.get_server_version();
     let message_broker = Arc::new(MessageBroker::new(conn));
     let client_mgr = ClientManager::new(message_broker.clone());
-    let order_mgr = Arc::new(OrderManager::new(message_broker.clone()));
+    let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
     let data_mgr = Arc::new(DataManager::new(message_broker.clone()));
-    let msg_handler = MessageHandler::new(client_mgr.clone(),
-                                          account_mgr.clone());
+    let msg_handler = MessageHandler::new(server_version, client_mgr.clone(),
+                                          account_mgr.clone(), order_mgr.clone());
     message_broker.set_message_handler(msg_handler);
+    order_init()?;
     Ok(IBKRClient {
       client_mgr,
       order_mgr,

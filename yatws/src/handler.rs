@@ -4,6 +4,7 @@ use crate::contract::Contract;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
+use crate::order::{OrderRequest, OrderStatus, OrderState};
 
 /// Meta messages such as errors and time.
 pub trait ClientHandler: Send + Sync {
@@ -22,16 +23,60 @@ pub trait ClientHandler: Send + Sync {
 
 /// Order processing.
 pub trait OrderHandler: Send + Sync {
-  // fn next_valid_id(&self, order_id: i32);
-  // // ... Add Send + Sync if needed ...
-  // fn open_order(&self, order_id: i32, contract: &Contract, order: &Order, order_state: &OrderState);
-  // fn open_order_end(&self);
-  // fn order_status(&self, order_id: i32, status: &str, filled: f64, remaining: f64, avg_fill_price: f64, perm_id: i32, parent_id: i32, last_fill_price: f64, client_id: i32, why_held: &str, mkt_cap_price: f64);
+  /// Provides the next available order ID. Sent automatically on connection.
+  fn next_valid_id(&self, order_id: i32);
+
+  /// Provides the status of an order.
+  /// Called automatically by TWS after placing/modifying/canceling orders.
+  /// Note: The status string needs to be parsed into OrderStatus by the implementation.
+  /// The mkt_cap_price field is relatively new.
+  fn order_status(
+    &self,
+    order_id: i32,
+    order_status: OrderStatus,
+    filled: f64,
+    remaining: f64,
+    avg_fill_price: f64,
+    perm_id: i32, // Permanent ID assigned by TWS, 0 if not set
+    parent_id: i32, // Parent order ID, 0 if not part of a complex order
+    last_fill_price: f64, // Price of the last partial fill
+    client_id: i32, // ID of the client that placed the order
+    why_held: &str, // Reason order is held (e.g., locate pending)
+    mkt_cap_price: Option<f64>, // Market cap price for orders benefiting from price improvement
+  );
+
+  /// Provides order details when requesting open orders or receiving updates.
+  /// This combines Contract, OrderRequest details, and OrderState.
+  fn open_order(
+    &self,
+    order_id: i32,
+    contract: &Contract,
+    order_request: &OrderRequest, // The details of the order as submitted/known by TWS
+    order_state: &OrderState,   // The current live state of the order
+  );
+
+  /// Indicates the end of the initial burst of open orders after connection
+  /// or the end of a reqOpenOrders/reqAllOpenOrders response.
+  fn open_order_end(&self);
+
+  /// Callback for errors specific to an order ID (e.g., placing invalid order).
+  /// Should be called from ClientHandler::error when id > 0.
+  fn order_error(&self, order_id: i32, error_code: i32, error_msg: &str);
+
+  /// Message sent when TWS binds an API order ID to a TWS order ID.
+  /// Primarily useful for tracking orders submitted through other means or sessions.
+  fn order_bound(&self, order_id: i64, api_client_id: i32, api_order_id: i32);
+
+  /// Provides details of a completed order (filled or cancelled).
+  fn completed_order(&self, contract: &Contract, order_request: &OrderRequest, order_state: &OrderState);
+
+  /// Indicates the end of the completed orders transmission.
+  fn completed_orders_end(&self);
+
+  // --- Optional/Future methods for executions and commissions ---
   // fn execution_details(&self, req_id: i32, contract: &Contract, execution: &Execution);
   // fn execution_details_end(&self, req_id: i32);
   // fn commission_report(&self, commission_report: &CommissionReport);
-  // fn completed_order(&self, contract: &Contract, order: &Order, order_state: &OrderState);
-  // fn completed_orders_end(&self);
 }
 
 /// Information about the account such as open positions and cash balance.
@@ -104,9 +149,9 @@ impl ReferenceDataHandler for Dummy {}
 impl MarketDataHandler for Dummy {}
 impl NewsDataHandler for Dummy {}
 impl FinancialDataHandler for Dummy {}
-impl OrderHandler for Dummy {}
 
 pub struct MessageHandler {
+  server_version: i32,
   pub client: Arc<dyn ClientHandler>,
   pub order: Arc<dyn OrderHandler>,
   pub account: Arc<dyn AccountHandler>,
@@ -118,13 +163,16 @@ pub struct MessageHandler {
 }
 
 impl MessageHandler {
-  pub fn new(client: Arc<dyn ClientHandler>,
-             account: Arc<dyn AccountHandler>) -> Self {
+  pub fn new(server_version: i32,
+             client: Arc<dyn ClientHandler>,
+             account: Arc<dyn AccountHandler>,
+             order: Arc<dyn OrderHandler>) -> Self {
     let dummy = Arc::new(Dummy {});
     MessageHandler {
+      server_version,
       client,
       account,
-      order: dummy.clone(),
+      order,
       fin_adv: dummy.clone(),
       data_ref: dummy.clone(),
       data_market: dummy.clone(),
@@ -135,4 +183,6 @@ impl MessageHandler {
   // TODO: move this to ClientManager.
   pub fn connection_closed(&mut self) {
   }
+
+  pub fn get_server_version(&self) -> i32 { self.server_version }
 }

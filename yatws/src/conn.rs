@@ -81,52 +81,46 @@ pub trait Connection: Send + Sync + 'static {
 
 // --- Socket Implementation Module ---
 mod socket {
-  use super::Connection; // Import trait from parent module
+  use super::Connection;
   use crate::base::IBKRError;
-  use crate::handler::MessageHandler; // Ensure this is imported
+  use crate::handler::MessageHandler;
   use crate::message_parser::process_message;
   use crate::min_server_ver::min_server_ver;
 
-  // --- Use parking_lot primitives ---
-  use parking_lot::{Mutex, RwLock}; // Keep RwLock if used elsewhere, Mutex definitely needed
-  use std::sync::Arc; // Arc is from std
-
+  use parking_lot::Mutex; // Only Mutex needed here now
+  use std::sync::Arc;
   use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
   use log::{debug, error, info, warn};
   use std::io::{self, Cursor, ErrorKind, Read, Write};
-  use std::net::{Shutdown, TcpStream, ToSocketAddrs}; // Import necessary net items
+  use std::net::{Shutdown, TcpStream, ToSocketAddrs};
   use std::thread;
   use std::time::Duration;
-  use std::thread::sleep as thread_sleep; // Alias sleep
+  use std::thread::sleep as thread_sleep;
 
-
-  // --- SocketConnection Structs (using parking_lot::Mutex) ---
-  /// A basic socket connection to TWS that dispatches messages to a handler.
-  /// This outer struct is Send + Sync + Clone because its state is in Arc<Mutex>.
-  #[derive(Clone)] // Add Clone derive
+  // --- SocketConnection Structs ---
+  #[derive(Clone)]
   pub struct SocketConnection {
-    host: String, // Keep these for reference/reconnect?
+    host: String,
     port: u16,
     client_id: i32,
-    // Core state protected by Mutex for interior mutability
+    // Core state protected by Mutex
     inner_state: Arc<Mutex<SocketConnectionInner>>,
-    // Reader thread handle and stop flag, managed separately but using Arc/Mutex
+    // Reader thread handle and stop flag, managed separately
     reader_thread: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     stop_flag: Arc<Mutex<bool>>,
   }
 
-  // Holds the actual connection state and mutable data
+  // Holds the actual connection state
   struct SocketConnectionInner {
     server_version: i32,
     connection_time: String,
-    connected: bool,
-    stream: Option<TcpStream>, // TcpStream is not Clone, must be Option and moved/taken
-    handler: Option<MessageHandler>, // Handler moves to the reader thread
+    connected: bool, // API fully active (H3 sent, reader started)?
+    h3_sent: bool,   // Has StartAPI (H3) been sent?
+    stream: Option<TcpStream>, // Holds stream after H1/H2 until disconnect
+    handler: Option<MessageHandler>, // Handler set by user
   }
 
-  // --- Helper Functions (read_exact_timeout, read_framed_message_body, write_framed_message) ---
-  // These remain largely the same, operating on the raw TcpStream.
-
+  // --- Helper Functions (unchanged) ---
   fn read_exact_timeout(stream: &mut TcpStream, buf: &mut [u8], timeout: Duration) -> io::Result<()> {
     let start = std::time::Instant::now();
     let mut bytes_read = 0;
@@ -225,44 +219,44 @@ mod socket {
 
   // --- SocketConnection Implementation ---
   impl SocketConnection {
-    /// Create a new TWS connection and connect immediately
+    /// Create a new TWS connection structure, connect TCP, and perform
+    /// handshake steps H1 (client version) and H2 (server ack).
+    /// The connection is not fully active (`is_connected` returns false) until
+    /// `set_message_handler` is called successfully for the first time.
     pub fn new(host: &str, port: u16, client_id: i32) -> Result<Self, IBKRError> {
+      info!("Initiating connection to TWS at {}:{}", host, port);
+
+      // Perform initial connection and H1/H2
+      let (stream, server_version, connection_time) = Self::connect_h1_h2(host, port)?;
+
+      // Create the shared state
       let inner = SocketConnectionInner {
-        server_version: 0,
-        connection_time: String::new(),
-        connected: false,
-        stream: None,
-        handler: None,
+        server_version,
+        connection_time,
+        connected: false, // Not fully active yet
+        h3_sent: false,   // StartAPI not sent yet
+        stream: Some(stream), // Store the stream
+        handler: None,    // Set later
       };
 
-      let mut connection = Self {
+      let connection = Self {
         host: host.to_string(),
         port,
         client_id,
-        inner_state: Arc::new(Mutex::new(inner)), // parking_lot::Mutex
-        reader_thread: Arc::new(Mutex::new(None)), // parking_lot::Mutex
-        stop_flag: Arc::new(Mutex::new(false)),   // parking_lot::Mutex
+        inner_state: Arc::new(Mutex::new(inner)),
+        reader_thread: Arc::new(Mutex::new(None)),
+        stop_flag: Arc::new(Mutex::new(false)),
       };
 
-      connection.connect()?; // Call connect internally
+      info!("TCP connection established, server version received. Waiting for message handler to send StartAPI.");
       Ok(connection)
     }
 
-    /// Connect to TWS (called by new)
-    fn connect(&mut self) -> Result<(), IBKRError> {
-      // lock() returns guard directly
-      let mut state = self.inner_state.lock();
-      // Optional: Check state.is_poisoned() if strict handling needed
-
-      if state.connected {
-        return Err(IBKRError::AlreadyConnected);
-      }
-
-      info!("Connecting to TWS at {}:{}", self.host, self.port);
+    /// Performs TCP connection and Handshake steps H1 and H2. (Internal Helper)
+    fn connect_h1_h2(host: &str, port: u16) -> Result<(TcpStream, i32, String), IBKRError> {
       let timeout = Duration::from_secs(10);
-      let addr = format!("{}:{}", self.host, self.port);
+      let addr = format!("{}:{}", host, port);
 
-      // Use ToSocketAddrs on &str
       let socket_addrs: Vec<_> = match addr.as_str().to_socket_addrs() {
         Ok(iter) => iter.collect(),
         Err(e) => return Err(IBKRError::ConfigurationError(format!("Invalid address '{}': {}", addr, e))),
@@ -271,29 +265,26 @@ mod socket {
         return Err(IBKRError::ConfigurationError(format!("No valid IP addresses found for {}", addr)));
       }
 
-      // Try connecting
       let mut stream = TcpStream::connect_timeout(&socket_addrs[0], timeout)
         .map_err(|e| IBKRError::ConnectionFailed(format!("Connect failed to {}: {}", socket_addrs[0], e)))?;
 
       stream.set_write_timeout(Some(timeout))
         .map_err(|e| IBKRError::ConnectionFailed(format!("Failed to set write timeout: {}", e)))?;
-      // Read timeout is set per-read
 
-      // --- Handshake H1, H2, H3 ---
+      // --- Handshake H1 ---
       info!("Sending Handshake H1...");
       let api_prefix = b"API\0";
-      const MIN_VERSION: i32 = 100; // Example min TWS API version supported by client handshake
-      const MAX_VERSION: i32 = min_server_ver::MAX_SUPPORTED_VERSION; // Max TWS API version from constants
+      const MIN_VERSION: i32 = 100;
+      const MAX_VERSION: i32 = min_server_ver::MAX_SUPPORTED_VERSION;
       let version_payload = if MIN_VERSION < MAX_VERSION { format!("v{}..{}", MIN_VERSION, MAX_VERSION) } else { format!("v{}", MIN_VERSION) };
-      let connect_options = ""; // Optional connection parameters (e.g., " clientId=...")
+      let connect_options = "";
       let version_payload_full = if !connect_options.is_empty() { format!("{} {}", version_payload, connect_options) } else { version_payload };
       let version_bytes = version_payload_full.as_bytes();
-      let version_len_u32 = version_bytes.len() as u32; // Assuming length fits in u32
+      let version_len_u32 = version_bytes.len() as u32;
 
-      // Prepare H1: API\0 + Length (u32 BE) + Version String
       let mut h1_message = Vec::with_capacity(api_prefix.len() + 4 + version_bytes.len());
       h1_message.extend_from_slice(api_prefix);
-      h1_message.write_u32::<BigEndian>(version_len_u32).unwrap(); // Use unwrap for Vec write
+      h1_message.write_u32::<BigEndian>(version_len_u32).unwrap();
       h1_message.extend_from_slice(version_bytes);
 
       stream.write_all(&h1_message).map_err(|e| IBKRError::SocketError(format!("Sending H1: {}", e)))?;
@@ -302,7 +293,6 @@ mod socket {
 
       // --- H2: Read Server Ack ---
       info!("Waiting for Handshake H2 (Server Ack)...");
-      // Note: read_framed_message_body handles setting/unsetting read timeout
       let h2_body = read_framed_message_body(&mut stream, timeout)?;
       info!("Received Handshake H2 body ({} bytes)", h2_body.len());
 
@@ -311,270 +301,299 @@ mod socket {
         return Err(IBKRError::ParseError(format!("Invalid H2 body format: {:02X?}", h2_body)));
       }
       let server_version_str = std::str::from_utf8(h2_parts[0]).map_err(|e| IBKRError::ParseError(format!("Invalid UTF8 server version: {}", e)))?;
-      state.server_version = server_version_str.parse::<i32>().map_err(|e| IBKRError::ParseError(format!("Parsing server version '{}': {}", server_version_str, e)))?;
-      state.connection_time = std::str::from_utf8(h2_parts[1]).map_err(|e| IBKRError::ParseError(format!("Invalid UTF8 connection time: {}", e)))?.to_string();
-      info!("Parsed ServerVersion={}, ConnectionTime='{}'", state.server_version, state.connection_time);
+      let server_version = server_version_str.parse::<i32>().map_err(|e| IBKRError::ParseError(format!("Parsing server version '{}': {}", server_version_str, e)))?;
+      let connection_time = std::str::from_utf8(h2_parts[1]).map_err(|e| IBKRError::ParseError(format!("Invalid UTF8 connection time: {}", e)))?.to_string();
+      info!("Parsed ServerVersion={}, ConnectionTime='{}'", server_version, connection_time);
 
-      // --- H3: Send StartAPI ---
-      info!("Sending Handshake H3 (StartAPI)...");
-      let capabilities = ""; // Optional capabilities
-      let h3_body_str = format!("71\02\0{}\0{}\0", self.client_id, capabilities); // MsgId=71, Version=2
-      let h3_body_bytes = h3_body_str.as_bytes();
-      write_framed_message(&mut stream, h3_body_bytes)?; // write_framed_message handles framing
-      info!("Sent Handshake H3 body ({} bytes)", h3_body_bytes.len());
-      // --- End Handshake ---
-
-      state.stream = Some(stream); // Store the stream in the locked state
-      state.connected = true;
-      info!("Connected successfully to TWS (Server Version: {})", state.server_version);
-
-      // Keep lock until potential reader start check
-      let handler_is_set = state.handler.is_some();
-      drop(state); // Release lock
-
-      // Start reader thread ONLY if handler was already set during connect() call
-      if handler_is_set {
-        if let Err(e) = self.start_reader_thread() {
-          error!("Failed to start reader thread during connect: {:?}", e);
-          let _ = self.disconnect(); // Attempt disconnect
-          return Err(e);
-        }
-      }
-
-      Ok(())
+      Ok((stream, server_version, connection_time))
     }
 
-    /// Start the reader thread. Assumes lock on inner_state is NOT held when called.
-    fn start_reader_thread(&self) -> Result<(), IBKRError> {
+    /// Starts the dedicated reader thread. (Internal Helper)
+    /// Assumes the caller holds the lock to inner_state and has validated conditions.
+    /// Takes ownership of the handler and a cloned stream.
+    fn start_reader_thread(
+      &self, // Needed to access Arcs
+      mut reader_stream: TcpStream,
+      mut handler: MessageHandler,
+      server_version: i32,
+    ) -> Result<(), IBKRError> {
       log::info!("Starting the reader thread.");
-      // Check if already running
-      if self.reader_thread.lock().is_some() { // lock() returns guard
-        return Ok(());
-      }
-      log::info!("Locking the state.");
 
-      // Lock state to check conditions and move handler/stream
-      let mut state = self.inner_state.lock(); // lock() returns guard
-
-      if state.handler.is_none() {
-        return Err(IBKRError::InternalError("No message handler set to start reader".to_string()));
-      }
-      if !state.connected || state.stream.is_none() {
-        return Err(IBKRError::NotConnected);
-      }
-
-      // Clone the stream for the reader thread
-      let mut reader_stream = match state.stream.as_ref().unwrap().try_clone() {
-        Ok(s) => s,
-        Err(e) => return Err(IBKRError::SocketError(format!("Cloning stream for reader: {}", e))),
-      };
-      // Note: No need to set read timeout here, read_framed_message_body does it per call
-
-      // Reset stop flag before starting
-      *self.stop_flag.lock() = false; // lock() returns guard
-      let stop_flag = self.stop_flag.clone(); // Clone Arc for thread
-      let server_version = state.server_version;
-      // Move handler out of state into thread
-      let mut handler = state.handler.take().unwrap();
-      // Clone Arc for state access in thread's cleanup
+      // Clone Arcs needed for the thread
+      let stop_flag_clone = self.stop_flag.clone();
       let state_clone = self.inner_state.clone();
-      // Clone Arc for thread handle access in thread's cleanup
       let reader_thread_handle_clone = self.reader_thread.clone();
 
-      drop(state); // Release lock on inner_state before spawning thread
+      // Reset stop flag *before* spawning
+      *self.stop_flag.lock() = false;
 
       let handle = thread::spawn(move || {
-        debug!("Message reader thread started");
-        let read_loop_timeout = Duration::from_secs(2); // Timeout for each read attempt
+        debug!("Message reader thread started (Server Version: {})", server_version);
+        let read_loop_timeout = Duration::from_secs(2);
 
         loop {
           // Check stop flag first
-          if *stop_flag.lock() { // lock() returns guard
+          if *stop_flag_clone.lock() {
             debug!("Reader thread received stop signal.");
             break;
           }
 
           match read_framed_message_body(&mut reader_stream, read_loop_timeout) {
             Ok(msg_data) => {
-              if msg_data.is_empty() { continue; } // Skip empty keep-alives?
-
+              if msg_data.is_empty() { continue; } // Skip empty keep-alives
               if let Err(e) = process_message(&mut handler, &msg_data) {
-                error!("Error processing message type: {:?}", e);
-                // Decide if error is fatal? break; ?
+                error!("Error processing message: {:?}", e);
+                // Decide if error is fatal? Maybe break?
               }
             },
             Err(IBKRError::Timeout(_)) => {
-              // Normal read timeout, just loop again
+              // Normal read timeout, loop again
               continue;
             }
             Err(IBKRError::ConnectionFailed(msg)) | Err(IBKRError::SocketError(msg)) => {
-              // Check for specific connection loss errors
+              // Check for common connection loss errors before logging potentially noisy ones
               if msg.contains("timed out") || msg.contains("reset") || msg.contains("broken pipe") || msg.contains("refused") || msg.contains("closed") || msg.contains("EOF") || msg.contains("network") || msg.contains("host is down") {
-                error!("Connection lost in reader thread: {}", msg);
-                handler.connection_closed(); // Notify handler *before* exit
+                error!("Connection lost/error in reader thread: {}", msg);
+                handler.connection_closed(); // Notify handler
                 break; // Exit loop
               } else {
-                error!("Unhandled socket/connection error in reader: {}", msg);
+                warn!("Unhandled socket/connection error in reader: {}", msg); // Use warn for less critical errors
+                // Consider breaking or sleeping
                 thread_sleep(Duration::from_millis(100));
-                // Consider if this should also break?
               }
             },
             Err(e) => { // Other IBKRErrors (ParseError, InternalError)
               error!("Non-IO error in reader thread: {:?}", e);
+              // Consider if these should break the loop
               thread_sleep(Duration::from_millis(100));
-              // Decide if these are fatal? break; ?
             }
           }
         } // End loop
 
         // --- Cleanup after loop ends ---
         info!("Message reader thread stopping cleanup...");
-        *stop_flag.lock() = true; // Ensure stop flag is set
+        // Ensure stop flag is set upon exit, regardless of reason
+        *stop_flag_clone.lock() = true;
 
-        // Update shared state
+        // Update shared state (mark as disconnected, remove stream ref potentially)
         {
-          let mut state = state_clone.lock(); // lock() returns guard
+          let mut state = state_clone.lock();
           state.connected = false;
-          state.stream = None; // Stream is dead
-          // Handler goes out of scope here, effectively dropped
+          // state.stream should ideally be cleared by disconnect, but reader dying
+          // implicitly means the main write stream might also be dead.
+          // Disconnect should handle clearing state.stream properly.
         }
 
         // Clear the JoinHandle in the main struct
-        {
-          *reader_thread_handle_clone.lock() = None; // lock() returns guard
-        }
+        *reader_thread_handle_clone.lock() = None;
         debug!("Message reader thread finished.");
       }); // End thread::spawn
 
       // Store the handle
-      *self.reader_thread.lock() = Some(handle); // lock() returns guard
+      *self.reader_thread.lock() = Some(handle);
       Ok(())
     }
+
   } // end impl SocketConnection
 
 
   // --- Implement the Connection Trait ---
   impl Connection for SocketConnection {
+    /// Checks if the API connection is fully active (StartAPI sent and reader running).
     fn is_connected(&self) -> bool {
-      // lock() returns guard directly
-      self.inner_state.lock().connected && !(*self.stop_flag.lock())
+      let state = self.inner_state.lock();
+      // Considered connected only if H3 was sent AND the stop flag isn't set.
+      // We rely on disconnect/reader thread exit to set connected=false if issues arise after H3.
+      state.connected && !(*self.stop_flag.lock())
     }
 
-    // disconnect requires &mut self because it modifies the SocketConnection fields (reader_thread)
     fn disconnect(&mut self) -> Result<(), IBKRError> {
       info!("Disconnecting from TWS...");
-      // lock() returns guards directly
       let mut reader_handle_guard = self.reader_thread.lock();
       let mut state = self.inner_state.lock();
 
-      if !state.connected && reader_handle_guard.is_none() {
-        info!("Already disconnected.");
+      let was_ever_partially_connected = state.stream.is_some(); // Did H1/H2 succeed?
+      let is_reader_running = reader_handle_guard.is_some();
+
+      if !was_ever_partially_connected && !is_reader_running && !*self.stop_flag.lock() {
+        info!("Already disconnected (or never connected).");
+        *self.stop_flag.lock() = true; // Ensure stop flag is set anyway
         return Ok(());
       }
 
-      // 1. Signal reader thread
+      // 1. Signal reader thread (if it might exist)
       *self.stop_flag.lock() = true;
 
-      // 2. Shutdown socket
-      if let Some(stream) = &state.stream {
+      // 2. Shutdown socket (if stream exists)
+      if let Some(stream) = &mut state.stream { // Get mut ref
         if let Err(e) = stream.shutdown(Shutdown::Both) {
-          if e.kind() != ErrorKind::NotConnected {
+          if e.kind() != ErrorKind::NotConnected && e.kind() != ErrorKind::BrokenPipe {
             warn!("Error shutting down socket during disconnect: {}", e);
           }
         }
       }
 
-      // 3. Take handle and drop locks before join
+      // 3. Reset state *before* dropping lock/joining thread
+      state.connected = false;
+      state.h3_sent = false; // Reset H3 flag too
+      state.stream = None;   // Drop the stream
+      state.handler = None;  // Drop the handler
+
+      // 4. Take handle and drop locks before join
       let reader_handle = reader_handle_guard.take();
       drop(state);
       drop(reader_handle_guard);
 
-      // 4. Wait for reader thread
+      // 5. Wait for reader thread
       if let Some(handle) = reader_handle {
         debug!("Waiting for reader thread to join...");
         if let Err(e) = handle.join() {
           error!("Error joining reader thread: {:?}", e);
+          // Reader thread cleanup should still attempt to clear its handle ref
         } else {
           debug!("Reader thread joined successfully.");
         }
+        // Ensure handle is cleared even if join failed/panicked
+        *self.reader_thread.lock() = None;
       } else {
         debug!("No active reader thread to join.");
-        // Manually clean up state if reader wasn't running
-        let mut final_state = self.inner_state.lock();
-        if final_state.connected {
-          final_state.connected = false;
-          final_state.stream = None;
-          final_state.handler = None;
-        }
       }
 
-      // State *should* be updated by reader thread or manual cleanup above
       info!("Disconnected from TWS.");
       Ok(())
     }
 
-    // send_message_body requires &mut self because write_framed_message needs &mut TcpStream
+    /// Sends a message body. Requires the connection to be fully active (`is_connected` true).
     fn send_message_body(&mut self, data: &[u8]) -> Result<(), IBKRError> {
-      // lock() returns guard directly
       let mut state = self.inner_state.lock();
 
-      if !state.connected { return Err(IBKRError::NotConnected); }
+      // Check if API is fully active (H3 sent, reader started, not stopped)
+      if !state.connected {
+        return Err(IBKRError::NotConnected);
+      }
 
+      // Stream must be Some if connected is true
       if let Some(stream) = &mut state.stream {
-        // Pass mutable ref to stream
         write_framed_message(stream, data)
       } else {
-        Err(IBKRError::NotConnected)
+        // This indicates an inconsistent state. Should not happen if logic is correct.
+        error!("Inconsistent state: connected=true but stream is None during send.");
+        state.connected = false; // Correct the state
+        state.h3_sent = false;
+        *self.stop_flag.lock() = true; // Signal stop
+        Err(IBKRError::InternalError("Connection state inconsistent".to_string()))
       }
     }
 
-    // set_message_handler requires &mut self because it might trigger start_reader_thread
+    /// Sets the message handler. The first call triggers StartAPI (H3) and starts the reader thread.
     fn set_message_handler(&mut self, handler: MessageHandler) {
-      // lock() returns guard directly
       let mut state = self.inner_state.lock();
 
       if state.handler.is_some() {
         warn!("Replacing existing message handler.");
-        error!("Running reader thread may still use the old handler!");
-      }
-      state.handler = Some(handler);
-      let is_connected = state.connected;
-      drop(state); // Drop lock before potentially starting reader
-
-      let is_reader_running = self.reader_thread.lock().is_some();
-      if is_connected && !is_reader_running {
-        info!("Setting handler and starting reader thread...");
-        if let Err(e) = self.start_reader_thread() {
-          error!("Failed to start reader thread after setting handler: {:?}", e);
-          let _ = self.disconnect(); // Attempt disconnect
+        if state.connected && self.reader_thread.lock().is_some() {
+          error!("Reader thread is active; replacing handler may lead to unexpected behavior. Consider disconnecting first.");
+          // We are just replacing the handler field here; the running thread keeps the old one.
         }
-      } else if is_connected {
-        debug!("Handler set, but reader thread already running.");
+      }
+      state.handler = Some(handler); // Store the new handler regardless
+
+      // Check conditions to send H3 and start reader:
+      // 1. H1/H2 must have completed (stream exists).
+      // 2. H3 shouldn't have been sent already.
+      // 3. Reader thread should not be running already (safety check).
+      let should_send_h3 = state.stream.is_some() && !state.h3_sent && self.reader_thread.lock().is_none();
+
+      if should_send_h3 {
+        info!("Message handler set. Sending StartAPI (H3) and starting reader thread...");
+
+        // --- Send H3 (StartAPI) ---
+        let capabilities = "";
+        let h3_body_str = format!("71\02\0{}\0{}\0", self.client_id, capabilities);
+        let h3_body_bytes = h3_body_str.as_bytes();
+
+        // Get mutable access to the stream (unwrap safe due to check)
+        let stream = state.stream.as_mut().unwrap();
+        if let Err(e) = write_framed_message(stream, h3_body_bytes) {
+          error!("Failed to send StartAPI (H3): {:?}. Disconnecting.", e);
+          // Don't keep lock while calling disconnect
+          drop(state);
+          let _ = self.disconnect(); // Attempt cleanup
+          // We could return the error, but disconnect is likely better.
+          // Or, we could set state to disconnected here. Let disconnect handle it.
+          return; // Exit after trying disconnect
+        }
+        info!("Sent Handshake H3 body ({} bytes)", h3_body_bytes.len());
+        state.h3_sent = true; // Mark H3 as sent *before* starting reader
+
+        // --- Start Reader Thread ---
+        // Clone the stream for the reader (unwrap safe)
+        let reader_stream = match state.stream.as_ref().unwrap().try_clone() {
+          Ok(s) => s,
+          Err(e) => {
+            error!("Failed to clone stream for reader thread: {:?}. Disconnecting.", e);
+            state.h3_sent = false; // Revert H3 sent flag?
+            drop(state);
+            let _ = self.disconnect(); // Attempt cleanup
+            return;
+          }
+        };
+        // Take the handler we just stored (unwrap safe)
+        let handler_for_thread = state.handler.take().unwrap();
+        let server_version = state.server_version;
+
+        // Mark as connected *just before* starting reader
+        state.connected = true;
+
+        // Drop the lock *before* spawning the thread
+        drop(state);
+
+        // Call the helper to spawn the thread
+        if let Err(e) = self.start_reader_thread(reader_stream, handler_for_thread, server_version) {
+          error!("Failed to start reader thread: {:?}. Disconnecting.", e);
+          // Need to re-acquire lock to reset state? Or just disconnect?
+          // Let disconnect handle state reset.
+          let _ = self.disconnect();
+        } else {
+          info!("Reader thread started successfully. Connection fully active.");
+          // Need to put the handler back if start_reader_thread failed?
+          // No, start_reader_thread takes ownership. If it fails, the handler is dropped.
+          // If disconnect runs, it clears the handler anyway.
+        }
+      } else if state.h3_sent {
+        debug!("Handler set/replaced, but StartAPI already sent. Reader thread state unchanged.");
       } else {
-        debug!("Handler set, but not connected.");
+        debug!("Handler set, but prerequisites for sending StartAPI not met (stream missing?).");
       }
     }
 
+
     fn get_server_version(&self) -> i32 {
-      // lock() returns guard directly
+      // Server version is available after `new` succeeds.
       self.inner_state.lock().server_version
     }
   } // end impl Connection
 
 
-  // --- Implement Drop ---
+  // --- Implement Drop (unchanged) ---
   impl Drop for SocketConnection {
     fn drop(&mut self) {
-      // Check connection status without relying on is_connected self borrow
       let needs_disconnect = {
-        let state = self.inner_state.lock();
-        state.connected || self.reader_thread.lock().is_some()
+        if *self.stop_flag.lock() {
+          false
+        } else {
+          let state = self.inner_state.lock();
+          state.stream.is_some() || self.reader_thread.lock().is_some()
+        }
       };
+
       if needs_disconnect {
         info!("Dropping SocketConnection, ensuring disconnect...");
         if let Err(e) = self.disconnect() {
           error!("Error during disconnect on drop: {:?}", e);
         }
+      } else {
+        info!("Dropping SocketConnection, disconnect not required.");
       }
     }
   }

@@ -1,36 +1,871 @@
-use parking_lot::RwLock;
-use crate::order::OrderObserver;
+use parking_lot::{RwLock, Mutex, Condvar};
 use std::sync::Arc;
 use std::collections::HashMap;
-use crate::order::Order;
+use std::time::Duration;
+use chrono::Utc;
+use log::{debug, error, info, warn};
+
+use crate::order::{Order, OrderRequest, OrderUpdates, OrderState, OrderStatus, TimeInForce};
+use crate::contract::Contract;
 use crate::conn::MessageBroker;
+use crate::base::IBKRError;
+use crate::handler::OrderHandler;
+use crate::protocol_encoder::Encoder;
+// Removed unused import: crate::parser_order;
+
 
 pub struct OrderManager {
   message_broker: Arc<MessageBroker>,
+  // Map: client_order_id (String) -> Order struct
   order_book: RwLock<HashMap<String, Arc<RwLock<Order>>>>,
+  // Map: perm_id (i32) -> client_order_id (String) for quick lookup from status updates
+  perm_id_map: RwLock<HashMap<i32, String>>,
   observers: RwLock<Vec<Box<dyn OrderObserver + Send + Sync>>>,
+  // Mutex + Condvar for waiting for the initial next_valid_id
+  next_order_id_state: Mutex<Option<usize>>,
+  order_id_condvar: Condvar,
+  // Condvars for waiting on specific order state changes (client_order_id -> Condvar)
+  // Arc<(Mutex for Condvar, Condvar)>
+  order_update_condvars: RwLock<HashMap<String, Arc<(Mutex<()>, Condvar)>>>,
 }
 
 impl OrderManager {
-  pub fn new(message_broker: Arc<MessageBroker>) -> Self {
-    OrderManager {
+  /// Creates a new OrderManager and returns it along with a closure
+  /// that must be called *after* connection to wait for the initial nextValidId.
+  pub fn create(message_broker: Arc<MessageBroker>) -> (Arc<Self>, impl FnOnce() -> Result<(), IBKRError>) {
+    let manager = Arc::new(OrderManager {
       message_broker,
       order_book: RwLock::new(HashMap::new()),
+      perm_id_map: RwLock::new(HashMap::new()),
       observers: RwLock::new(Vec::new()),
+      next_order_id_state: Mutex::new(None), // Start as None
+      order_id_condvar: Condvar::new(),
+      order_update_condvars: RwLock::new(HashMap::new()),
+    });
+
+    let manager_clone = manager.clone();
+    // This closure captures the Arc and calls the private wait function.
+    let wait_fn = move || manager_clone.wait_for_initial_order_id();
+
+    (manager, wait_fn)
+  }
+
+  // Private function called by the closure returned from create()
+  fn wait_for_initial_order_id(&self) -> Result<(), IBKRError> {
+    info!("Waiting for initial nextValidId from server...");
+    let mut guard = self.next_order_id_state.lock();
+    let timeout = Duration::from_secs(30); // Configurable timeout
+    let start = std::time::Instant::now();
+
+    while guard.is_none() {
+      let remaining = timeout.checked_sub(start.elapsed()).unwrap_or(Duration::ZERO);
+      if remaining == Duration::ZERO {
+        error!("Timed out waiting for initial next valid order ID");
+        return Err(IBKRError::Timeout("Timed out waiting for initial next valid order ID".to_string()));
+      }
+      // Wait on the condvar, releasing the lock `guard` temporarily
+      let result = self.order_id_condvar.wait_for(&mut guard, remaining);
+      if result.timed_out() && guard.is_none() { // Re-check after timeout
+        error!("Timed out waiting for initial next valid order ID (after wait)");
+        return Err(IBKRError::Timeout("Timed out waiting for initial next valid order ID".to_string()));
+      }
+      // If woken up, the loop condition (guard.is_none()) will be checked again
+      debug!("wait_for_initial_order_id notified, checking status...");
+    }
+
+    info!("Received initial next_valid_id: {}", guard.unwrap());
+    Ok(())
+  }
+
+  /// Adds an observer to receive order notifications.
+  pub fn add_observer(&self, observer: Box<dyn OrderObserver + Send + Sync>) {
+    let mut observers = self.observers.write();
+    observers.push(observer);
+    debug!("Added order observer");
+  }
+
+  // Note: Removing observers requires assigning unique IDs, omitted for brevity.
+
+  /// Peek what the next order ID will be *without* consuming it.
+  /// You may get a higher next order ID at the next `place_order` if you run in parallel.
+  pub fn peek_order_id(&self) -> Result<String, IBKRError> {
+    let guard = self.next_order_id_state.lock();
+    match *guard {
+      Some(id) => Ok(id.to_string()),
+      None => Err(IBKRError::InternalError("Next valid order ID not yet received from server".to_string())),
     }
   }
 
-  // Order placement methods: return the order ID.
-  // pub fn place_market_order(&self, symbol: &str, quantity: f64, side: OrderSide) -> Result<String, IBKRError>;
-  // pub fn place_limit_order(&self, symbol: &str, quantity: f64, price: f64, side: OrderSide) -> Result<String, IBKRError>;
-  // pub fn place_stop_order(&self, symbol: &str, quantity: f64, stop_price: f64, side: OrderSide) -> Result<String, IBKRError>;
-  // pub fn place_custom_order(&self, contract: Contract, order: OrderRequest) -> Result<String, IBKRError>;
-  // pub fn wait_order_submitted(&self, order_id: &str) -> Result<(), IBKRError>;
+  /// Place an order.
+  /// This sends an order to the system and returns immediately without waiting for confirmation.
+  /// The assigned client order ID is returned.
+  pub fn place_order(&self, contract: Contract, request: OrderRequest) -> Result<String, IBKRError> {
+    info!("Placing order: {:?} for {}", request.side, contract.symbol);
+    if !request.transmit {
+      // TODO: Support complex orders where transmit=false later
+      warn!("Placing order with transmit=false. This is usually for complex orders and may not work as expected standalone.");
+      // return Err(IBKRError::RequestError("Standalone orders must have transmit=true".to_string()));
+    }
+    // Create the initial Order struct
+    let now = Utc::now();
 
-  // Order management methods
-  // pub fn cancel_order(&self, order_id: &str) -> Result<bool, IBKRError>;
-  // pub fn modify_order(&self, order_id: &str, updates: OrderUpdates) -> Result<Arc<RwLock<Order>>, IBKRError>;
-  // pub fn get_order(&self, order_id: &str) -> Option<Order>;
-  // pub fn get_all_orders(&self) -> Vec<Order>;
-  // pub fn get_open_orders(&self) -> Vec<Order>;
+    // We acquire the lock on the next_order_id. Since orders have to be submitted in
+    // sequence, we don't release it until we are done transmitting it.
+    let mut id_guard = self.next_order_id_state.lock();
+    let order_id_int = match *id_guard {
+      Some(id) => {
+        *id_guard = Some(id + 1); // Increment the ID
+        debug!("Assigning order id {}, next will be {}", id, id + 1);
+        Ok(id as i32) // Return the *current* ID
+      }
+      None => {
+        error!("Attempted to place order before next_valid_id was received");
+        Err(IBKRError::InternalError("Next valid order ID not yet received from server".to_string()))
+      }
+    }?;
+
+    let order_id_str = order_id_int.to_string();
+
+    let order = Order {
+      id: order_id_str.clone(),
+      perm_id: None, // Will be set by orderStatus
+      client_id: None, // Will be set by orderStatus
+      parent_id: request.parent_id, // Copy from request
+      contract: contract.clone(), // Clone contract
+      request: request.clone(),   // Clone request
+      state: OrderState {
+        status: OrderStatus::PendingSubmit, // Initial state after sending
+        remaining_quantity: request.quantity, // Initialize remaining qty
+        ..Default::default()
+      },
+      created_at: now,
+      updated_at: now,
+    };
+
+    let order_arc = Arc::new(RwLock::new(order));
+
+    // Add to order book *before* sending
+    {
+      let mut book = self.order_book.write();
+      if book.insert(order_id_str.clone(), order_arc.clone()).is_some() {
+        // Should not happen if get_and_increment_order_id works correctly
+        error!("Order ID collision detected for ID: {}", order_id_str);
+        return Err(IBKRError::InternalError(format!("Order ID collision: {}", order_id_str)));
+      }
+      // Add condvar for this order *before* releasing lock, ensuring it exists if needed immediately
+      let mut condvars = self.order_update_condvars.write();
+      condvars.entry(order_id_str.clone())
+        .or_insert_with(|| Arc::new((Mutex::new(()), Condvar::new())));
+      debug!("Order {} added to book and condvar map in PendingSubmit state", order_id_str);
+    } // Release write lock on order_book and condvars
+
+    // Prepare and send message
+    let encoder = Encoder::new(self.message_broker.get_server_version()?);
+    // Pass the *cloned request* from the Order struct to the encoder
+    let place_msg = encoder.encode_place_order(order_id_int, &contract, &order_arc.read().request)?;
+    self.message_broker.send_message(&place_msg)?;
+
+    info!("Place order request sent for ID: {}", order_id_str);
+    Ok(order_id_str)
+  }
+
+  /// Cancel an order.
+  /// This method sends a cancel request and returns immediately without waiting for confirmation.
+  pub fn cancel_order(&self, order_id: &str) -> Result<bool, IBKRError> {
+    info!("Requesting cancellation for order ID: {}", order_id);
+    let order_id_int = order_id.parse::<i32>()
+      .map_err(|_| IBKRError::InvalidOrder(format!("Invalid order ID format: {}", order_id)))?;
+
+    // Check if order exists and is potentially cancellable (optional check)
+    {
+      let book = self.order_book.read();
+      if let Some(order_arc) = book.get(order_id) {
+        let order = order_arc.read();
+        if order.state.is_terminal() {
+          warn!("Attempting to cancel order {} which is already in terminal state {:?}", order_id, order.state.status);
+          return Ok(false); // Indicate no action taken as it's already terminal
+        }
+      } else {
+        warn!("Attempting to cancel non-existent order ID: {}", order_id);
+        // Send cancel anyway? TWS might handle it or return an error. Let's proceed.
+        // return Err(IBKRError::NotFound(format!("Order ID {} not found", order_id)));
+      }
+    }
+
+
+    // Prepare and send message
+    let encoder = Encoder::new(self.message_broker.get_server_version()?);
+    let cancel_msg = encoder.encode_cancel_order(order_id_int)?;
+    self.message_broker.send_message(&cancel_msg)?;
+
+    // We don't update the local state optimistically. We wait for orderStatus.
+    // The only potential update could be to set status to PendingCancel, but
+    // waiting for the official status is safer.
+
+    info!("Cancel order request sent for ID: {}", order_id);
+    Ok(true) // Indicate request was sent
+  }
+
+  /// Modify an order.
+  /// This sends a *new* placeOrder command with the *same ID* but updated parameters.
+  /// Returns the Arc<RwLock<Order>> for the existing order.
+  pub fn modify_order(&self, order_id: &str, updates: OrderUpdates) -> Result<Arc<RwLock<Order>>, IBKRError> {
+    info!("Modifying order ID: {} with updates: {:?}", order_id, updates);
+    let order_id_int = order_id.parse::<i32>()
+      .map_err(|_| IBKRError::InvalidOrder(format!("Invalid order ID format: {}", order_id)))?;
+
+    let order_arc = {
+      let book = self.order_book.read();
+      book.get(order_id)
+        .cloned()
+        .ok_or_else(|| IBKRError::InvalidOrder(format!("Order ID {} not found for modification", order_id)))?
+    };
+
+    // Check if the order is already in a terminal state before attempting modification
+    {
+      let order = order_arc.read();
+      if order.state.is_terminal() {
+        error!("Cannot modify order {} because it is in a terminal state: {:?}", order_id, order.state.status);
+        return Err(IBKRError::InvalidOrder(format!("Order {} is terminal ({:?}) and cannot be modified", order_id, order.state.status)));
+      }
+    }
+
+    // Create a *new* OrderRequest based on the *original* request, applying updates
+    let mut modified_request = {
+      let order = order_arc.read();
+      order.request.clone() // Clone the original request
+    };
+
+    // Apply updates
+    let mut changed = false;
+    if let Some(qty) = updates.quantity {
+      if modified_request.quantity != qty {
+        modified_request.quantity = qty;
+        changed = true;
+      }
+    }
+    if let Some(lmt) = updates.limit_price {
+      if modified_request.limit_price != Some(lmt) {
+        modified_request.limit_price = Some(lmt);
+        changed = true;
+      }
+    } else if updates.limit_price.is_some() { // Check if explicitly set to None (e.g. change to Market)
+      if modified_request.limit_price.is_some() {
+        modified_request.limit_price = None;
+        changed = true;
+        // Consider changing order_type too? Modifying to MKT is tricky.
+        warn!("Modifying order {} limit price to None. Order type remains {}. Check TWS behavior.", order_id, modified_request.order_type);
+      }
+    }
+    if let Some(aux) = updates.aux_price {
+      if modified_request.aux_price != Some(aux) {
+        modified_request.aux_price = Some(aux);
+        changed = true;
+      }
+    } else if updates.aux_price.is_some() {
+      if modified_request.aux_price.is_some() {
+        modified_request.aux_price = None;
+        changed = true;
+      }
+    }
+    if let Some(tif) = updates.time_in_force {
+      if modified_request.time_in_force != tif {
+        modified_request.time_in_force = tif;
+        changed = true;
+      }
+    }
+    // Add other updatable fields (Trail, OutsideRTH, etc.)
+
+    if !changed {
+      warn!("No changes detected for modifying order ID: {}", order_id);
+      return Ok(order_arc); // Return original if no changes
+    }
+
+    // Get the contract from the existing order
+    let contract = {
+      order_arc.read().contract.clone()
+    };
+
+    // Prepare and send message with the *same order ID* but *modified request*
+    let encoder = Encoder::new(self.message_broker.get_server_version()?);
+    let modify_msg = encoder.encode_place_order(order_id_int, &contract, &modified_request)?;
+    self.message_broker.send_message(&modify_msg)?;
+
+    info!("Modify order request sent for ID: {}", order_id);
+    // We don't update the local OrderRequest immediately. We wait for OrderStatus updates.
+    Ok(order_arc)
+  }
+
+  // --- Wait Functions ---
+
+  /// Internal helper for waiting logic. `timeout_duration = None` means wait indefinitely.
+  fn _wait_for_status_internal(
+    &self,
+    order_id: &str,
+    target_statuses: &[OrderStatus],
+    timeout_duration: Option<Duration>
+  ) -> Result<OrderStatus, IBKRError> {
+    let timeout_str = timeout_duration.map_or_else(|| "indefinitely".to_string(), |d| format!("{:?}", d));
+    debug!("Waiting for order {} to reach status {:?} (timeout: {})", order_id, target_statuses, timeout_str);
+
+    // Get or create the condvar pair *before* checking the status, to avoid race conditions
+    // where a notification happens between the check and the wait.
+    let condvar_pair = {
+      // First try read lock for efficiency
+      let condvars_read = self.order_update_condvars.read();
+      if let Some(pair) = condvars_read.get(order_id) {
+        pair.clone()
+      } else {
+        // Drop read lock and acquire write lock if not found
+        drop(condvars_read);
+        let mut condvars_write = self.order_update_condvars.write();
+        // Use entry().or_insert_with() for atomicity within the write lock
+        condvars_write.entry(order_id.to_string())
+          .or_insert_with(|| Arc::new((Mutex::new(()), Condvar::new())))
+          .clone()
+      }
+    };
+
+    let (lock, cvar) = &*condvar_pair;
+    let mut guard = lock.lock(); // Lock the mutex associated with the condvar
+
+    let start_time = std::time::Instant::now();
+
+    loop {
+      // --- Check current state ---
+      let current_state = {
+        let book = self.order_book.read();
+        book.get(order_id)
+          .map(|order_arc| {
+            let order = order_arc.read();
+            (order.state.status, order.state.error.clone()) // Clone status and potential error
+          })
+      };
+
+      match current_state {
+        // Order not found
+        None => {
+          error!("Order {} not found while waiting for status", order_id);
+          return Err(IBKRError::InvalidOrder(format!("Order {} not found while waiting", order_id)));
+        }
+        // Error occurred
+        Some((_status, Some(err))) => {
+          error!("Order {} failed while waiting for status {:?}: {:?}", order_id, target_statuses, err);
+          return Err(err.clone());
+        }
+        // Target status reached
+        Some((current_status, None)) if target_statuses.contains(&current_status) => {
+          info!("Order {} reached target status {:?}", order_id, current_status);
+          return Ok(current_status); // Condition met
+        }
+        // Reached a terminal state *other* than the target
+        Some((current_status, None)) if current_status.is_terminal() => {
+          error!("Order {} reached terminal state {:?} while waiting for {:?}", order_id, current_status, target_statuses);
+          return Err(IBKRError::InvalidOrder(format!("Order {} terminated in state {:?} unexpectedly while waiting for {:?}",
+                                                     order_id, current_status, target_statuses)));
+        }
+        // Still waiting, status is not target and not terminal/error
+        Some((current_status, None)) => {
+          debug!("Order {} current status is {:?}, continuing wait for {:?}", order_id, current_status, target_statuses);
+        }
+      }
+      // --- End Check current state ---
+
+
+      // --- Wait or Timeout ---
+      if let Some(timeout) = timeout_duration {
+        let elapsed = start_time.elapsed();
+        if elapsed >= timeout {
+          warn!("Timeout waiting for order {} to reach status {:?}", order_id, target_statuses);
+          // Re-check status one last time *after* timeout determined, before returning error
+          let final_state_after_timeout = {
+            let book = self.order_book.read();
+            book.get(order_id).map(|o| (o.read().state.status, o.read().state.error.clone()))
+          };
+          match final_state_after_timeout {
+            Some((status, Some(err))) => return Err(err), // Return error if found
+            Some((status, None)) if target_statuses.contains(&status) => return Ok(status), // Return success if target met concurrently
+            Some((status, None)) if status.is_terminal() => return Err(IBKRError::InvalidOrder(format!("Order {} terminated in state {:?} unexpectedly on timeout while waiting for {:?}", order_id, status, target_statuses))),
+            _ => return Err(IBKRError::Timeout(format!("Timeout waiting for order {} status ({:?})", order_id, target_statuses))), // Return timeout error
+          }
+        }
+        let remaining_wait = timeout - elapsed;
+        // wait_for releases the `guard` (mutex lock) and waits; re-acquires lock on wakeup/timeout
+        let result = cvar.wait_for(&mut guard, remaining_wait);
+        if result.timed_out() {
+          // If timed out according to condvar, loop will re-check elapsed time and likely exit.
+          // We re-check the condition inside the loop in case of spurious wakeup or race.
+          debug!("Condvar wait timed out for order {}, re-checking conditions...", order_id);
+        } else {
+          debug!("Wait for order {} notified, re-checking status...", order_id);
+        }
+      } else {
+        // Wait indefinitely
+        cvar.wait(&mut guard);
+        debug!("Wait indefinitely for order {} notified, re-checking status...", order_id);
+      }
+      // --- End Wait or Timeout ---
+
+      // Loop continues: will re-check status after waking up or timing out.
+    }
+  }
+
+
+  /// Wait indefinitely until an order is Submitted, or fails/terminates.
+  pub fn wait_order_submitted(&self, order_id: &str) -> Result<OrderStatus, IBKRError> {
+    self._wait_for_status_internal(order_id, &[OrderStatus::Submitted, OrderStatus::Filled], None)
+  }
+
+  /// Wait with a timeout until an order is Submitted or PreSubmitted, or fails/terminates.
+  /// Returns the status reached (Submitted or PreSubmitted) or an error (including Timeout).
+  pub fn try_wait_order_submitted(&self, order_id: &str, timeout: Duration) -> Result<OrderStatus, IBKRError> {
+    self._wait_for_status_internal(order_id, &[OrderStatus::Submitted, OrderStatus::Filled], Some(timeout))
+  }
+
+  /// Wait indefinitely until an order is Filled, or fails/terminates.
+  /// Returns OrderStatus::Filled or an error.
+  pub fn wait_order_executed(&self, order_id: &str) -> Result<OrderStatus, IBKRError> {
+    self._wait_for_status_internal(order_id, &[OrderStatus::Filled], None)
+  }
+
+  /// Wait with a timeout until an order is Filled, or fails/terminates.
+  /// Returns OrderStatus::Filled or an error (including Timeout).
+  pub fn try_wait_order_executed(&self, order_id: &str, timeout: Duration) -> Result<OrderStatus, IBKRError> {
+    self._wait_for_status_internal(order_id, &[OrderStatus::Filled], Some(timeout))
+  }
+
+  /// Wait indefinitely until an order is Cancelled, ApiCancelled, or Inactive, or fails/terminates differently.
+  /// Returns the status reached (Cancelled, ApiCancelled, Inactive) or an error.
+  /// Note: 'Inactive' often implies cancellation but might lack explicit confirmation.
+  pub fn wait_order_canceled(&self, order_id: &str) -> Result<OrderStatus, IBKRError> {
+    self._wait_for_status_internal(order_id, &[OrderStatus::Cancelled, OrderStatus::ApiCancelled, OrderStatus::Inactive], None)
+  }
+
+  /// Wait with a timeout until an order is Cancelled, ApiCancelled, or Inactive, or fails/terminates differently.
+  /// Returns the status reached (Cancelled, ApiCancelled, Inactive) or an error (including Timeout).
+  pub fn try_wait_order_canceled(&self, order_id: &str, timeout: Duration) -> Result<OrderStatus, IBKRError> {
+    self._wait_for_status_internal(order_id, &[OrderStatus::Cancelled, OrderStatus::ApiCancelled, OrderStatus::Inactive], Some(timeout))
+  }
+
+
+  // --- Getters ---
+
+  /// Find an order by ID. Returns a clone of the order data.
+  pub fn get_order(&self, order_id: &str) -> Option<Order> {
+    let book = self.order_book.read();
+    book.get(order_id).map(|order_arc| order_arc.read().clone())
+  }
+
+  /// List all orders known to the manager. Returns clones.
+  pub fn get_all_orders(&self) -> Vec<Order> {
+    let book = self.order_book.read();
+    book.values().map(|order_arc| order_arc.read().clone()).collect()
+  }
+
+  /// List all open orders (not terminal: Filled, Cancelled, Inactive, ApiCancelled). Returns clones.
+  pub fn get_open_orders(&self) -> Vec<Order> {
+    let book = self.order_book.read();
+    book.values()
+      .map(|order_arc| order_arc.read()) // Get read guard
+      .filter(|order| !order.state.is_terminal()) // Use is_terminal() helper
+      .map(|order_guard| order_guard.clone()) // Clone the Order data
+      .collect()
+  }
+
+  // --- Notification Helpers ---
+
+  fn notify_observers_update(&self, order: &Order) {
+    let observers = self.observers.read();
+    for observer in observers.iter() {
+      observer.on_order_update(order);
+    }
+  }
+
+  fn notify_observers_error(&self, order_id: &str, error: &IBKRError) {
+    let observers = self.observers.read();
+    for observer in observers.iter() {
+      observer.on_order_error(order_id, error);
+    }
+  }
+
+  // Notifies any threads waiting on this specific order's condvar.
+  fn notify_waiters(&self, order_id: &str) {
+    debug!("Notifying waiters for order {}", order_id);
+    let condvars = self.order_update_condvars.read(); // Read lock is sufficient
+    if let Some(condvar_pair) = condvars.get(order_id) {
+      let (_lock, cvar) = &**condvar_pair; // Dereference Arc then tuple
+      cvar.notify_all(); // Wake up all threads waiting on this order's condvar
+      debug!("Notified condvar for order {}", order_id);
+    } else {
+      // This might happen if a status arrives before the order is fully processed locally,
+      // though place_order tries to prevent this. Or if no one is waiting.
+      debug!("No active waiters found (or condvar not yet created) for order {}", order_id);
+    }
+  }
+
+}
+
+// --- Implement OrderHandler Trait ---
+impl OrderHandler for OrderManager {
+  fn next_valid_id(&self, order_id: i32) {
+    info!("Handler: Received nextValidId: {}", order_id);
+    let mut guard = self.next_order_id_state.lock();
+    if guard.is_none() {
+      *guard = Some(order_id as usize);
+      debug!("Set initial next_valid_id to {}", order_id);
+      self.order_id_condvar.notify_all(); // Notify the waiter in create()
+    } else {
+      // Normally, TWS only sends this once on connection.
+      // If received again, it might indicate a reset or issue.
+      warn!("Received nextValidId {} again, current state is {:?}. Updating.", order_id, *guard);
+      *guard = Some(order_id as usize);
+    }
+  }
+
+  fn order_status(
+    &self,
+    order_id_int: i32,
+    order_status: OrderStatus,
+    filled: f64,
+    remaining: f64,
+    avg_fill_price: f64,
+    perm_id: i32,
+    parent_id: i32,
+    last_fill_price: f64,
+    client_id: i32,
+    why_held: &str,
+    mkt_cap_price: Option<f64>,
+  ) {
+    let order_id_str = order_id_int.to_string();
+    debug!(
+      "Handler: Received orderStatus: ID={}, PermID={}, Status={:?}, Filled={}, Rem={}, AvgPx={}, LastPx={}, ClientId={}, WhyHeld={}",
+      order_id_str, perm_id, order_status, filled, remaining, avg_fill_price, last_fill_price, client_id, why_held
+    );
+
+    // Find the order by client ID
+    let order_arc = {
+      let book = self.order_book.read();
+      book.get(&order_id_str).cloned()
+    };
+
+    if let Some(order_arc) = order_arc {
+      let order_updated = { // Scope for write lock
+        let mut order = order_arc.write(); // Lock the specific order for writing
+
+        let previous_status = order.state.status;
+
+        // Update state based on received status
+        order.state.status = order_status;
+        order.state.filled_quantity = filled;
+        order.state.remaining_quantity = remaining;
+        order.state.average_fill_price = avg_fill_price;
+        order.state.last_fill_price = if last_fill_price != 0.0 { Some(last_fill_price) } else { order.state.last_fill_price }; // Keep old if 0
+        order.state.why_held = if !why_held.is_empty() { Some(why_held.to_string()) } else { None };
+        order.state.market_cap_price = mkt_cap_price;
+
+        // Update IDs if not already set or if changed (unlikely but possible)
+        if order.perm_id.is_none() && perm_id != 0 {
+          order.perm_id = Some(perm_id);
+          // Add to perm_id map for lookup
+          let mut p_map = self.perm_id_map.write();
+          p_map.insert(perm_id, order_id_str.clone());
+          debug!("Mapped PermID {} to OrderID {}", perm_id, order_id_str);
+        }
+        if order.client_id.is_none() && client_id != 0 {
+          order.client_id = Some(client_id);
+        }
+        // Parent ID usually set on creation, but update if provided and different?
+        if order.parent_id.is_none() && parent_id != 0 {
+          order.parent_id = Some(parent_id as i64);
+        }
+
+        order.updated_at = Utc::now();
+        // Clear previous error ONLY if the status indicates progress or finality,
+        // otherwise keep the error state. For example, don't clear error on PendingSubmit.
+        if order_status != OrderStatus::PendingSubmit && order_status != OrderStatus::PendingCancel {
+          order.state.error = None;
+        }
+
+
+        debug!("Updated order {} state: {:?} -> {:?}", order_id_str, previous_status, order.state.status);
+        order.clone() // Clone the updated order data *before* dropping the lock
+      }; // Write lock is released here
+
+      // Notify observers and waiters *after* releasing the lock
+      self.notify_observers_update(&order_updated);
+      // Crucially, notify waiters *after* state is updated
+      self.notify_waiters(&order_id_str);
+
+    } else {
+      warn!("Received orderStatus for unknown order ID: {}", order_id_str);
+      // Could this be an order placed by another client ID connected to the same TWS?
+      // Or an order from a previous session? We might want to store it anyway if tracking is needed.
+    }
+  }
+
+  fn open_order(
+    &self,
+    order_id_int: i32,
+    contract: &Contract,
+    order_request: &OrderRequest,
+    order_state: &OrderState,
+  ) {
+    let order_id_str = order_id_int.to_string();
+    info!("Handler: Received openOrder: ID={}, Symbol={}, Status={:?}", order_id_str, contract.symbol, order_state.status);
+
+    let now = Utc::now();
+    let mut order_book = self.order_book.write(); // Lock book for potential insert/update
+
+    let order_arc_opt = order_book.get(&order_id_str).cloned(); // Clone Arc if exists
+
+    if let Some(existing_order_arc) = order_arc_opt {
+      drop(order_book); // Drop book lock early if updating existing order
+      debug!("Updating existing order {} from openOrder message", order_id_str);
+      let updated_order_clone;
+      { // Scope for write lock on the specific order
+        let mut order = existing_order_arc.write();
+
+        // Update contract, request, and state from the openOrder message
+        // This overwrites local state with potentially more accurate TWS state.
+        order.contract = contract.clone();
+        order.request = order_request.clone();
+
+        // Merge state: Trust openOrder for static info (margins, commission, warning)
+        // but keep dynamic info (status, filled, remaining, avg_price, last_price, why_held)
+        // from potentially more recent orderStatus messages unless the openOrder status
+        // is itself terminal.
+        let current_dynamic_state = (
+          order.state.status,
+          order.state.filled_quantity,
+          order.state.remaining_quantity,
+          order.state.average_fill_price,
+          order.state.last_fill_price,
+          order.state.why_held.clone(),
+        );
+        let previous_status = order.state.status;
+
+        // Overwrite the entire state first
+        order.state = order_state.clone();
+
+        // Restore dynamic fields if the new status is not terminal and the old ones were set
+        if !order.state.status.is_terminal() {
+          order.state.status = current_dynamic_state.0; // Keep potentially newer status
+          order.state.filled_quantity = current_dynamic_state.1;
+          order.state.remaining_quantity = current_dynamic_state.2;
+          order.state.average_fill_price = current_dynamic_state.3;
+          order.state.last_fill_price = current_dynamic_state.4;
+          order.state.why_held = current_dynamic_state.5;
+        }
+
+        // Update permId mapping if available (unlikely in openOrder unless it's the first msg)
+        if let Some(perm_id) = order.perm_id { // Assuming permId might be parsed into OrderState by parser
+          let mut p_map = self.perm_id_map.write();
+          if !p_map.contains_key(&perm_id) {
+            p_map.insert(perm_id, order_id_str.clone());
+            debug!("Mapped PermID {} to OrderID {} from openOrder", perm_id, order_id_str);
+          }
+        }
+
+        order.updated_at = now;
+        order.state.error = None; // Clear error on receiving open order update
+
+        debug!("Merged openOrder state for {}: {:?} -> {:?}", order_id_str, previous_status, order.state.status);
+        updated_order_clone = order.clone(); // Clone *before* dropping lock
+      } // Drop write lock on specific order
+
+      // Notify
+      self.notify_observers_update(&updated_order_clone);
+      self.notify_waiters(&order_id_str);
+
+    } else {
+      // Order not known locally, create it entirely from openOrder message
+      debug!("Adding new order {} from openOrder message", order_id_str);
+      let new_order = Order {
+        id: order_id_str.clone(),
+        // PermID *might* be included in openOrder for very old orders, check state
+        perm_id: None, // TODO: Check if parser adds permId to OrderState from openOrder
+        client_id: None, // Not usually in openOrder message
+        parent_id: order_request.parent_id,
+        contract: contract.clone(),
+        request: order_request.clone(),
+        state: order_state.clone(),
+        created_at: now, // Treat 'now' as creation time locally
+        updated_at: now,
+      };
+      let new_order_arc = Arc::new(RwLock::new(new_order));
+      order_book.insert(order_id_str.clone(), new_order_arc.clone());
+
+      // Ensure condvar exists for this new order
+      let mut condvars_write = self.order_update_condvars.write();
+      condvars_write.entry(order_id_str.clone())
+        .or_insert_with(|| Arc::new((Mutex::new(()), Condvar::new())));
+
+      // Update permId mapping if available
+      // if let Some(perm_id) = new_order_arc.read().perm_id { // Assuming permId exists
+      //     let mut p_map = self.perm_id_map.write();
+      //     p_map.insert(perm_id, order_id_str.clone());
+      //     debug!("Mapped PermID {} to OrderID {} from new openOrder", perm_id, order_id_str);
+      // }
+
+
+      let new_order_clone = new_order_arc.read().clone();
+      drop(order_book); // Drop write lock on book
+
+      // Notify
+      self.notify_observers_update(&new_order_clone);
+      self.notify_waiters(&order_id_str);
+    }
+  }
+
+  fn open_order_end(&self) {
+    info!("Handler: Received openOrderEnd");
+    // This signals the end of the initial burst of open orders after connection
+    // or after reqOpenOrders / reqAllOpenOrders.
+    // Can be used to signal that the initial state is loaded.
+  }
+
+  // This is called for ERR_MSG containing an order ID (code > 0)
+  fn order_error(&self, order_id_int: i32, error_code: i32, error_msg: &str) {
+    let order_id_str = if order_id_int > 0 {
+      order_id_int.to_string()
+    } else {
+      // Error not associated with a specific order ID (-1)
+      error!("Handler: Received general API error: Code={}, Msg={}", error_code, error_msg);
+      // Notify general error observers?
+      // self.notify_observers_error("-1", &IBKRError::ApiError(error_code, error_msg.to_string()));
+      return; // Don't process further as order-specific logic
+    };
+
+    error!("Handler: Received error for Order ID {}: Code={}, Msg={}", order_id_str, error_code, error_msg);
+    let ibkr_error = IBKRError::ApiError(error_code, error_msg.to_string());
+
+    let order_arc = {
+      let book = self.order_book.read();
+      book.get(&order_id_str).cloned()
+    };
+
+    if let Some(order_arc) = order_arc {
+      let order_clone;
+      { // Scope write lock
+        let mut order = order_arc.write();
+        // Mark order as errored. Often implies cancellation or rejection.
+        // Setting to Cancelled might be presumptive; maybe add an Error status?
+        // For now, setting to Cancelled and storing the error is common practice.
+        let previous_status = order.state.status;
+        if !order.state.status.is_terminal() {
+          order.state.status = OrderStatus::Cancelled; // Or Inactive? Depends on error code interpretation.
+        }
+        order.state.error = Some(ibkr_error.clone());
+        order.updated_at = Utc::now();
+        debug!("Marked order {} with error: {:?} -> {:?}", order_id_str, previous_status, order.state.status);
+        order_clone = order.clone();
+      } // release lock
+
+      self.notify_observers_error(&order_id_str, &ibkr_error); // Notify observers
+      self.notify_waiters(&order_id_str); // Notify waiters
+
+    } else {
+      // Error for an order we don't know about? Log it.
+      warn!("Received error for unknown/untracked order ID: {}", order_id_str);
+      // Should we still notify generic error observers?
+      self.notify_observers_error(&order_id_str, &ibkr_error);
+    }
+  }
+
+  fn order_bound(&self, order_id_i64: i64, api_client_id: i32, api_order_id: i32) {
+    // This message links an order ID generated by TWS itself (order_id_i64)
+    // to an order placed via the API (api_client_id, api_order_id).
+    // This is less common if all orders are placed via *this* API connection,
+    // but useful if orders might be placed manually or via other clients/sessions.
+    let api_order_id_str = api_order_id.to_string();
+    info!(
+      "Handler: Received orderBound: TwsOrderId={}, ApiClientId={}, ApiOrderId={}",
+      order_id_i64, api_client_id, api_order_id_str
+    );
+
+    // Try to find the order by the API order ID
+    let order_arc = {
+      let book = self.order_book.read();
+      book.get(&api_order_id_str).cloned()
+    };
+
+    if let Some(order_arc) = order_arc {
+      let mut order = order_arc.write(); // Lock for update
+      // We could potentially store the TWS-generated order_id_i64 if needed,
+      // but perm_id received via orderStatus is usually more useful.
+      // Check if the client ID matches what we expect, though TWS might report
+      // the binding regardless of which client placed it.
+      if order.client_id.is_none() {
+        order.client_id = Some(api_client_id);
+        debug!("Set client ID for order {} from orderBound", api_order_id_str);
+      } else if order.client_id != Some(api_client_id) {
+        warn!("orderBound received for order {} but ApiClientId {} differs from stored ClientId {:?}",
+              api_order_id_str, api_client_id, order.client_id);
+      }
+      // No state change or notification usually needed for orderBound itself.
+      order.updated_at = Utc::now(); // Update timestamp
+    } else {
+      warn!("Received orderBound for unknown ApiOrderId: {}", api_order_id_str);
+      // Potentially create a placeholder order entry if tracking external orders is needed?
+    }
+  }
+
+  fn completed_order(
+    &self,
+    contract: &Contract,
+    order_request: &OrderRequest,
+    order_state: &OrderState,
+  ) {
+    // CompletedOrder message lacks the client order ID. Correlation is difficult.
+    // The primary mechanism for final status is the orderStatus message.
+    // This handler is mostly for logging or if specific completion details
+    // (like completedTime/Status string) are needed and not captured elsewhere.
+    // Attempting correlation via perm_id is unreliable as perm_id isn't guaranteed
+    // to be part of the data passed to this handler method.
+
+    info!(
+      "Handler: Received completedOrder: Symbol={}, Status={:?}, CompletedTime={:?}",
+      contract.symbol, order_state.status, order_state.completed_time
+    );
+
+    // Finding the specific order is problematic. We log the event but generally
+    // avoid updating specific order state here, relying on orderStatus for that.
+    // If correlation is essential, the parser would need to somehow extract a
+    // unique identifier (like perm_id if present) and pass it along, or we'd
+    // need to iterate and match based on contract/request details (fragile).
+
+    warn!("Received completedOrder - this provides completion details but is hard to correlate reliably to a specific client order ID. Final status updates should come via orderStatus.");
+
+    // Potential future enhancement: If perm_id *is* reliably parsed into OrderState
+    // (which is not standard TWS behavior for this message), we could try matching:
+    // let perm_id_from_state: Option<i32> = ... // Extract if possible
+    // if let Some(perm_id) = perm_id_from_state {
+    //     let p_map = self.perm_id_map.read();
+    //     if let Some(order_id_str) = p_map.get(&perm_id) {
+    //         // Found order ID - proceed with cautious update
+    //         debug!("Correlated completedOrder via PermID {} to OrderID {}", perm_id, order_id_str);
+    //         // ... (update logic, similar to the commented-out section in previous versions) ...
+    //         // Ensure not to overwrite a more definitive status from orderStatus.
+    //         // Only update completed_time/status string.
+    //     } else {
+    //         warn!("CompletedOrder received with PermID {} but no matching OrderID found in map.", perm_id);
+    //     }
+    // } else {
+    //     warn!("CompletedOrder received but could not extract PermID for correlation.");
+    // }
+  }
+
+  fn completed_orders_end(&self) {
+    info!("Handler: Received completedOrdersEnd");
+    // Signals the end of the completed orders burst requested via reqCompletedOrders.
+  }
+}
+
+// --- Order Observer Trait ---
+// (Make sure the trait is defined, likely in this file or imported)
+pub trait OrderObserver: Send + Sync {
+  /// Called when an order's state is updated (e.g., via orderStatus or openOrder).
+  fn on_order_update(&self, order: &Order);
+  /// Called when an error related to a specific order is received.
+  fn on_order_error(&self, order_id: &str, error: &crate::base::IBKRError);
 }

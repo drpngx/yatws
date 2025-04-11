@@ -69,6 +69,12 @@ pub enum IBKRError {
 
   #[error("Invalid account: {0}")]
   InvalidAccount(String),
+
+  #[error("Unsupported: {0}")]
+  Unsupported(String),
+
+  #[error("API error: code={0}, msg={1}")]
+  ApiError(i32, String),
 }
 
 /// Rate limiter for API requests

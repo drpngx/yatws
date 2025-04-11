@@ -4,23 +4,41 @@
 use crate::contract::Contract;
 use chrono::{DateTime, Utc};
 use std::fmt;
+use std::str::FromStr;
+use crate::base::IBKRError;
 
-/// An order
 #[derive(Debug, Clone)]
 pub struct Order {
+  /// The client-side order ID assigned when placing the order (string representation of i32).
   pub id: String,
+  /// The permanent, unique order ID assigned by TWS/IBKR upon acceptance.
+  /// Received via `orderStatus` message. Optional because it's not known initially.
+  pub perm_id: Option<i32>,
+  /// The client ID of the TWS API connection that placed the order.
+  /// Received via `orderStatus` message. Optional.
+  pub client_id: Option<i32>,
+  /// The client-side order ID (`Order.id`) of the parent order for complex order types
+  /// like Brackets, OCA groups (One-Cancels-All), etc. Set during creation if applicable.
+  pub parent_id: Option<i64>, // TWS uses int/long, use i64 for safety
+  // TWS Also sends parentPermId sometimes, could be added if needed.
+  // pub parent_perm_id: Option<i64>,
+
+  /// The financial instrument being ordered.
   pub contract: Contract,
+  /// The parameters used to place or describe the order (e.g., quantity, type, price).
   pub request: OrderRequest,
+  /// The current live state of the order as reported by TWS (e.g., status, filled qty).
   pub state: OrderState,
+
+  /// Timestamp when the order object was created locally.
   pub created_at: DateTime<Utc>,
+  /// Timestamp when the order object was last updated (locally).
   pub updated_at: DateTime<Utc>,
 }
 
-/// Order request parameters
-// yatws/src/order.rs (Updated OrderRequest struct)
 
 /// Order request parameters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OrderRequest {
   pub order_type: OrderType,
   pub side: OrderSide,
@@ -360,31 +378,104 @@ impl Default for OrderRequest {
   }
 }
 
-/// Order state
+/// Order state - reflects the live status received from TWS messages like `openOrder` and `orderStatus`.
+/// Note that fields like filled quantity, remaining quantity, avg fill price, last fill price,
+/// and why held primarily come from the `orderStatus` message, while margin values,
+/// commission details, and warning text primarily come from the `openOrder` message.
 #[derive(Debug, Clone)]
 pub struct OrderState {
+  /// The current status of the order (e.g., Submitted, Filled, Cancelled).
+  /// This is updated by both `openOrder` and `orderStatus` messages. The `orderStatus`
+  /// message usually provides the most up-to-date status.
   pub status: OrderStatus,
+
+  // --- Fields primarily updated by OrderStatus message ---
+  /// Quantity of the order that has been filled.
   pub filled_quantity: f64,
+  /// Quantity of the order that is still outstanding.
   pub remaining_quantity: f64,
+  /// Average price at which the order has been filled.
   pub average_fill_price: f64,
+  /// Price of the last partial fill (requires TWS v973+ and orderStatus msg v4+).
   pub last_fill_price: Option<f64>,
+  /// If the order is held by IBKR (e.g., waiting for stock locate), this field provides the reason.
+  /// (Requires orderStatus msg v6+).
   pub why_held: Option<String>,
-  pub error: Option<crate::base::IBKRError>,
+  /// Market cap price for orders benefiting from price improvement (requires TWS v973+).
+  pub market_cap_price: Option<f64>,
+
+  // --- Fields primarily updated by OpenOrder message ---
+  /// Estimated commission cost for the order.
+  pub commission: Option<f64>,
+  /// Minimum estimated commission.
+  pub min_commission: Option<f64>,
+  /// Maximum estimated commission.
+  pub max_commission: Option<f64>,
+  /// Currency of the commission.
+  pub commission_currency: Option<String>,
+  /// Warning text returned by TWS related to the order.
+  pub warning_text: Option<String>,
+
+  // Margin fields (usually strings, represent values before/after hypothetical order placement/fill)
+  // These typically come from the `openOrder` message when initially placed or checked (WhatIf).
+  pub initial_margin_before: Option<String>,
+  pub maintenance_margin_before: Option<String>,
+  pub equity_with_loan_before: Option<String>,
+  pub initial_margin_change: Option<String>,
+  pub maintenance_margin_change: Option<String>,
+  pub equity_with_loan_change: Option<String>,
+  pub initial_margin_after: Option<String>,
+  pub maintenance_margin_after: Option<String>,
+  pub equity_with_loan_after: Option<String>,
+
+  // --- Fields primarily updated by CompletedOrder message ---
+  /// Time the order was completed (Filled or Cancelled), in "YYYYMMDD hh:mm:ss (zzz)" format.
+  pub completed_time: Option<String>,
+  /// Status string associated with order completion (e.g., "Filled", "Cancelled").
+  pub completed_status: Option<String>,
+
+  // --- Field set by OrderManager on error ---
+  /// If an API error occurred related to this order, it's stored here.
+  pub error: Option<IBKRError>, // Use your specific IBKRError type
 }
 
 impl Default for OrderState {
+  /// Creates a default OrderState, typically representing an order not yet sent or acknowledged.
   fn default() -> Self {
     OrderState {
-      status: OrderStatus::New,
+      status: OrderStatus::New, // Initial status before sending or confirmation
+      // Fields from orderStatus default to zero/None initially
       filled_quantity: 0.0,
-      remaining_quantity: 0.0,
+      remaining_quantity: 0.0, // Should be initialized from OrderRequest.quantity when Order is created
       average_fill_price: 0.0,
       last_fill_price: None,
       why_held: None,
+      market_cap_price: None,
+      // Fields from openOrder default to None
+      commission: None,
+      min_commission: None,
+      max_commission: None,
+      commission_currency: None,
+      warning_text: None,
+      initial_margin_before: None,
+      maintenance_margin_before: None,
+      equity_with_loan_before: None,
+      initial_margin_change: None,
+      maintenance_margin_change: None,
+      equity_with_loan_change: None,
+      initial_margin_after: None,
+      maintenance_margin_after: None,
+      equity_with_loan_after: None,
+      // Fields from completedOrder default to None
+      completed_time: None,
+      completed_status: None,
+      // Error state
       error: None,
     }
   }
 }
+
+impl OrderState { pub fn is_terminal(&self) -> bool { self.status.is_terminal() } }
 
 /// Order updates (for modifying existing orders)
 #[derive(Debug, Clone, Default)]
@@ -420,25 +511,32 @@ impl fmt::Display for OrderSide {
 /// Order type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderType {
-  Market,
-  Limit,
-  Stop,
-  StopLimit,
-  MarketIfTouched,
-  LimitIfTouched,
-  TrailingStop,
-  TrailingStopLimit,
-  PeggedToMarket,
-  PeggedToMidpoint,
-  MarketToLimit,
-  Relative,
-  BoxTop,
-  LimitOnClose,
-  MarketOnClose,
-  LimitOnOpen,
-  MarketOnOpen,
-  Volatility,
-  None,
+  Market,              // MKT
+  Limit,               // LMT
+  Stop,                // STP
+  StopLimit,           // STP LMT
+  MarketIfTouched,     // MIT
+  LimitIfTouched,      // LIT
+  TrailingStop,        // TRAIL
+  TrailingStopLimit,   // TRAIL LIMIT
+  PeggedToMarket,      // PEG MKT
+  PeggedToMidpoint,    // PEG MID
+  MarketToLimit,       // MTL
+  Relative,            // REL / RELATIVE
+  BoxTop,              // BOX TOP (no longer supported?)
+  LimitOnClose,        // LOC
+  MarketOnClose,       // MOC
+  LimitOnOpen,         // LOO (via TIF OPG + LMT type)
+  MarketOnOpen,        // MOO (via TIF OPG + MKT type)
+  Volatility,          // VOL
+  PeggedToBenchmark,   // PEG BENCH
+  PeggedBest,          // PEG BEST
+  PeggedPrimary,       // PEG PRIM
+  Auction,             // AUCTION
+  // GAT,                 // GAT (Guaranteed Average Trade?) - Often represented by TIF GAT
+  VWAP,                // VWAP (Algo order type)
+  Scale,               // SCALE (Algo order type)
+  None,                // Used internally or for errors
 }
 
 impl fmt::Display for OrderType {
@@ -455,27 +553,76 @@ impl fmt::Display for OrderType {
       OrderType::PeggedToMarket => "PEG MKT",
       OrderType::PeggedToMidpoint => "PEG MID",
       OrderType::MarketToLimit => "MTL",
-      OrderType::Relative => "REL",
+      OrderType::Relative => "REL", // Prefer short form
       OrderType::BoxTop => "BOX TOP",
       OrderType::LimitOnClose => "LOC",
       OrderType::MarketOnClose => "MOC",
-      OrderType::LimitOnOpen => "LOO",
-      OrderType::MarketOnOpen => "MOO",
+      OrderType::LimitOnOpen => "LMT", // Type is LMT, TIF is OPG
+      OrderType::MarketOnOpen => "MKT", // Type is MKT, TIF is OPG
       OrderType::Volatility => "VOL",
-      OrderType::None => "NONE",
+      OrderType::PeggedToBenchmark => "PEG BENCH",
+      OrderType::PeggedBest => "PEG BEST",
+      OrderType::PeggedPrimary => "PEG PRIM",
+      OrderType::Auction => "AUCTION",
+      // OrderType::GAT => "GAT",
+      OrderType::VWAP => "VWAP",
+      OrderType::Scale => "SCALE",
+      OrderType::None => "None", // Internal representation
     };
     write!(f, "{}", s)
+  }
+}
+
+impl FromStr for OrderType {
+  type Err = IBKRError;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s.to_uppercase().as_str() {
+      "MKT" => Ok(OrderType::Market),
+      "LMT" => Ok(OrderType::Limit),
+      "STP" => Ok(OrderType::Stop),
+      "STP LMT" => Ok(OrderType::StopLimit),
+      "MIT" => Ok(OrderType::MarketIfTouched),
+      "LIT" => Ok(OrderType::LimitIfTouched),
+      "TRAIL" => Ok(OrderType::TrailingStop),
+      "TRAIL LIMIT" => Ok(OrderType::TrailingStopLimit),
+      "PEG MKT" => Ok(OrderType::PeggedToMarket),
+      "PEG MID" => Ok(OrderType::PeggedToMidpoint),
+      "MTL" => Ok(OrderType::MarketToLimit),
+      "REL" | "RELATIVE" => Ok(OrderType::Relative),
+      "BOX TOP" => Ok(OrderType::BoxTop),
+      "LOC" => Ok(OrderType::LimitOnClose),
+      "MOC" => Ok(OrderType::MarketOnClose),
+      "LOO" => Ok(OrderType::LimitOnOpen), // Represented by LMT + OPG TIF
+      "MOO" => Ok(OrderType::MarketOnOpen), // Represented by MKT + OPG TIF
+      "VOL" => Ok(OrderType::Volatility),
+      "PEG BENCH" => Ok(OrderType::PeggedToBenchmark),
+      "PEG BEST" => Ok(OrderType::PeggedBest),
+      "PEG PRIM" => Ok(OrderType::PeggedPrimary),
+      "AUCTION" => Ok(OrderType::Auction),
+      // "GAT" => Ok(OrderType::GAT), // GAT is usually a TIF
+      "VWAP" => Ok(OrderType::VWAP),
+      "SCALE" => Ok(OrderType::Scale),
+      "NONE" => Ok(OrderType::None),
+      _ => Err(IBKRError::ParseError(format!("Unknown OrderType string: {}", s))),
+    }
   }
 }
 
 /// Time in force for orders
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeInForce {
-  Day,
-  GoodTillCancelled,
-  FillOrKill,
-  ImmediateOrCancel,
-  GoodTillDate,
+  Day,               // DAY
+  GoodTillCancelled, // GTC
+  FillOrKill,        // FOK
+  ImmediateOrCancel, // IOC
+  GoodTillDate,      // GTD
+  MarketOnOpen,      // OPG (TIF used for MOO/LOO orders)
+  GoodTillExtended,  // GTX (requires outsideRth=true)
+  AuctionMatch,      // AUC (Participate in auction match)
+  GoodAfterTime,     // GAT (Good after time - often combined with DAY or GTC)
+  Duration,          // DUR (Duration in seconds - for VWAP/TWAP algos)
+  // Note: TWS API can be inconsistent; sometimes GAT is a TIF, sometimes an attribute.
 }
 
 impl fmt::Display for TimeInForce {
@@ -486,8 +633,33 @@ impl fmt::Display for TimeInForce {
       TimeInForce::FillOrKill => "FOK",
       TimeInForce::ImmediateOrCancel => "IOC",
       TimeInForce::GoodTillDate => "GTD",
+      TimeInForce::MarketOnOpen => "OPG",
+      TimeInForce::GoodTillExtended => "GTX",
+      TimeInForce::AuctionMatch => "AUC",
+      TimeInForce::GoodAfterTime => "GAT",
+      TimeInForce::Duration => "DUR",
     };
     write!(f, "{}", s)
+  }
+}
+
+impl FromStr for TimeInForce {
+  type Err = IBKRError;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s.to_uppercase().as_str() {
+      "DAY" => Ok(TimeInForce::Day),
+      "GTC" => Ok(TimeInForce::GoodTillCancelled),
+      "FOK" => Ok(TimeInForce::FillOrKill),
+      "IOC" => Ok(TimeInForce::ImmediateOrCancel),
+      "GTD" => Ok(TimeInForce::GoodTillDate),
+      "OPG" => Ok(TimeInForce::MarketOnOpen),
+      "GTX" => Ok(TimeInForce::GoodTillExtended),
+      "AUC" => Ok(TimeInForce::AuctionMatch),
+      "GAT" => Ok(TimeInForce::GoodAfterTime),
+      "DUR" => Ok(TimeInForce::Duration),
+      _ => Err(IBKRError::ParseError(format!("Unknown TimeInForce string: {}", s))),
+    }
   }
 }
 
@@ -524,8 +696,8 @@ impl fmt::Display for OrderStatus {
   }
 }
 
-/// Observer trait for order notifications
-pub trait OrderObserver: Send + Sync {
-  fn on_order_update(&self, order: &Order);
-  fn on_order_error(&self, order_id: &str, error: &crate::base::IBKRError);
+impl OrderStatus {
+  pub fn is_terminal(&self) -> bool {
+    matches!(self, OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Inactive | OrderStatus::ApiCancelled)
+  }
 }

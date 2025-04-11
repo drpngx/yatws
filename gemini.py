@@ -11,6 +11,17 @@ from google import genai
 from google.genai import types
 
 
+def MatchFiles(files: list[str]):
+  inventory = glob.glob('yatws/**/*.rs')
+  ret = []
+  for f in files:
+    for i in inventory:
+      # We can match a suffix, prefix like parse, directory, or anything really.
+      if f in i:
+        ret.append(i)
+  return ret
+
+
 def ComponentFiles(comp):
   compfiles = {
     'base': [
@@ -103,7 +114,17 @@ def RunChat(client, argv):
     while True:
       line = input(prompt)
       if line.startswith('INCLUDE'):
-        inc = ComponentFiles(line.split(' ')[1:])
+        try:
+          inc = ComponentFiles(line.split(' ')[1:])
+          for f in inc:
+            lines.append(f'Here is a source file: {f}');
+            with open(f, 'rt', encoding='utf-8') as i:
+              lines.append(i.read())
+            print(f'Included {f}')
+        except Exception as err:
+          print(f'Fail: {err}')
+      if line.startswith('FILE'):
+        inc = MatchFiles(line.split(' ')[1:])
         for f in inc:
           lines.append(f'Here is a source file: {f}');
           with open(f, 'rt', encoding='utf-8') as i:

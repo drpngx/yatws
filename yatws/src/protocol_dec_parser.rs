@@ -65,6 +65,18 @@ impl<'a> FieldParser<'a> {
       .map_err(|e| IBKRError::ParseError(format!("Failed to parse integer: {}", e)))
   }
 
+  /// Read an integer field
+  pub fn read_i64(&mut self) -> Result<i64, IBKRError> {
+    let s = self.read_string()?;
+
+    if s.is_empty() {
+      return Ok(0);
+    }
+
+    s.parse::<i64>()
+      .map_err(|e| IBKRError::ParseError(format!("Failed to parse integer: {}", e)))
+  }
+
   /// Read a double field
   pub fn read_double(&mut self) -> Result<f64, IBKRError> {
     let s = self.read_string()?;

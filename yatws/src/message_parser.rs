@@ -26,13 +26,14 @@ pub fn process_message(handler: &mut MessageHandler, data: &[u8]) -> Result<(), 
     ))
   })?;
   log::debug!("process: {} [{}]", msg_type, data.len());
+  let sver = handler.get_server_version();
   match msg_type {
     4 => process_error_message(&handler.client, &mut parser)?,
     9 => process_next_valid_id(&handler.order, &mut parser)?,
     1 => process_tick_price(&handler.data_market, &mut parser)?,
     2 => process_tick_size(&handler.data_market, &mut parser)?,
-    3 => process_order_status(&handler.order, &mut parser)?,
-    5 => process_open_order(&handler.order, &mut parser)?,
+    3 => process_order_status(&handler.order, &mut parser, sver)?,
+    5 => process_open_order(&handler.order, &mut parser, sver)?,
     6 => process_account_value(&handler.account, &mut parser)?,
     7 => process_portfolio_value(&handler.account, &mut parser)?,
     8 => process_account_update_time(&handler.account, &mut parser)?,
@@ -102,7 +103,7 @@ pub fn process_message(handler: &mut MessageHandler, data: &[u8]) -> Result<(), 
     98 => process_historical_ticks_last(&handler.data_market, &mut parser)?,
     99 => process_tick_by_tick(&handler.data_market, &mut parser)?,
     100 => process_order_bound(&handler.order, &mut parser)?,
-    101 => process_completed_order(&handler.order, &mut parser)?,
+    101 => process_completed_order(&handler.order, &mut parser, sver)?,
     102 => process_completed_orders_end(&handler.order, &mut parser)?,
     103 => process_replace_fa_end(&handler.fin_adv, &mut parser)?,
     104 => process_wsh_meta_data(&handler.data_fin, &mut parser)?,
