@@ -17,26 +17,13 @@ use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 use std::time::Duration;
 
 
-// Placeholder for ExecutionFilter
-#[derive(Debug, Clone, Default)]
-pub struct ExecutionFilter {
-  // client_id: Option<i32>,
-  // acct_code: Option<String>,
-  // time: Option<String>, // Format "yyyymmdd-hh:mm:ss"
-  // symbol: Option<String>,
-  // sec_type: Option<String>,
-  // exchange: Option<String>,
-  // side: Option<String>,
-}
-// --- End Placeholder ---
-
-
 // State for tracking refresh operations
 #[derive(Debug, Default)]
 struct RefreshState {
   summary_request_id: Option<i32>,
   waiting_for_summary_end: bool,
   waiting_for_position_end: bool,
+  // No specific request ID for positions, TWS manages it internally
   // Add flags for other data if needed (e.g., PnL)
 }
 
@@ -49,6 +36,7 @@ pub struct AccountManager {
   next_observer_id: AtomicUsize,
   refresh_state: Mutex<RefreshState>, // Mutex + Condvar for blocking refresh
   refresh_cond: Condvar,
+  is_subscribed: AtomicBool, // Track background update subscription
 }
 
 impl AccountManager {
@@ -64,6 +52,7 @@ impl AccountManager {
       next_observer_id: AtomicUsize::new(1),
       refresh_state: Mutex::new(RefreshState::default()),
       refresh_cond: Condvar::new(),
+      is_subscribed: AtomicBool::new(false),
     })
   }
 
@@ -198,95 +187,221 @@ impl AccountManager {
   }
 
   pub fn refresh(&self) -> Result<(), IBKRError> {
-    info!("Starting account refresh (summary only)..."); // Updated log
+    info!("Starting full account refresh (summary and positions)...");
     let req_id = self.message_broker.next_request_id();
 
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
     // Include PnL tags directly in the summary request
-    let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL";
-    let tags = "EquityWithLoanValue"; // Even simpler test
-    let summary_msg = encoder.encode_request_account_summary(req_id, "All", tags)?;
-    // --- REMOVE RequestPositions ---
-    // let position_msg = encoder.encode_request_positions()?;
+    // Request a comprehensive set of tags, including PnL
+    let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
+    let summary_msg = encoder.encode_request_account_summary(req_id, "All", &tags)?;
+    // --- ADD RequestPositions ---
+    let position_msg = encoder.encode_request_positions()?;
 
-    {
+    { // Scope for r_state lock starts
       let mut r_state = self.refresh_state.lock();
-      // *** FIX: Only check/set summary flag ***
-      if r_state.waiting_for_summary_end { // Only check summary
+      // Check if any refresh operation is already running
+      if r_state.waiting_for_summary_end || r_state.waiting_for_position_end {
         return Err(IBKRError::AlreadyRunning("Refresh already in progress".to_string()));
       }
       r_state.summary_request_id = Some(req_id);
       r_state.waiting_for_summary_end = true;
-      r_state.waiting_for_position_end = false; // Don't wait for explicit PositionEnd
-    }
+      r_state.waiting_for_position_end = true; // Wait for PositionEnd
+    } // Lock released briefly
 
     self.message_broker.send_message(&summary_msg)?;
-    // --- REMOVE send for position_msg ---
-    // self.message_broker.send_message(&position_msg)?;
+    // --- ADD send for position_msg ---
+    self.message_broker.send_message(&position_msg)?;
 
     let wait_timeout = Duration::from_secs(15);
     let start_time = std::time::Instant::now();
     let mut cancel_req_id = None;
 
-    { // Re-lock state for waiting
-      let mut r_state = self.refresh_state.lock();
+    { // Scope for waiting lock starts
+      // Re-lock state for waiting
+      let mut r_state = self.refresh_state.lock(); // Lock acquired
 
-      // *** FIX: Update loop condition to only check summary flag ***
-      while r_state.waiting_for_summary_end && start_time.elapsed() < wait_timeout {
-        let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
-        let timeout_result = self.refresh_cond.wait_for(&mut r_state, remaining_timeout);
+      // Wait until both summary and positions are complete, or timeout
+      while (r_state.waiting_for_summary_end || r_state.waiting_for_position_end) // Check
+        && start_time.elapsed() < wait_timeout { // Check
+          let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
+          let timeout_result = self.refresh_cond.wait_for(&mut r_state, remaining_timeout); // Wait
 
-        if timeout_result.timed_out() {
-          // *** FIX: Check only summary flag on timeout ***
-          if r_state.waiting_for_summary_end {
-            warn!("Account refresh timed out waiting for SummaryEnd."); // Updated log
-            cancel_req_id = r_state.summary_request_id;
-            r_state.waiting_for_summary_end = false;
-            // r_state.waiting_for_position_end = false; // Already false
-            r_state.summary_request_id = None;
-            drop(r_state); // Drop lock before cancelling
+          if timeout_result.timed_out() { // Check timeout
+            // Check which operations timed out
+            if r_state.waiting_for_summary_end { // Check
+              warn!("Account refresh timed out waiting for SummaryEnd.");
+              cancel_req_id = r_state.summary_request_id; // Access
+            }
+            if r_state.waiting_for_position_end { // Check (This was line 289)
+              warn!("Account refresh timed out waiting for PositionEnd.");
+              // No specific ID to cancel for positions, but flag needs reset
+            }
 
-            // Cancel only summary request
+            // Reset state *after* logging and storing cancel ID
+            r_state.waiting_for_summary_end = false; // Access
+            r_state.waiting_for_position_end = false; // Access
+            r_state.summary_request_id = None; // Access
+            drop(r_state); // Drop lock
+
+            // Cancel summary request if needed
             if let Some(id) = cancel_req_id {
-              let cancel_encoder = Encoder::new(server_version);
-              match cancel_encoder.encode_cancel_account_summary(id) {
+              match encoder.encode_cancel_account_summary(id) {
                 Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
                 Err(e) => error!("Failed to encode cancel summary msg: {:?}", e),
               }
             }
-            // --- REMOVE CancelPositions ---
-            // match encoder.encode_cancel_positions() { ... }
+
+            // --- ADD CancelPositions ---
+            match encoder.encode_cancel_positions() {
+              Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
+              Err(e) => error!("Failed to encode cancel positions msg: {:?}", e),
+            }
+
             return Err(IBKRError::Timeout("Account refresh timed out".to_string()));
-          } else {
-            debug!("Refresh wait timed out, but condition met concurrently.");
-            break;
-          }
-        }
-        debug!("Refresh wait notified. Waiting for SummaryEnd? {}", r_state.waiting_for_summary_end);
-      } // End while loop
+          } // End if timeout_result.timed_out()
+          // No else block needed here - if not timed out, loop continues
+          // This debug message executes ONLY IF NOT TIMED OUT
+          debug!("Refresh wait notified. Waiting flags: Summary={}, Position={}", r_state.waiting_for_summary_end, r_state.waiting_for_position_end);
+        } // End while loop
 
 
       // After loop, check final state
-      // *** FIX: Check only summary flag ***
-      if r_state.waiting_for_summary_end {
-        warn!("Refresh loop finished but summary flag not cleared.");
-        r_state.waiting_for_summary_end = false; // Reset flag
-        // r_state.waiting_for_position_end = false; // Already false
-        r_state.summary_request_id = None;
+      // This block runs if the loop terminated because the condition became false (refresh completed)
+      if r_state.waiting_for_summary_end || r_state.waiting_for_position_end {
+        // This case means loop ended, but flags somehow still set (e.g., timeout occurred *after* last check but before this block)
+        warn!("Refresh loop finished but flags not cleared (Summary={}, Position={}). Resetting.", r_state.waiting_for_summary_end, r_state.waiting_for_position_end);
+        r_state.waiting_for_summary_end = false;
+        r_state.waiting_for_position_end = false;
         if start_time.elapsed() >= wait_timeout {
           return Err(IBKRError::Timeout("Account refresh timed out (consistency check)".to_string()));
         } else {
+          // This path is less likely if timeout didn't happen, maybe a race?
           return Err(IBKRError::InternalError("Refresh state inconsistency after wait".to_string()));
         }
       } else {
         info!("Account refresh completed successfully.");
-        r_state.summary_request_id = None;
       }
-    } // Release lock
+      // Ensure summary_request_id is cleared even on success
+      r_state.summary_request_id = None;
+
+    } // Release lock (implicit drop of r_state)
 
     Ok(())
+  } // End refresh function
+
+  pub fn refresh_positions(&self) -> Result<(), IBKRError> {
+    info!("Starting position-only refresh...");
+
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let position_msg = encoder.encode_request_positions()?;
+
+    {
+      let mut r_state = self.refresh_state.lock();
+      // Check if any refresh operation is already running
+      if r_state.waiting_for_summary_end || r_state.waiting_for_position_end {
+        return Err(IBKRError::AlreadyRunning("Refresh operation already in progress".to_string()));
+      }
+      r_state.waiting_for_position_end = true; // Wait for PositionEnd
+      // Summary flags remain false/None
+    }
+
+    self.message_broker.send_message(&position_msg)?;
+
+    let wait_timeout = Duration::from_secs(10); // Shorter timeout for positions only?
+    let start_time = std::time::Instant::now();
+
+    { // Re-lock state for waiting
+      let mut r_state = self.refresh_state.lock(); // Acquired lock
+
+      // Wait until positions are complete, or timeout
+      while r_state.waiting_for_position_end && start_time.elapsed() < wait_timeout {
+        let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
+        let timeout_result = self.refresh_cond.wait_for(&mut r_state, remaining_timeout); // Waits, re-acquires lock
+
+        if timeout_result.timed_out() { // Checks timeout
+          if r_state.waiting_for_position_end { // Uses r_state
+            warn!("Position refresh timed out waiting for PositionEnd.");
+            r_state.waiting_for_position_end = false; // Uses r_state
+            drop(r_state); // Drops lock
+
+            // Cancel positions request
+            match encoder.encode_cancel_positions() {
+              Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
+              Err(e) => error!("Failed to encode cancel positions msg: {:?}", e),
+            }
+            return Err(IBKRError::Timeout("Position refresh timed out".to_string())); // Returns
+          } else {
+            // This branch means timed_out() was true, but waiting_for_position_end was somehow false.
+            // This is unexpected but could happen in race conditions. Log it and break.
+            debug!("Position refresh wait timed out, but condition met concurrently.");
+            break; // Exit loop as the condition we were waiting on is false.
+          }
+        }
+        // If not timed out (i.e., notified), just let the loop continue to check the condition again.
+        debug!("Position refresh wait notified. Waiting for PositionEnd? {}", r_state.waiting_for_position_end);
+      } // End while loop
+
+      // After loop, check final state
+      // This block runs if the loop terminated because the condition became false (refresh completed)
+      if r_state.waiting_for_position_end {
+        // This case means loop ended, but flag somehow still set (e.g., timeout occurred *after* last check but before this block)
+        warn!("Position refresh loop finished but flag not cleared. Resetting.");
+        r_state.waiting_for_position_end = false; // Reset flag
+        if start_time.elapsed() >= wait_timeout {
+          return Err(IBKRError::Timeout("Position refresh timed out (consistency check)".to_string()));
+        } else {
+          return Err(IBKRError::InternalError("Position refresh state inconsistency after wait".to_string()));
+        }
+      } else {
+        info!("Position refresh completed successfully.");
+      }
+    } // Release lock (implicit drop)
+
+    Ok(())
+  } // End refresh_positions function
+
+
+  pub fn start_background_updates(&self) -> Result<(), IBKRError> {
+    if self.is_subscribed.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+      warn!("Attempted to start background updates when already subscribed.");
+      return Ok(()); // Or return an error like AlreadyRunning
+    }
+    info!("Starting background account updates...");
+    // Get account ID safely - use default if empty which might be intended for some setups
+    let account_id = self.account_state.read().account_id.clone();
+    if account_id.is_empty() {
+      warn!("Attempting to start background updates but account ID is not yet known. Using empty account code.");
+    }
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    // Subscribe=true, pass account_id (can be empty)
+    let msg = encoder.encode_request_account_data(true, &account_id)?;
+    self.message_broker.send_message(&msg)
+
+  }
+
+  pub fn stop_background_updates(&self) -> Result<(), IBKRError> {
+    if self.is_subscribed.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+      warn!("Attempted to stop background updates when not subscribed.");
+      return Ok(()); // Or return an error like NotRunning
+    }
+    info!("Stopping background account updates...");
+    // Get account ID safely - use default if empty
+    let account_id = self.account_state.read().account_id.clone();
+    if account_id.is_empty() {
+      warn!("Attempting to stop background updates but account ID is not known. Using empty account code.");
+    }
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    // Subscribe=false, pass account_id (can be empty)
+    let msg = encoder.encode_request_account_data(false, &account_id)?;
+    self.message_broker.send_message(&msg)
+
   }
 
 
@@ -347,9 +462,20 @@ impl AccountHandler for AccountManager {
 
     if state.account_id.is_empty() {
       state.account_id = account_name.to_string();
+      info!("Account ID set to: {}", account_name); // Log when account ID is first set
     } else if state.account_id != account_name {
-      warn!("Received account value for unexpected account ID: {} (expected {})", account_name, state.account_id);
-      return;
+      // If we are subscribed to a specific account, ignore messages from others.
+      // If subscribed to "All" (empty account code), accept any account ID.
+      // This check might need refinement depending on how "All" subscriptions work with multiple accounts.
+      if !state.account_id.is_empty() { // Only warn if we expected a specific account
+        warn!("Received account value for unexpected account ID: {} (expected {})", account_name, state.account_id);
+        return;
+      } else {
+        // If our state.account_id was empty, but we received a message for a specific account,
+        // update our state's account_id. This handles the case where ManagedAccounts hasn't arrived yet.
+        state.account_id = account_name.to_string();
+        info!("Account ID updated to: {}", account_name);
+      }
     }
     state.values.insert(key.to_string(), updated_value);
     state.last_updated = Some(Utc::now());
@@ -367,9 +493,12 @@ impl AccountHandler for AccountManager {
     let mut state = self.account_state.write(); // Get write guard
 
     if state.account_id.is_empty() { state.account_id = account_name.to_string(); }
-    else if state.account_id != account_name { /* warn and return */ return; }
+    else if !state.account_id.is_empty() && state.account_id != account_name { // Ignore if not the expected account
+      warn!("Received portfolio value for unexpected account ID: {} (expected {})", account_name, state.account_id);
+      return;
+    }
 
-    let updated_position = Position { /* ... create updated data ... */ symbol: contract.symbol.clone(), contract: contract.clone(), quantity, average_cost, market_price, market_value, unrealized_pnl, realized_pnl, updated_at };
+    let updated_position = Position { symbol: contract.symbol.clone(), contract: contract.clone(), quantity, average_cost, market_price, market_value, unrealized_pnl, realized_pnl, updated_at };
 
     // *** FIX: Structure the update and clone ***
     let position_to_notify: Position;
@@ -399,7 +528,10 @@ impl AccountHandler for AccountManager {
     let mut state = self.account_state.write(); // Get write guard
 
     if state.account_id.is_empty() { state.account_id = account.to_string(); }
-    else if state.account_id != account { /* warn and return */ return; }
+    else if !state.account_id.is_empty() && state.account_id != account { // Ignore if not the expected account
+      warn!("Received position for unexpected account ID: {} (expected {})", account, state.account_id);
+      return;
+    }
 
     // *** FIX: Apply similar fix structure here ***
     let position_to_notify: Position;
@@ -407,14 +539,15 @@ impl AccountHandler for AccountManager {
       let position_entry = state.portfolio.entry(position_key).or_insert_with(|| {
         Position {
           symbol: contract.symbol.clone(), contract: contract.clone(), quantity,
-          average_cost: avg_cost, market_price: 0.0, market_value: 0.0,
+          average_cost: avg_cost, market_price: 0.0, market_value: 0.0, // Initialize market data
           unrealized_pnl: 0.0, realized_pnl: 0.0, updated_at,
         }
       });
 
-      // Update existing fields
+      // Update existing fields from the 'position' message
       position_entry.quantity = quantity;
       position_entry.average_cost = avg_cost;
+      // Market price/value/PnL are updated by portfolioValue, not 'position'
       position_entry.updated_at = updated_at; // Update timestamp within entry
 
       // Clone the data before further mutable borrows of state
@@ -440,11 +573,11 @@ impl AccountHandler for AccountManager {
         state.last_updated = Some(datetime_utc);
       } else {
         warn!("Could not form valid DateTime from account update time: {}", time_stamp);
-        state.last_updated = Some(Utc::now());
+        state.last_updated = Some(Utc::now()); // Fallback to now
       }
     } else {
       warn!("Could not parse account update time: {}", time_stamp);
-      state.last_updated = Some(Utc::now());
+      state.last_updated = Some(Utc::now()); // Fallback to now
     }
   }
 
@@ -456,9 +589,12 @@ impl AccountHandler for AccountManager {
     // Drop guard early if possible
     drop(state);
 
-    if state_account_id == account {
-      info!("Account download finished for {}", account);
-      self.check_and_notify_account_update();
+    // Usually called after a subscription starts. We might not need to do much here
+    // if we rely on refresh() for initial population. Check if account matches.
+    if state_account_id == account || state_account_id.is_empty() { // Accept if matches or if state ID is not set yet
+      info!("Account download finished for account '{}'", account);
+      // Optionally trigger a notification if observers care about this event
+      // self.check_and_notify_account_update(); // Probably not needed here, as values would have arrived via account_value/portfolio_value
     } else {
       warn!("Received AccountDownloadEnd for unexpected account: {} (expected {})", account, state_account_id);
     }
@@ -466,26 +602,39 @@ impl AccountHandler for AccountManager {
 
   fn managed_accounts(&self, accounts_list: &str) {
     debug!("Handler: Managed Accounts: {}", accounts_list);
+    // Potentially store this list if needed, or set the primary account_id if not already set
+    if self.account_state.read().account_id.is_empty() {
+      let accounts: Vec<&str> = accounts_list.split(',').filter(|s| !s.is_empty()).collect();
+      if let Some(first_account) = accounts.first() {
+        // Check again after getting write lock
+        let mut state = self.account_state.write();
+        if state.account_id.is_empty() {
+          state.account_id = first_account.to_string();
+          info!("Account ID inferred from managed accounts: {}", first_account);
+        }
+      }
+    }
   }
 
   fn position_end(&self) {
     debug!("Handler: Position End");
-    // lock() returns guard directly
     let mut r_state = self.refresh_state.lock();
     // Optional: Check if r_state.is_poisoned()
 
-    // if r_state.waiting_for_position_end {
-    //   info!("PositionEnd received, marking position refresh as complete.");
-    //   r_state.waiting_for_position_end = false;
-    //   if !r_state.waiting_for_summary_end {
-    //     info!("PositionEnd: Both summary and positions complete. Notifying refresh waiter.");
-    //     self.refresh_cond.notify_all();
-    //   } else {
-    //     info!("PositionEnd: Waiting for SummaryEnd.");
-    //   }
-    // } else {
-    //   debug!("PositionEnd received but not waiting for it.");
-    // }
+    if r_state.waiting_for_position_end {
+      info!("PositionEnd received, marking position refresh as complete.");
+      r_state.waiting_for_position_end = false;
+      // Check if this was the *last* thing we were waiting for
+      if !r_state.waiting_for_summary_end {
+        info!("PositionEnd: All refresh operations complete. Notifying waiter.");
+        self.refresh_cond.notify_all();
+      } else {
+        info!("PositionEnd: Still waiting for SummaryEnd.");
+      }
+    } else {
+      // This can happen normally during background updates if not in a blocking refresh call
+      debug!("PositionEnd received but not currently waiting for it (e.g., during background updates or outside a refresh).");
+    }
   }
 
   fn account_summary(&self, req_id: i32, account: &str, tag: &str, value: &str, currency: &str) {
@@ -502,16 +651,30 @@ impl AccountHandler for AccountManager {
 
     if r_state.waiting_for_summary_end && r_state.summary_request_id == Some(req_id) {
       info!("AccountSummaryEnd received for request {}, marking summary refresh as complete.", req_id);
+      r_state.summary_request_id = None; // Clear the ID
       r_state.waiting_for_summary_end = false;
+      // Check if this was the *last* thing we were waiting for
       if !r_state.waiting_for_position_end {
-        info!("AccountSummaryEnd: Both summary and positions complete. Notifying refresh waiter.");
+        info!("AccountSummaryEnd: All refresh operations complete. Notifying waiter.");
         self.refresh_cond.notify_all();
       } else {
-        info!("AccountSummaryEnd: Waiting for PositionEnd.");
+        info!("AccountSummaryEnd: Still waiting for PositionEnd.");
       }
     } else {
       warn!("AccountSummaryEnd received for ReqID {} but not waiting for it or ID mismatch (Waiting: {:?}, Expected: {:?})",
             req_id, r_state.waiting_for_summary_end, r_state.summary_request_id);
+      // If we received an unexpected summary end, ensure the waiting flag is cleared if the ID matches
+      // This handles cases where the refresh might have timed out and cancelled, but the end message still arrived.
+      if r_state.summary_request_id == Some(req_id) {
+        warn!("Clearing summary wait flag due to unexpected SummaryEnd for matching ReqID {}", req_id);
+        r_state.waiting_for_summary_end = false;
+        r_state.summary_request_id = None;
+        // Check if this completes the overall refresh now
+        if !r_state.waiting_for_position_end {
+          warn!("Notifying waiter after clearing unexpected SummaryEnd.");
+          self.refresh_cond.notify_all();
+        }
+      }
     }
   }
 
@@ -519,6 +682,11 @@ impl AccountHandler for AccountManager {
     debug!("Handler: PnL: Daily={}, Unrealized={:?}, Realized={:?}", daily_pnl, unrealized_pnl, realized_pnl);
     let mut state = self.account_state.write(); // Get write guard
     let account_id = state.account_id.clone(); // Clone needed data early
+    if account_id.is_empty() {
+      warn!("Received PnL update but account ID is not known yet.");
+      // Decide whether to drop the update or store it temporarily? For now, drop.
+      return;
+    }
 
     // *** FIX: Get base_currency BEFORE the closure ***
     let base_currency = state.values.get("Currency").map(|v| v.value.clone());
@@ -552,11 +720,16 @@ impl AccountHandler for AccountManager {
 
   fn pnl_single(&self, _req_id: i32, pos_idx: i32, daily_pnl: f64, unrealized_pnl: Option<f64>, realized_pnl: Option<f64>, value: f64) {
     warn!("Handler: PnLSingle received - updating position by index '{}' is not reliably implemented. Use PortfolioValue updates.", pos_idx);
+    // This message provides PnL for a position identified by its index (pos_idx) in the TWS portfolio monitor.
+    // Matching this index to a contract ID reliably is difficult without maintaining the exact order TWS uses.
+    // It's generally better to rely on portfolioValue messages which include the Contract object.
+    // If needed, one could *try* to find the position by iterating `state.portfolio.values()` and comparing `market_value` (value)
+    // but this is prone to errors if multiple positions have similar market values.
   }
 
   // Implement other multi-account/position methods if needed, similar to single versions
-  // fn position_multi(...) { ... }
-  // fn position_multi_end(...) { ... }
-  // fn account_update_multi(...) { ... }
-  // fn account_update_multi_end(...) { ... }
+  // fn position_multi(&self, req_id: i32, account: &str, model_code: &str, contract: &Contract, pos: f64, avg_cost: f64);
+  // fn position_multi_end(&self, req_id: i32);
+  // fn account_update_multi(&self, req_id: i32, account: &str, model_code: &str, key: &str, value: &str, currency: &str);
+  // fn account_update_multi_end(&self, req_id: i32);
 }
