@@ -1,6 +1,6 @@
 // yatws/src/account_manager.rs
 
-use crate::account::{AccountInfo, AccountState, AccountValue, Position, AccountObserver, Execution};
+use crate::account::{AccountInfo, AccountState, AccountValue, Position, AccountObserver, Execution, ExecutionFilter};
 use crate::base::IBKRError;
 use crate::contract::Contract;
 use crate::handler::AccountHandler;
@@ -27,6 +27,14 @@ struct RefreshState {
   // Add flags for other data if needed (e.g., PnL)
 }
 
+// State for tracking execution requests
+#[derive(Debug, Default)]
+struct ExecutionRequestState {
+  waiting: bool,
+  executions: HashMap<String, Execution>, // Store by ExecID for merging
+  end_received: bool, // Track if execDetailsEnd arrived
+}
+
 pub struct AccountManager {
   message_broker: Arc<MessageBroker>,
   account_state: RwLock<AccountState>,
@@ -36,6 +44,8 @@ pub struct AccountManager {
   next_observer_id: AtomicUsize,
   refresh_state: Mutex<RefreshState>, // Mutex + Condvar for blocking refresh
   refresh_cond: Condvar,
+  executions_state: Mutex<HashMap<i32, ExecutionRequestState>>, // State for execution requests (ReqID -> State)
+  executions_cond: Condvar, // Condvar for execution requests
   is_subscribed: AtomicBool, // Track background update subscription
 }
 
@@ -52,6 +62,8 @@ impl AccountManager {
       next_observer_id: AtomicUsize::new(1),
       refresh_state: Mutex::new(RefreshState::default()),
       refresh_cond: Condvar::new(),
+      executions_state: Mutex::new(HashMap::new()),
+      executions_cond: Condvar::new(),
       is_subscribed: AtomicBool::new(false),
     })
   }
@@ -159,10 +171,99 @@ impl AccountManager {
     self.get_parsed_value("RealizedPnL")
   }
 
-  pub fn get_executions(&self, _from_date: Option<DateTime<Utc>>) -> Result<Vec<Execution>, IBKRError> {
-    warn!("get_executions is a placeholder - requires request/response handling");
-    Ok(vec![])
+  /// Requests and returns execution details merged with commission data for the current trading day.
+  /// It uses a default filter (all executions for the current connection).
+  /// See `get_executions_filtered` for using a custom filter.
+  pub fn get_day_executions(&self) -> Result<Vec<Execution>, IBKRError> {
+    let filter = ExecutionFilter::default(); // Use default filter
+    self.get_executions_filtered(&filter)
   }
+
+  /// Requests and returns execution details merged with commission data, based on the provided filter.
+  ///
+  /// **Note:** This function attempts to merge commission details received from `commissionReport` messages.
+  /// Due to the asynchronous nature of TWS messages, commission reports might
+  /// arrive *after* this function returns. A short grace period is included after
+  /// receiving the end signal for executions, but it's not foolproof. Observers might see
+  /// execution updates later when commission data is merged.
+  /// Note: This is a blocking call.
+  pub fn get_executions_filtered(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, IBKRError> {
+    info!("Requesting executions with filter: {:?}", filter);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_executions(req_id, &filter)?;
+
+    // Prepare state for waiting
+    {
+      let mut exec_state = self.executions_state.lock();
+      if exec_state.contains_key(&req_id) {
+        // Should not happen if req_id generation is correct
+        return Err(IBKRError::DuplicateRequestId(req_id));
+      } // Initialize with empty map
+      exec_state.insert(req_id, ExecutionRequestState { waiting: true, executions: HashMap::new(), end_received: false });
+    }
+
+    self.message_broker.send_message(&request_msg)?;
+
+    // Wait for execDetailsEnd
+    let wait_timeout = Duration::from_secs(20); // Adjust timeout as needed
+    let commission_grace_period = Duration::from_secs(2); // Time to wait for commissions after end signal
+    let start_time = std::time::Instant::now();
+    let mut final_results = Vec::new();
+
+    { // Scope for locking and waiting
+      let mut exec_state = self.executions_state.lock();
+      // Wait until execDetailsEnd is received OR timeout
+      while exec_state.get(&req_id).map_or(false, |s| s.waiting && !s.end_received) && start_time.elapsed() < wait_timeout {
+        let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
+        let timeout_result = self.executions_cond.wait_for(&mut exec_state, remaining_timeout);
+        if timeout_result.timed_out() {
+          // Check again if the state changed right before timeout
+          if exec_state.get(&req_id).map_or(true, |s| s.waiting && !s.end_received) { // Still waiting after timeout
+            warn!("Execution request {} timed out waiting for ExecDetailsEnd.", req_id);
+            exec_state.remove(&req_id); // Clean up state
+            return Err(IBKRError::Timeout(format!("Execution request {} timed out waiting for end signal", req_id)));
+          }
+        }
+      } // End primary wait loop (execDetailsEnd received or timed out)
+
+      // Check if execDetailsEnd was actually received
+      if exec_state.get(&req_id).map_or(true, |s| !s.end_received) {
+        // This means the main loop timed out before end_received was set
+        warn!("Execution request {} loop ended without receiving ExecDetailsEnd.", req_id);
+        exec_state.remove(&req_id); // Clean up state
+        return Err(IBKRError::Timeout(format!("Execution request {} timed out before end signal", req_id)));
+      }
+
+      // *** Start Grace Period Wait for Commissions ***
+      info!("ExecDetailsEnd received for {}, waiting grace period ({}ms) for commissions...", req_id, commission_grace_period.as_millis());
+      // We don't expect a specific signal here, just wait passively.
+      // The Condvar wait will re-acquire the lock if signaled, but we ignore signals here.
+      let _grace_result = self.executions_cond.wait_for(&mut exec_state, commission_grace_period);
+      info!("Grace period finished for {}.", req_id);
+
+
+      // Retrieve results after grace period
+      if let Some(state) = exec_state.remove(&req_id) {
+        // Convert the HashMap values into a Vec
+        final_results = state.executions.into_values().collect();
+        info!("Execution request {} completed successfully with {} executions (commissions merged where available).", req_id, final_results.len());
+        // Log missing commissions
+        let missing_commissions = final_results.iter().filter(|e| e.commission.is_none()).count();
+        if missing_commissions > 0 {
+          warn!("Execution request {}: {} executions are missing commission details after grace period.", req_id, missing_commissions);
+        }
+      } else {
+        // Should not happen if logic is correct, as we checked for end_received above
+        error!("Execution request {} state unexpectedly missing after wait.", req_id);
+        return Err(IBKRError::InternalError(format!("State missing for execution req {}", req_id)));
+      }
+    } // Lock released
+    Ok(final_results)
+  }
+
 
   pub fn add_observer<T: AccountObserver + Send + Sync + 'static>(&self, observer: T) -> usize {
     let observer_id = self.next_observer_id.fetch_add(1, Ordering::SeqCst);
@@ -235,7 +336,7 @@ impl AccountManager {
               warn!("Account refresh timed out waiting for SummaryEnd.");
               cancel_req_id = r_state.summary_request_id; // Access
             }
-            if r_state.waiting_for_position_end { // Check (This was line 289)
+            if r_state.waiting_for_position_end { // Check
               warn!("Account refresh timed out waiting for PositionEnd.");
               // No specific ID to cancel for positions, but flag needs reset
             }
@@ -422,6 +523,7 @@ impl AccountManager {
     }
   }
 
+  // This notifies with the Execution object, which might be updated with commission later
   fn notify_execution(&self, execution: &Execution) {
     // read() returns guard directly
     let observers = self.observers.read();
@@ -727,9 +829,85 @@ impl AccountHandler for AccountManager {
     // but this is prone to errors if multiple positions have similar market values.
   }
 
+  // --- ExecutionHandler Implementation ---
+
+  fn execution_details(&self, req_id: i32, _contract: &Contract, execution: &Execution) {
+    debug!("Handler: Execution Details: ReqID={}, ExecID={}, OrderID={}, Symbol={}, Side={}, Qty={}, Px={}",
+           req_id, execution.execution_id, execution.order_id, execution.symbol, execution.side, execution.quantity, execution.price);
+
+    // Store the base execution details, keyed by execution_id
+    let mut exec_state = self.executions_state.lock();
+    if let Some(state) = exec_state.get_mut(&req_id) {
+      if state.waiting {
+        // Insert the new execution or update if (somehow) received again
+        // We clone here because the commission_report might modify it later
+        state.executions.insert(execution.execution_id.clone(), execution.clone());
+        // Don't notify observers yet, wait for potential commission report merge
+      } else {
+        // This can happen if details arrive after timeout/cleanup
+        warn!("Received execution details for ReqID {} which is no longer in a waiting state.", req_id);
+      }
+    } // else: ReqID not found or not waiting, ignore.
+  }
+
+  fn execution_details_end(&self, req_id: i32) {
+    debug!("Handler: Execution Details End: ReqID={}", req_id);
+    let mut exec_state = self.executions_state.lock();
+    if let Some(state) = exec_state.get_mut(&req_id) {
+      if state.waiting {
+        state.end_received = true; // Mark end received
+        // DO NOT set state.waiting = false here yet. We wait for the grace period in get_executions_filtered.
+        self.executions_cond.notify_all(); // Notify waiter (get_executions_filtered) that end arrived
+      } else {
+        warn!("Received execution details end for ReqID {} which is no longer in a waiting state.", req_id);
+      }
+    } // else: ReqID not found
+  }
+
+  fn commission_report(&self, exec_id: &str, commission: f64, currency: &str, realized_pnl: Option<f64>) {
+    debug!("Handler: Commission Report: ExecID={}, Commission={}, Currency={}",
+           exec_id, commission, currency);
+
+    let mut exec_state = self.executions_state.lock();
+    let mut updated_execution : Option<Execution> = None;
+
+    // Iterate through *all* active requests to find the matching execution_id
+    // This is necessary because commission reports don't have a req_id
+    for (_req_id, state) in exec_state.iter_mut() {
+      if let Some(execution) = state.executions.get_mut(exec_id) {
+        // Found the matching execution, update its commission fields
+        execution.commission = Some(commission);
+        execution.commission_currency = Some(currency.to_string());
+        execution.realized_pnl = realized_pnl;
+        debug!("Merged commission into Execution: {}", exec_id);
+        // Clone the updated execution to notify observers *after* releasing the lock
+        updated_execution = Some(execution.clone());
+        // We might potentially signal the condition variable here if the grace period wait
+        // wants to wake up early, but it's simpler to let the grace period timeout.
+        // self.executions_cond.notify_all();
+        break; // Assume exec_id is unique across requests for this purpose
+      }
+    }
+
+    // Drop the lock before notifying observers
+    drop(exec_state);
+
+    if let Some(exec) = updated_execution {
+      // Notify observers with the *updated* execution data
+      self.notify_execution(&exec);
+    } else {
+      // Commission report arrived but matching execution wasn't found (yet?).
+      // This could happen if commission arrives before execDetails.
+      // We currently don't store pending commissions, so this report might be lost
+      // for the get_daily_executions call if it arrives very early.
+      // For long-running observers, this isn't an issue as they get both separately.
+      warn!("Received CommissionReport for ExecID {} but no matching execution found in active requests.", exec_id);
+    }
+  }
+
   // Implement other multi-account/position methods if needed, similar to single versions
-  // fn position_multi(&self, req_id: i32, account: &str, model_code: &str, contract: &Contract, pos: f64, avg_cost: f64);
-  // fn position_multi_end(&self, req_id: i32);
-  // fn account_update_multi(&self, req_id: i32, account: &str, model_code: &str, key: &str, value: &str, currency: &str);
-  // fn account_update_multi_end(&self, req_id: i32);
+  // fn position_multi(...) { ... }
+  // fn position_multi_end(...) { ... }
+  // fn account_update_multi(...) { ... }
+  // fn account_update_multi_end(...) { ... }
 }

@@ -9,6 +9,7 @@ use crate::protocol_dec_parser::FieldParser;
 use crate::contract::{Contract, SecType, OptionRight}; // Keep imports needed for parsing
 use crate::account::Execution;
 use crate::order::OrderSide;
+use crate::protocol_dec_parser::parse_tws_date_time;
 
 /// Process account value message
 pub fn process_account_value(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
@@ -400,93 +401,139 @@ pub fn process_account_update_multi_end(handler: &Arc<dyn AccountHandler>, _pars
 
 /// Process execution data message
 pub fn process_execution_data(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let version = parser.read_int()?;
+  // Determine message version based on server version (special case for LAST_LIQUIDITY)
+  //let msg_version = if server_version < min_server_ver::LAST_LIQUIDITY {
+  let msg_version = parser.read_int()?;
 
   let mut req_id = -1;
-  if version >= 7 {
+  if msg_version >= 7 {
     req_id = parser.read_int()?;
+    log::trace!("  Req ID: {}", req_id);
   }
 
   let order_id = parser.read_int()?;
+  log::trace!("  Order ID: {}", order_id);
 
-  // Read contract fields
+  // --- Read contract fields ---
   let mut contract = Contract::new();
-
-  if version >= 5 {
+  if msg_version >= 5 {
     contract.con_id = parser.read_int()?;
+    log::trace!("  Contract ConID: {}", contract.con_id);
   }
-
   contract.symbol = parser.read_string()?;
-
-  let sec_type_str = parser.read_string()?;
-  contract.sec_type = SecType::from_str(&sec_type_str).unwrap_or(SecType::Stock);
-
-  let expiry = parser.read_string()?;
-  if !expiry.is_empty() {
-    contract.last_trade_date_or_contract_month = Some(expiry);
+  contract.sec_type = SecType::from_str(&parser.read_string()?).unwrap_or(SecType::Stock);
+  contract.last_trade_date_or_contract_month = parser.read_string().ok().filter(|s| !s.is_empty());
+  contract.strike = parser.read_double().ok().filter(|&f| f > 0.0);
+  contract.right = OptionRight::from_str(&parser.read_string()?).ok();
+  if msg_version >= 9 {
+    contract.multiplier = parser.read_string().ok().filter(|s| !s.is_empty());
   }
-
-  let strike = parser.read_double()?;
-  if strike > 0.0 {
-    contract.strike = Some(strike);
-  }
-
-  let right_str = parser.read_string()?;
-  if !right_str.is_empty() {
-    contract.right = match right_str.as_str() {
-      "C" => Some(OptionRight::Call),
-      "P" => Some(OptionRight::Put),
-      _ => None,
-    };
-  }
-
-  if version >= 9 {
-    let multiplier = parser.read_string()?;
-    if !multiplier.is_empty() {
-      contract.multiplier = Some(multiplier);
-    }
-  }
-
   contract.exchange = parser.read_string()?;
   contract.currency = parser.read_string()?;
-
-  let local_symbol = parser.read_string()?;
-  if !local_symbol.is_empty() {
-    contract.local_symbol = Some(local_symbol);
+  contract.local_symbol = parser.read_string().ok().filter(|s| !s.is_empty());
+  if msg_version >= 10 {
+    contract.trading_class = parser.read_string().ok().filter(|s| !s.is_empty());
   }
+  log::trace!("  Contract Symbol: {}, SecType: {:?}, Expiry: {:?}, Strike: {:?}, Right: {:?}, Exch: {}, Curr: {}",
+              contract.symbol, contract.sec_type, contract.last_trade_date_or_contract_month, contract.strike, contract.right, contract.exchange, contract.currency);
+  // --- End Contract ---
 
-  if version >= 10 {
-    let trading_class = parser.read_string()?;
-    if !trading_class.is_empty() {
-      contract.trading_class = Some(trading_class);
-    }
+
+  // --- Read Execution fields ---
+  let execution_id = parser.read_string()?;
+  let time_str = parser.read_string()?;
+  let account_id = parser.read_string()?;
+  let exec_exchange = parser.read_string()?;
+  let side_str = parser.read_string()?;
+  // Use read_double directly as Decimal parsing might not be needed unless precision is critical
+  let quantity = parser.read_double()?; // readDecimal in Java often reads as double string
+  let price = parser.read_double()?;
+
+  let mut perm_id = 0;
+  if msg_version >= 2 {
+    perm_id = parser.read_int()?;
   }
+  let mut client_id = 0;
+  if msg_version >= 3 {
+    client_id = parser.read_int()?;
+  }
+  let mut liquidation_int = 0;
+  if msg_version >= 4 {
+    liquidation_int = parser.read_int()?;
+  }
+  let mut cum_qty = 0.0;
+  let mut avg_price = 0.0;
+  if msg_version >= 6 {
+    cum_qty = parser.read_double()?; // readDecimal
+    avg_price = parser.read_double()?;
+  }
+  let mut order_ref = None;
+  if msg_version >= 8 {
+    order_ref = parser.read_string().ok().filter(|s| !s.is_empty());
+  }
+  let mut ev_rule = None;
+  let mut ev_multiplier = None;
+  if msg_version >= 9 {
+    ev_rule = parser.read_string().ok().filter(|s| !s.is_empty());
+    ev_multiplier = parser.read_double().ok(); // Filter out errors/NaN? TWS sends 0.0 for empty.
+  }
+  let mut model_code = None;
+  model_code = parser.read_string().ok().filter(|s| !s.is_empty());
+  let mut last_liquidity = None;
+  //if server_version >= min_server_ver::LAST_LIQUIDITY { // Check against server_version
+    last_liquidity = parser.read_int().ok(); // Read as int, store Option<i32>
+  //}
+  let mut pending_price_revision = None;
+  //if server_version >= min_server_ver::PENDING_PRICE_REVISION { // Check against server_version
+    // Assuming read_bool_from_int helper exists in FieldParser
+    // pending_price_revision = parser.read_bool_from_int().ok();
+    match parser.read_int() { // Read the int directly
+      Ok(val) => pending_price_revision = Some(val != 0),
+      Err(_) => pending_price_revision = None, // Or handle error
+    };
+  //}// PENDING_PRICE_REVISION
 
-  // Read execution fields
-  let mut execution = Execution {
-    execution_id: parser.read_string()?,
+
+  log::debug!("Parsed Execution Detail: ExecID={}, OrderID={}, Account={}, Symbol={}, Side={}, Qty={}, Price={}, Time={}",
+              execution_id, order_id, account_id, contract.symbol, side_str, quantity, price, time_str);
+
+  // Create Execution struct (without commission)
+  let execution = Execution {
+    execution_id,
     order_id: order_id.to_string(),
-    symbol: contract.symbol.clone(),
-    side: match parser.read_string()?.as_str() {
-      "BOT" => OrderSide::Buy,
-      "SLD" => OrderSide::Sell,
-      "SSHORT" => OrderSide::SellShort,
-      _ => OrderSide::Buy,
-    },
-    quantity: parser.read_double()?,
-    price: parser.read_double()?,
-    time: Utc::now(), // Default time
-    commission: 0.0,
-    exchange: parser.read_string()?,
-    account: parser.read_string()?,
+    perm_id,
+    client_id,
+    symbol: contract.symbol.clone(), // Keep symbol convenience field
+    contract: contract.clone(),
+    side: OrderSide::from_str(&side_str).unwrap_or(OrderSide::Buy),
+    quantity,
+    price,
+    time: parse_tws_date_time(&time_str).unwrap_or_else(|e| {
+      log::warn!("Failed to parse execution time '{}', using current time: {}", time_str, e);
+      Utc::now()
+    }),
+    avg_price,
+    commission: None,
+    commission_currency: None,
+    realized_pnl: None,
+    exchange: exec_exchange,
+    account_id,
+    // Treat liquidation=1 (Liquidation) and 2 (Unknown) as true? Check semantics if needed.
+    // Let's stick to true only if liquidation_int == 1.
+    liquidation: liquidation_int == 1,
+    cum_qty,
+    order_ref,
+    ev_rule,
+    ev_multiplier,
+    model_code,
+    last_liquidity,
+    pending_price_revision,
   };
 
-  if version >= 6 {
-    // More execution fields can be parsed here
-  }
-
-  log::debug!("Execution Data: ReqID={}, OrderID={}, Symbol={}, Side={}, Quantity={}, Price={}",
-         req_id, order_id, contract.symbol, execution.side, execution.quantity, execution.price);
+  // --- Call handler ---
+  // Pass req_id (-1 if not present), the parsed contract, and the base execution struct
+  handler.execution_details(req_id, &execution.contract, &execution);
+  // ---
 
   Ok(())
 }

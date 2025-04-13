@@ -5,6 +5,8 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::order::{OrderRequest, OrderStatus, OrderState};
+use crate::account::Execution;
+
 
 /// Meta messages such as errors and time.
 pub trait ClientHandler: Send + Sync {
@@ -113,6 +115,10 @@ pub trait AccountHandler: Send + Sync {
 
   /// Update PnL for a single position.
   fn pnl_single(&self, req_id: i32, pos: i32, daily_pnl: f64, unrealized_pnl: Option<f64>, realized_pnl: Option<f64>, value: f64);
+
+  fn execution_details(&self, req_id: i32, _contract: &Contract, execution: &Execution);
+  fn execution_details_end(&self, req_id: i32);
+  fn commission_report(&self, exec_id: &str, commission: f64, currency: &str, realized_pnl: Option<f64>);
 
   // --- Methods for multi-account updates (optional to implement fully initially) ---
   // fn position_multi(&self, req_id: i32, account: &str, model_code: &str, contract: &Contract, pos: f64, avg_cost: f64);

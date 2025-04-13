@@ -39,6 +39,7 @@ rust_library(
     ],
     deps = [
         "@crates//:chrono",
+        "@crates//:chrono-tz",
         "@crates//:thiserror",
         "@crates//:num-traits",
         "@crates//:byteorder",

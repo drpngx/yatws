@@ -5,7 +5,7 @@ use std::io::Cursor;
 use crate::base::IBKRError;
 use crate::contract::{Contract, ContractDetails, OptionRight, SecType, ComboLeg};
 use crate::order::{Order, OrderRequest, TimeInForce, OrderType, OrderSide, OrderState};
-use crate::account::AccountInfo;
+use crate::account::{AccountInfo, ExecutionFilter};
 use crate::min_server_ver::min_server_ver;
 use chrono::{DateTime, Utc};
 use log::{debug, trace, warn, error};
@@ -240,6 +240,31 @@ impl Encoder {
     self.write_str_to_cursor(&mut cursor, group)?;
     self.write_str_to_cursor(&mut cursor, tags)?;
     Ok(self.finish_encoding(cursor))
+  }
+
+  pub fn encode_request_executions(&self, req_id: i32, filter: &ExecutionFilter) -> Result<Vec<u8>, IBKRError> {
+      debug!("Encoding request executions: ReqID={}, Filter={:?}", req_id, filter);
+      let mut cursor = self.start_encoding(OutgoingMessageType::RequestExecutions as i32)?;
+      let version = 3; // Version supporting filter fields
+
+      self.write_int_to_cursor(&mut cursor, version)?;
+      // Version 2 field (reqId) is only present if version >= 3 in this specific message
+      if version >= 3 {
+          self.write_int_to_cursor(&mut cursor, req_id)?;
+      }
+
+      // Write filter fields (version 3)
+      // Use defaults (0 or "") if Option is None, as per TWS API conventions
+      self.write_int_to_cursor(&mut cursor, filter.client_id.unwrap_or(0))?;
+      self.write_str_to_cursor(&mut cursor, filter.acct_code.as_deref().unwrap_or(""))?;
+      // Time format: "yyyymmdd hh:mm:ss" (TWS docs mention single space usually)
+      self.write_str_to_cursor(&mut cursor, filter.time.as_deref().unwrap_or(""))?;
+      self.write_str_to_cursor(&mut cursor, filter.symbol.as_deref().unwrap_or(""))?;
+      self.write_str_to_cursor(&mut cursor, filter.sec_type.as_deref().unwrap_or(""))?;
+      self.write_str_to_cursor(&mut cursor, filter.exchange.as_deref().unwrap_or(""))?;
+      self.write_str_to_cursor(&mut cursor, filter.side.as_deref().unwrap_or(""))?;
+
+      Ok(self.finish_encoding(cursor))
   }
 
   pub fn encode_request_positions(&self) -> Result<Vec<u8>, IBKRError> {

@@ -4,6 +4,8 @@
 use chrono::{DateTime, Utc};
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use crate::base::IBKRError;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecType {
@@ -394,6 +396,17 @@ impl fmt::Display for OptionRight {
   }
 }
 
+impl FromStr for OptionRight {
+  type Err = IBKRError;
+  fn from_str(s: &str) -> Result<Self, IBKRError> {
+    // Match case-insensitively for robustness
+    match s.trim().to_uppercase().as_str() {
+      "C" | "CALL" => Ok(OptionRight::Call),
+      "P" | "PUT" => Ok(OptionRight::Put),
+      _ => Err(IBKRError::ParseError(s.to_string())),
+    }
+  }
+}
 
 /// Detailed contract information
 #[derive(Debug, Clone)]
