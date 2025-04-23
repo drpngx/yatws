@@ -99,6 +99,222 @@ pub enum OutgoingMessageType {
   RequestUserInfo = 104,
 }
 
+/// Identifies an outgoing message type based on its raw byte payload prefix.
+///
+/// TWS messages typically start with the numeric message type ID followed by a null byte.
+/// This function parses that ID and returns a static string name if known.
+///
+/// It's useful for logging/debugging the raw encoded messages before sending.
+///
+/// Returns `Some(type_name)` or `None` if the type ID is not recognized or cannot be parsed.
+pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
+  if msg_data.is_empty() {
+    return None;
+  }
+
+  // Find the first null terminator to isolate the type ID string
+  let end_pos = msg_data.iter().position(|&b| b == 0).unwrap_or(0);
+  if end_pos == 0 {
+    // Special case for H1 Handshake which starts "API\0"
+    if msg_data.starts_with(b"API\0") {
+      return Some("H1_CLIENT_VERSION");
+    }
+    return None; // No null terminator found normally
+  }
+
+  let type_id_bytes = &msg_data[0..end_pos];
+
+  // Convert bytes to string slice
+  let type_id_str = match std::str::from_utf8(type_id_bytes) {
+    Ok(s) => s,
+    Err(_) => return None, // Not valid UTF-8
+  };
+
+  // Parse the string to an integer (assuming base 10)
+  let type_id: i32 = match type_id_str.parse() {
+    Ok(id) => id,
+    Err(_) => return None, // Failed to parse as integer
+  };
+
+  // Map the integer ID to a static string name using the OutgoingMessageType enum
+  match OutgoingMessageType::try_from(type_id) {
+    Ok(OutgoingMessageType::RequestMarketData) => Some("REQ_MKT_DATA"),
+    Ok(OutgoingMessageType::CancelMarketData) => Some("CANCEL_MKT_DATA"),
+    Ok(OutgoingMessageType::PlaceOrder) => Some("PLACE_ORDER"),
+    Ok(OutgoingMessageType::CancelOrder) => Some("CANCEL_ORDER"),
+    Ok(OutgoingMessageType::RequestOpenOrders) => Some("REQ_OPEN_ORDERS"),
+    Ok(OutgoingMessageType::RequestAccountData) => Some("REQ_ACCOUNT_DATA"),
+    Ok(OutgoingMessageType::RequestExecutions) => Some("REQ_EXECUTIONS"),
+    Ok(OutgoingMessageType::RequestIds) => Some("REQ_IDS"),
+    Ok(OutgoingMessageType::RequestContractData) => Some("REQ_CONTRACT_DATA"),
+    Ok(OutgoingMessageType::RequestMarketDepth) => Some("REQ_MKT_DEPTH"),
+    Ok(OutgoingMessageType::CancelMarketDepth) => Some("CANCEL_MKT_DEPTH"),
+    Ok(OutgoingMessageType::RequestNewsBulletins) => Some("REQ_NEWS_BULLETINS"),
+    Ok(OutgoingMessageType::CancelNewsBulletins) => Some("CANCEL_NEWS_BULLETINS"),
+    Ok(OutgoingMessageType::SetServerLogLevel) => Some("SET_SERVER_LOGLEVEL"),
+    Ok(OutgoingMessageType::RequestAutoOpenOrders) => Some("REQ_AUTO_OPEN_ORDERS"),
+    Ok(OutgoingMessageType::RequestAllOpenOrders) => Some("REQ_ALL_OPEN_ORDERS"),
+    Ok(OutgoingMessageType::RequestManagedAccts) => Some("REQ_MANAGED_ACCTS"),
+    Ok(OutgoingMessageType::RequestFinancialAdvisor) => Some("REQ_FA"),
+    Ok(OutgoingMessageType::ReplaceFinancialAdvisor) => Some("REPLACE_FA"),
+    Ok(OutgoingMessageType::RequestHistoricalData) => Some("REQ_HISTORICAL_DATA"),
+    Ok(OutgoingMessageType::ExerciseOptions) => Some("EXERCISE_OPTIONS"),
+    Ok(OutgoingMessageType::RequestScannerSubscription) => Some("REQ_SCANNER_SUBSCRIPTION"),
+    Ok(OutgoingMessageType::CancelScannerSubscription) => Some("CANCEL_SCANNER_SUBSCRIPTION"),
+    Ok(OutgoingMessageType::RequestScannerParameters) => Some("REQ_SCANNER_PARAMETERS"),
+    Ok(OutgoingMessageType::CancelHistoricalData) => Some("CANCEL_HISTORICAL_DATA"),
+    Ok(OutgoingMessageType::RequestCurrentTime) => Some("REQ_CURRENT_TIME"),
+    Ok(OutgoingMessageType::RequestRealTimeBars) => Some("REQ_REAL_TIME_BARS"),
+    Ok(OutgoingMessageType::CancelRealTimeBars) => Some("CANCEL_REAL_TIME_BARS"),
+    Ok(OutgoingMessageType::RequestFundamentalData) => Some("REQ_FUNDAMENTAL_DATA"),
+    Ok(OutgoingMessageType::CancelFundamentalData) => Some("CANCEL_FUNDAMENTAL_DATA"),
+    Ok(OutgoingMessageType::RequestCalcImpliedVolat) => Some("REQ_CALC_IMPLIED_VOLAT"),
+    Ok(OutgoingMessageType::RequestCalcOptionPrice) => Some("REQ_CALC_OPTION_PRICE"),
+    Ok(OutgoingMessageType::CancelCalcImpliedVolat) => Some("CANCEL_CALC_IMPLIED_VOLAT"),
+    Ok(OutgoingMessageType::CancelCalcOptionPrice) => Some("CANCEL_CALC_OPTION_PRICE"),
+    Ok(OutgoingMessageType::RequestGlobalCancel) => Some("REQ_GLOBAL_CANCEL"),
+    Ok(OutgoingMessageType::RequestMarketDataType) => Some("REQ_MARKET_DATA_TYPE"),
+    Ok(OutgoingMessageType::RequestPositions) => Some("REQ_POSITIONS"),
+    Ok(OutgoingMessageType::RequestAccountSummary) => Some("REQ_ACCOUNT_SUMMARY"),
+    Ok(OutgoingMessageType::CancelAccountSummary) => Some("CANCEL_ACCOUNT_SUMMARY"),
+    Ok(OutgoingMessageType::CancelPositions) => Some("CANCEL_POSITIONS"),
+    Ok(OutgoingMessageType::VerifyRequest) => Some("VERIFY_REQUEST"),
+    Ok(OutgoingMessageType::VerifyMessage) => Some("VERIFY_MESSAGE"),
+    Ok(OutgoingMessageType::QueryDisplayGroups) => Some("QUERY_DISPLAY_GROUPS"),
+    Ok(OutgoingMessageType::SubscribeToGroupEvents) => Some("SUBSCRIBE_TO_GROUP_EVENTS"),
+    Ok(OutgoingMessageType::UpdateDisplayGroup) => Some("UPDATE_DISPLAY_GROUP"),
+    Ok(OutgoingMessageType::UnsubscribeFromGroupEvents) => Some("UNSUBSCRIBE_FROM_GROUP_EVENTS"),
+    Ok(OutgoingMessageType::StartApi) => Some("H3_START_API"), // Use H3 alias
+    Ok(OutgoingMessageType::VerifyAndAuthRequest) => Some("VERIFY_AND_AUTH_REQUEST"),
+    Ok(OutgoingMessageType::VerifyAndAuthMessage) => Some("VERIFY_AND_AUTH_MESSAGE"),
+    Ok(OutgoingMessageType::RequestPositionsMulti) => Some("REQ_POSITIONS_MULTI"),
+    Ok(OutgoingMessageType::CancelPositionsMulti) => Some("CANCEL_POSITIONS_MULTI"),
+    Ok(OutgoingMessageType::RequestAccountUpdatesMulti) => Some("REQ_ACCOUNT_UPDATES_MULTI"),
+    Ok(OutgoingMessageType::CancelAccountUpdatesMulti) => Some("CANCEL_ACCOUNT_UPDATES_MULTI"),
+    Ok(OutgoingMessageType::RequestSecDefOptParams) => Some("REQ_SEC_DEF_OPT_PARAMS"),
+    Ok(OutgoingMessageType::RequestSoftDollarTiers) => Some("REQ_SOFT_DOLLAR_TIERS"),
+    Ok(OutgoingMessageType::RequestFamilyCodes) => Some("REQ_FAMILY_CODES"),
+    Ok(OutgoingMessageType::RequestMatchingSymbols) => Some("REQ_MATCHING_SYMBOLS"),
+    Ok(OutgoingMessageType::RequestMktDepthExchanges) => Some("REQ_MKT_DEPTH_EXCHANGES"),
+    Ok(OutgoingMessageType::RequestSmartComponents) => Some("REQ_SMART_COMPONENTS"),
+    Ok(OutgoingMessageType::RequestNewsArticle) => Some("REQ_NEWS_ARTICLE"),
+    Ok(OutgoingMessageType::RequestNewsProviders) => Some("REQ_NEWS_PROVIDERS"),
+    Ok(OutgoingMessageType::RequestHistoricalNews) => Some("REQ_HISTORICAL_NEWS"),
+    Ok(OutgoingMessageType::RequestHeadTimestamp) => Some("REQ_HEAD_TIMESTAMP"),
+    Ok(OutgoingMessageType::RequestHistogramData) => Some("REQ_HISTOGRAM_DATA"),
+    Ok(OutgoingMessageType::CancelHistogramData) => Some("CANCEL_HISTOGRAM_DATA"),
+    Ok(OutgoingMessageType::CancelHeadTimestamp) => Some("CANCEL_HEAD_TIMESTAMP"),
+    Ok(OutgoingMessageType::RequestMarketRule) => Some("REQ_MARKET_RULE"),
+    Ok(OutgoingMessageType::RequestPnL) => Some("REQ_PNL"),
+    Ok(OutgoingMessageType::CancelPnL) => Some("CANCEL_PNL"),
+    Ok(OutgoingMessageType::RequestPnLSingle) => Some("REQ_PNL_SINGLE"),
+    Ok(OutgoingMessageType::CancelPnLSingle) => Some("CANCEL_PNL_SINGLE"),
+    Ok(OutgoingMessageType::RequestHistoricalTicks) => Some("REQ_HISTORICAL_TICKS"),
+    Ok(OutgoingMessageType::RequestTickByTickData) => Some("REQ_TICK_BY_TICK_DATA"),
+    Ok(OutgoingMessageType::CancelTickByTickData) => Some("CANCEL_TICK_BY_TICK_DATA"),
+    Ok(OutgoingMessageType::RequestCompletedOrders) => Some("REQ_COMPLETED_ORDERS"),
+    Ok(OutgoingMessageType::RequestWshMetaData) => Some("REQ_WSH_META_DATA"),
+    Ok(OutgoingMessageType::CancelWshMetaData) => Some("CANCEL_WSH_META_DATA"),
+    Ok(OutgoingMessageType::RequestWshEventData) => Some("REQ_WSH_EVENT_DATA"),
+    Ok(OutgoingMessageType::CancelWshEventData) => Some("CANCEL_WSH_EVENT_DATA"),
+    Ok(OutgoingMessageType::RequestUserInfo) => Some("REQ_USER_INFO"),
+    // Add any missing outgoing message IDs here
+    Err(_) => None, // Unknown type ID
+  }
+}
+
+// Helper to allow conversion from i32, needed for the match statement above
+impl TryFrom<i32> for OutgoingMessageType {
+  type Error = ();
+
+  fn try_from(v: i32) -> Result<Self, Self::Error> {
+    match v {
+      x if x == OutgoingMessageType::RequestMarketData as i32 => Ok(OutgoingMessageType::RequestMarketData),
+      x if x == OutgoingMessageType::CancelMarketData as i32 => Ok(OutgoingMessageType::CancelMarketData),
+      x if x == OutgoingMessageType::PlaceOrder as i32 => Ok(OutgoingMessageType::PlaceOrder),
+      x if x == OutgoingMessageType::CancelOrder as i32 => Ok(OutgoingMessageType::CancelOrder),
+      x if x == OutgoingMessageType::RequestOpenOrders as i32 => Ok(OutgoingMessageType::RequestOpenOrders),
+      x if x == OutgoingMessageType::RequestAccountData as i32 => Ok(OutgoingMessageType::RequestAccountData),
+      x if x == OutgoingMessageType::RequestExecutions as i32 => Ok(OutgoingMessageType::RequestExecutions),
+      x if x == OutgoingMessageType::RequestIds as i32 => Ok(OutgoingMessageType::RequestIds),
+      x if x == OutgoingMessageType::RequestContractData as i32 => Ok(OutgoingMessageType::RequestContractData),
+      x if x == OutgoingMessageType::RequestMarketDepth as i32 => Ok(OutgoingMessageType::RequestMarketDepth),
+      x if x == OutgoingMessageType::CancelMarketDepth as i32 => Ok(OutgoingMessageType::CancelMarketDepth),
+      x if x == OutgoingMessageType::RequestNewsBulletins as i32 => Ok(OutgoingMessageType::RequestNewsBulletins),
+      x if x == OutgoingMessageType::CancelNewsBulletins as i32 => Ok(OutgoingMessageType::CancelNewsBulletins),
+      x if x == OutgoingMessageType::SetServerLogLevel as i32 => Ok(OutgoingMessageType::SetServerLogLevel),
+      x if x == OutgoingMessageType::RequestAutoOpenOrders as i32 => Ok(OutgoingMessageType::RequestAutoOpenOrders),
+      x if x == OutgoingMessageType::RequestAllOpenOrders as i32 => Ok(OutgoingMessageType::RequestAllOpenOrders),
+      x if x == OutgoingMessageType::RequestManagedAccts as i32 => Ok(OutgoingMessageType::RequestManagedAccts),
+      x if x == OutgoingMessageType::RequestFinancialAdvisor as i32 => Ok(OutgoingMessageType::RequestFinancialAdvisor),
+      x if x == OutgoingMessageType::ReplaceFinancialAdvisor as i32 => Ok(OutgoingMessageType::ReplaceFinancialAdvisor),
+      x if x == OutgoingMessageType::RequestHistoricalData as i32 => Ok(OutgoingMessageType::RequestHistoricalData),
+      x if x == OutgoingMessageType::ExerciseOptions as i32 => Ok(OutgoingMessageType::ExerciseOptions),
+      x if x == OutgoingMessageType::RequestScannerSubscription as i32 => Ok(OutgoingMessageType::RequestScannerSubscription),
+      x if x == OutgoingMessageType::CancelScannerSubscription as i32 => Ok(OutgoingMessageType::CancelScannerSubscription),
+      x if x == OutgoingMessageType::RequestScannerParameters as i32 => Ok(OutgoingMessageType::RequestScannerParameters),
+      x if x == OutgoingMessageType::CancelHistoricalData as i32 => Ok(OutgoingMessageType::CancelHistoricalData),
+      x if x == OutgoingMessageType::RequestCurrentTime as i32 => Ok(OutgoingMessageType::RequestCurrentTime),
+      x if x == OutgoingMessageType::RequestRealTimeBars as i32 => Ok(OutgoingMessageType::RequestRealTimeBars),
+      x if x == OutgoingMessageType::CancelRealTimeBars as i32 => Ok(OutgoingMessageType::CancelRealTimeBars),
+      x if x == OutgoingMessageType::RequestFundamentalData as i32 => Ok(OutgoingMessageType::RequestFundamentalData),
+      x if x == OutgoingMessageType::CancelFundamentalData as i32 => Ok(OutgoingMessageType::CancelFundamentalData),
+      x if x == OutgoingMessageType::RequestCalcImpliedVolat as i32 => Ok(OutgoingMessageType::RequestCalcImpliedVolat),
+      x if x == OutgoingMessageType::RequestCalcOptionPrice as i32 => Ok(OutgoingMessageType::RequestCalcOptionPrice),
+      x if x == OutgoingMessageType::CancelCalcImpliedVolat as i32 => Ok(OutgoingMessageType::CancelCalcImpliedVolat),
+      x if x == OutgoingMessageType::CancelCalcOptionPrice as i32 => Ok(OutgoingMessageType::CancelCalcOptionPrice),
+      x if x == OutgoingMessageType::RequestGlobalCancel as i32 => Ok(OutgoingMessageType::RequestGlobalCancel),
+      x if x == OutgoingMessageType::RequestMarketDataType as i32 => Ok(OutgoingMessageType::RequestMarketDataType),
+      x if x == OutgoingMessageType::RequestPositions as i32 => Ok(OutgoingMessageType::RequestPositions),
+      x if x == OutgoingMessageType::RequestAccountSummary as i32 => Ok(OutgoingMessageType::RequestAccountSummary),
+      x if x == OutgoingMessageType::CancelAccountSummary as i32 => Ok(OutgoingMessageType::CancelAccountSummary),
+      x if x == OutgoingMessageType::CancelPositions as i32 => Ok(OutgoingMessageType::CancelPositions),
+      x if x == OutgoingMessageType::VerifyRequest as i32 => Ok(OutgoingMessageType::VerifyRequest),
+      x if x == OutgoingMessageType::VerifyMessage as i32 => Ok(OutgoingMessageType::VerifyMessage),
+      x if x == OutgoingMessageType::QueryDisplayGroups as i32 => Ok(OutgoingMessageType::QueryDisplayGroups),
+      x if x == OutgoingMessageType::SubscribeToGroupEvents as i32 => Ok(OutgoingMessageType::SubscribeToGroupEvents),
+      x if x == OutgoingMessageType::UpdateDisplayGroup as i32 => Ok(OutgoingMessageType::UpdateDisplayGroup),
+      x if x == OutgoingMessageType::UnsubscribeFromGroupEvents as i32 => Ok(OutgoingMessageType::UnsubscribeFromGroupEvents),
+      x if x == OutgoingMessageType::StartApi as i32 => Ok(OutgoingMessageType::StartApi),
+      x if x == OutgoingMessageType::VerifyAndAuthRequest as i32 => Ok(OutgoingMessageType::VerifyAndAuthRequest),
+      x if x == OutgoingMessageType::VerifyAndAuthMessage as i32 => Ok(OutgoingMessageType::VerifyAndAuthMessage),
+      x if x == OutgoingMessageType::RequestPositionsMulti as i32 => Ok(OutgoingMessageType::RequestPositionsMulti),
+      x if x == OutgoingMessageType::CancelPositionsMulti as i32 => Ok(OutgoingMessageType::CancelPositionsMulti),
+      x if x == OutgoingMessageType::RequestAccountUpdatesMulti as i32 => Ok(OutgoingMessageType::RequestAccountUpdatesMulti),
+      x if x == OutgoingMessageType::CancelAccountUpdatesMulti as i32 => Ok(OutgoingMessageType::CancelAccountUpdatesMulti),
+      x if x == OutgoingMessageType::RequestSecDefOptParams as i32 => Ok(OutgoingMessageType::RequestSecDefOptParams),
+      x if x == OutgoingMessageType::RequestSoftDollarTiers as i32 => Ok(OutgoingMessageType::RequestSoftDollarTiers),
+      x if x == OutgoingMessageType::RequestFamilyCodes as i32 => Ok(OutgoingMessageType::RequestFamilyCodes),
+      x if x == OutgoingMessageType::RequestMatchingSymbols as i32 => Ok(OutgoingMessageType::RequestMatchingSymbols),
+      x if x == OutgoingMessageType::RequestMktDepthExchanges as i32 => Ok(OutgoingMessageType::RequestMktDepthExchanges),
+      x if x == OutgoingMessageType::RequestSmartComponents as i32 => Ok(OutgoingMessageType::RequestSmartComponents),
+      x if x == OutgoingMessageType::RequestNewsArticle as i32 => Ok(OutgoingMessageType::RequestNewsArticle),
+      x if x == OutgoingMessageType::RequestNewsProviders as i32 => Ok(OutgoingMessageType::RequestNewsProviders),
+      x if x == OutgoingMessageType::RequestHistoricalNews as i32 => Ok(OutgoingMessageType::RequestHistoricalNews),
+      x if x == OutgoingMessageType::RequestHeadTimestamp as i32 => Ok(OutgoingMessageType::RequestHeadTimestamp),
+      x if x == OutgoingMessageType::RequestHistogramData as i32 => Ok(OutgoingMessageType::RequestHistogramData),
+      x if x == OutgoingMessageType::CancelHistogramData as i32 => Ok(OutgoingMessageType::CancelHistogramData),
+      x if x == OutgoingMessageType::CancelHeadTimestamp as i32 => Ok(OutgoingMessageType::CancelHeadTimestamp),
+      x if x == OutgoingMessageType::RequestMarketRule as i32 => Ok(OutgoingMessageType::RequestMarketRule),
+      x if x == OutgoingMessageType::RequestPnL as i32 => Ok(OutgoingMessageType::RequestPnL),
+      x if x == OutgoingMessageType::CancelPnL as i32 => Ok(OutgoingMessageType::CancelPnL),
+      x if x == OutgoingMessageType::RequestPnLSingle as i32 => Ok(OutgoingMessageType::RequestPnLSingle),
+      x if x == OutgoingMessageType::CancelPnLSingle as i32 => Ok(OutgoingMessageType::CancelPnLSingle),
+      x if x == OutgoingMessageType::RequestHistoricalTicks as i32 => Ok(OutgoingMessageType::RequestHistoricalTicks),
+      x if x == OutgoingMessageType::RequestTickByTickData as i32 => Ok(OutgoingMessageType::RequestTickByTickData),
+      x if x == OutgoingMessageType::CancelTickByTickData as i32 => Ok(OutgoingMessageType::CancelTickByTickData),
+      x if x == OutgoingMessageType::RequestCompletedOrders as i32 => Ok(OutgoingMessageType::RequestCompletedOrders),
+      x if x == OutgoingMessageType::RequestWshMetaData as i32 => Ok(OutgoingMessageType::RequestWshMetaData),
+      x if x == OutgoingMessageType::CancelWshMetaData as i32 => Ok(OutgoingMessageType::CancelWshMetaData),
+      x if x == OutgoingMessageType::RequestWshEventData as i32 => Ok(OutgoingMessageType::RequestWshEventData),
+      x if x == OutgoingMessageType::CancelWshEventData as i32 => Ok(OutgoingMessageType::CancelWshEventData),
+      x if x == OutgoingMessageType::RequestUserInfo as i32 => Ok(OutgoingMessageType::RequestUserInfo),
+      _ => Err(()),
+    }
+  }
+}
+
+
 /// Message encoder for the TWS API protocol
 pub struct Encoder {
   server_version: i32,
@@ -243,28 +459,28 @@ impl Encoder {
   }
 
   pub fn encode_request_executions(&self, req_id: i32, filter: &ExecutionFilter) -> Result<Vec<u8>, IBKRError> {
-      debug!("Encoding request executions: ReqID={}, Filter={:?}", req_id, filter);
-      let mut cursor = self.start_encoding(OutgoingMessageType::RequestExecutions as i32)?;
-      let version = 3; // Version supporting filter fields
+    debug!("Encoding request executions: ReqID={}, Filter={:?}", req_id, filter);
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestExecutions as i32)?;
+    let version = 3; // Version supporting filter fields
 
-      self.write_int_to_cursor(&mut cursor, version)?;
-      // Version 2 field (reqId) is only present if version >= 3 in this specific message
-      if version >= 3 {
-          self.write_int_to_cursor(&mut cursor, req_id)?;
-      }
+    self.write_int_to_cursor(&mut cursor, version)?;
+    // Version 2 field (reqId) is only present if version >= 3 in this specific message
+    if version >= 3 {
+      self.write_int_to_cursor(&mut cursor, req_id)?;
+    }
 
-      // Write filter fields (version 3)
-      // Use defaults (0 or "") if Option is None, as per TWS API conventions
-      self.write_int_to_cursor(&mut cursor, filter.client_id.unwrap_or(0))?;
-      self.write_str_to_cursor(&mut cursor, filter.acct_code.as_deref().unwrap_or(""))?;
-      // Time format: "yyyymmdd hh:mm:ss" (TWS docs mention single space usually)
-      self.write_str_to_cursor(&mut cursor, filter.time.as_deref().unwrap_or(""))?;
-      self.write_str_to_cursor(&mut cursor, filter.symbol.as_deref().unwrap_or(""))?;
-      self.write_str_to_cursor(&mut cursor, filter.sec_type.as_deref().unwrap_or(""))?;
-      self.write_str_to_cursor(&mut cursor, filter.exchange.as_deref().unwrap_or(""))?;
-      self.write_str_to_cursor(&mut cursor, filter.side.as_deref().unwrap_or(""))?;
+    // Write filter fields (version 3)
+    // Use defaults (0 or "") if Option is None, as per TWS API conventions
+    self.write_int_to_cursor(&mut cursor, filter.client_id.unwrap_or(0))?;
+    self.write_str_to_cursor(&mut cursor, filter.acct_code.as_deref().unwrap_or(""))?;
+    // Time format: "yyyymmdd hh:mm:ss" (TWS docs mention single space usually)
+    self.write_str_to_cursor(&mut cursor, filter.time.as_deref().unwrap_or(""))?;
+    self.write_str_to_cursor(&mut cursor, filter.symbol.as_deref().unwrap_or(""))?;
+    self.write_str_to_cursor(&mut cursor, filter.sec_type.as_deref().unwrap_or(""))?;
+    self.write_str_to_cursor(&mut cursor, filter.exchange.as_deref().unwrap_or(""))?;
+    self.write_str_to_cursor(&mut cursor, filter.side.as_deref().unwrap_or(""))?;
 
-      Ok(self.finish_encoding(cursor))
+    Ok(self.finish_encoding(cursor))
   }
 
   pub fn encode_request_positions(&self) -> Result<Vec<u8>, IBKRError> {

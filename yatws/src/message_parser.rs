@@ -118,3 +118,117 @@ pub fn process_message(handler: &mut MessageHandler, data: &[u8]) -> Result<(), 
 
   Ok(())
 }
+
+pub fn identify_incoming_type(msg_data: &[u8]) -> Option<&'static str> {
+  if msg_data.is_empty() {
+    return None;
+  }
+
+  // Find the first null terminator to isolate the type ID string
+  let end_pos = msg_data.iter().position(|&b| b == 0).unwrap_or(0); // Find first '\0'
+  if end_pos == 0 {
+    return None; // No null terminator or empty message ID
+  }
+
+  let type_id_bytes = &msg_data[0..end_pos];
+
+  // Convert bytes to string slice
+  let type_id_str = match std::str::from_utf8(type_id_bytes) {
+    Ok(s) => s,
+    Err(_) => return None, // Not valid UTF-8
+  };
+
+  // Parse the string to an integer (assuming base 10)
+  let type_id: i32 = match type_id_str.parse() {
+    Ok(id) => id,
+    Err(_) => return None, // Failed to parse as integer
+  };
+
+  // Map the integer ID to a static string name
+  match type_id {
+    1 => Some("TICK_PRICE"),
+    2 => Some("TICK_SIZE"),
+    3 => Some("ORDER_STATUS"),
+    4 => Some("ERR_MSG"),
+    5 => Some("OPEN_ORDER"),
+    6 => Some("ACCT_VALUE"),
+    7 => Some("PORTFOLIO_VALUE"),
+    8 => Some("ACCT_UPDATE_TIME"),
+    9 => Some("NEXT_VALID_ID"),
+    10 => Some("CONTRACT_DATA"),
+    11 => Some("EXECUTION_DATA"),
+    12 => Some("MARKET_DEPTH"),
+    13 => Some("MARKET_DEPTH_L2"),
+    14 => Some("NEWS_BULLETINS"),
+    15 => Some("MANAGED_ACCTS"),
+    16 => Some("RECEIVE_FA"), // Financial Advisor types
+    17 => Some("HISTORICAL_DATA"),
+    18 => Some("BOND_CONTRACT_DATA"),
+    19 => Some("SCANNER_PARAMETERS"),
+    20 => Some("SCANNER_DATA"),
+    21 => Some("TICK_OPTION_COMPUTATION"),
+    45 => Some("TICK_GENERIC"),
+    46 => Some("TICK_STRING"),
+    47 => Some("TICK_EFP"), // Exchange For Physical
+    49 => Some("CURRENT_TIME"),
+    50 => Some("REAL_TIME_BARS"),
+    51 => Some("FUNDAMENTAL_DATA"),
+    52 => Some("CONTRACT_DATA_END"),
+    53 => Some("OPEN_ORDER_END"),
+    54 => Some("ACCT_DOWNLOAD_END"),
+    55 => Some("EXECUTION_DATA_END"),
+    56 => Some("DELTA_NEUTRAL_VALIDATION"),
+    57 => Some("TICK_SNAPSHOT_END"),
+    58 => Some("MARKET_DATA_TYPE"),
+    59 => Some("COMMISSION_REPORT"),
+    61 => Some("POSITION_DATA"),
+    62 => Some("POSITION_END"),
+    63 => Some("ACCOUNT_SUMMARY"),
+    64 => Some("ACCOUNT_SUMMARY_END"),
+    65 => Some("VERIFY_MESSAGE_API"),
+    66 => Some("VERIFY_COMPLETED"),
+    67 => Some("DISPLAY_GROUP_LIST"),
+    68 => Some("DISPLAY_GROUP_UPDATED"),
+    69 => Some("VERIFY_AND_AUTH_MESSAGE_API"),
+    70 => Some("VERIFY_AND_AUTH_COMPLETED"),
+    71 => Some("POSITION_MULTI"),
+    72 => Some("POSITION_MULTI_END"),
+    73 => Some("ACCOUNT_UPDATE_MULTI"),
+    74 => Some("ACCOUNT_UPDATE_MULTI_END"),
+    75 => Some("SECURITY_DEFINITION_OPTION_PARAMETER"),
+    76 => Some("SECURITY_DEFINITION_OPTION_PARAMETER_END"),
+    77 => Some("SOFT_DOLLAR_TIERS"),
+    78 => Some("FAMILY_CODES"),
+    79 => Some("SYMBOL_SAMPLES"),
+    80 => Some("MKT_DEPTH_EXCHANGES"),
+    81 => Some("TICK_REQ_PARAMS"), // Response to reqMktData with snapshot=true
+    82 => Some("SMART_COMPONENTS"), // Response to reqSmartComponents
+    83 => Some("NEWS_ARTICLE"), // Response to reqNewsArticle
+    84 => Some("TICK_NEWS"),
+    85 => Some("NEWS_PROVIDERS"), // Response to reqNewsProviders
+    86 => Some("HISTORICAL_NEWS"), // Response to reqHistoricalNews
+    87 => Some("HISTORICAL_NEWS_END"), // Response to reqHistoricalNews
+    88 => Some("HEAD_TIMESTAMP"), // Response to reqHeadTimestamp
+    89 => Some("HISTOGRAM_DATA"), // Response to reqHistogramData
+    90 => Some("HISTORICAL_DATA_UPDATE"), // Realtime update after HISTORICAL_DATA end
+    91 => Some("REROUTE_MKT_DATA_REQ"), // Notification
+    92 => Some("REROUTE_MKT_DEPTH_REQ"), // Notification
+    93 => Some("MARKET_RULE"), // Response to reqMarketRule
+    94 => Some("PNL"), // Response to reqPnL
+    95 => Some("PNL_SINGLE"), // Response to reqPnLSingle
+    96 => Some("HISTORICAL_TICKS"), // Response to reqHistoricalTicks
+    97 => Some("HISTORICAL_TICKS_BID_ASK"), // Response to reqHistoricalTicks
+    98 => Some("HISTORICAL_TICKS_LAST"), // Response to reqHistoricalTicks
+    99 => Some("TICK_BY_TICK"), // Response to reqTickByTickData
+    100 => Some("ORDER_BOUND"), // Response to placeOrder with transmit=false
+    101 => Some("COMPLETED_ORDER"), // Response to reqCompletedOrders
+    102 => Some("COMPLETED_ORDERS_END"), // Response to reqCompletedOrders
+    103 => Some("REPLACE_FA_END"), // Financial Advisor
+    104 => Some("WSH_META_DATA"), // Response to reqWshMetaData
+    105 => Some("WSH_EVENT_DATA"), // Response to reqWshEventData
+    106 => Some("HISTORICAL_SCHEDULE"),
+    107 => Some("USER_INFO"), // Response to reqUserInfo
+    // Add any missing incoming message IDs here
+    _ => None, // Unknown type ID
+  }
+}
