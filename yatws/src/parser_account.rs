@@ -400,39 +400,46 @@ pub fn process_account_update_multi_end(handler: &Arc<dyn AccountHandler>, _pars
 }
 
 /// Process execution data message
-pub fn process_execution_data(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  // Determine message version based on server version (special case for LAST_LIQUIDITY)
-  //let msg_version = if server_version < min_server_ver::LAST_LIQUIDITY {
-  let msg_version = parser.read_int()?;
+pub fn process_execution_data(
+  handler: &Arc<dyn AccountHandler>, // Uses AccountHandler
+  parser: &mut FieldParser,
+  server_version: i32, // Need server_version for newer fields
+) -> Result<(), IBKRError> {
 
-  let mut req_id = -1;
+  // Version Handling: Java EClientSocket reads version *only* if server < LAST_LIQUIDITY.
+  // Otherwise, it assumes version >= 7. Let's replicate this.
+  let mut msg_version = server_version; // Assume high version initially
+
+  let mut req_id = -1; // Default for messages before version 7
   if msg_version >= 7 {
-    req_id = parser.read_int()?;
+    // If version is high enough (or assumed high enough), read req_id
+    req_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails ReqId: {}", e)))?;
     log::trace!("  Req ID: {}", req_id);
   }
 
-  let order_id = parser.read_int()?;
+  let order_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails OrderId: {}", e)))?;
   log::trace!("  Order ID: {}", order_id);
 
   // --- Read contract fields ---
   let mut contract = Contract::new();
   if msg_version >= 5 {
-    contract.con_id = parser.read_int()?;
+    contract.con_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract ConId: {}", e)))?;
     log::trace!("  Contract ConID: {}", contract.con_id);
   }
-  contract.symbol = parser.read_string()?;
-  contract.sec_type = SecType::from_str(&parser.read_string()?).unwrap_or(SecType::Stock);
-  contract.last_trade_date_or_contract_month = parser.read_string().ok().filter(|s| !s.is_empty());
-  contract.strike = parser.read_double().ok().filter(|&f| f > 0.0);
-  contract.right = OptionRight::from_str(&parser.read_string()?).ok();
+  contract.symbol = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Symbol: {}", e)))?;
+  contract.sec_type = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract SecType Str: {}", e)))?
+    .parse().unwrap_or(SecType::Stock);
+  contract.last_trade_date_or_contract_month = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract LastTradeDate: {}", e)))?;
+  contract.strike = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Strike: {}", e)))?;
+  contract.right = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Right Str: {}", e)))?.parse().ok();
   if msg_version >= 9 {
-    contract.multiplier = parser.read_string().ok().filter(|s| !s.is_empty());
+    contract.multiplier = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Multiplier: {}", e)))?;
   }
-  contract.exchange = parser.read_string()?;
-  contract.currency = parser.read_string()?;
-  contract.local_symbol = parser.read_string().ok().filter(|s| !s.is_empty());
+  contract.exchange = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Exchange: {}", e)))?;
+  contract.currency = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Currency: {}", e)))?;
+  contract.local_symbol = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract LocalSymbol: {}", e)))?;
   if msg_version >= 10 {
-    contract.trading_class = parser.read_string().ok().filter(|s| !s.is_empty());
+    contract.trading_class = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract TradingClass: {}", e)))?;
   }
   log::trace!("  Contract Symbol: {}, SecType: {:?}, Expiry: {:?}, Strike: {:?}, Right: {:?}, Exch: {}, Curr: {}",
               contract.symbol, contract.sec_type, contract.last_trade_date_or_contract_month, contract.strike, contract.right, contract.exchange, contract.currency);
@@ -440,72 +447,64 @@ pub fn process_execution_data(handler: &Arc<dyn AccountHandler>, parser: &mut Fi
 
 
   // --- Read Execution fields ---
-  let execution_id = parser.read_string()?;
-  let time_str = parser.read_string()?;
-  let account_id = parser.read_string()?;
-  let exec_exchange = parser.read_string()?;
-  let side_str = parser.read_string()?;
-  // Use read_double directly as Decimal parsing might not be needed unless precision is critical
-  let quantity = parser.read_double()?; // readDecimal in Java often reads as double string
-  let price = parser.read_double()?;
+  let execution_id = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails ExecId: {}", e)))?;
+  let time_str = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails TimeStr: {}", e)))?;
+  let account_id = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails AccountId: {}", e)))?;
+  let exec_exchange = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails ExecExchange: {}", e)))?;
+  let side_str = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails SideStr: {}", e)))?;
+  let quantity = parser.read_decimal_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails Quantity: {}", e)))?.unwrap_or(0.); // Shares/Quantity is Decimal
+  let price = parser.read_double().map_err(|e| IBKRError::ParseError(format!("ExecDetails Price: {}", e)))?;
 
   let mut perm_id = 0;
   if msg_version >= 2 {
-    perm_id = parser.read_int()?;
+    perm_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails PermId: {}", e)))?;
   }
   let mut client_id = 0;
   if msg_version >= 3 {
-    client_id = parser.read_int()?;
+    client_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails ClientId: {}", e)))?;
   }
   let mut liquidation_int = 0;
   if msg_version >= 4 {
-    liquidation_int = parser.read_int()?;
+    liquidation_int = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails Liquidation: {}", e)))?;
   }
   let mut cum_qty = 0.0;
   let mut avg_price = 0.0;
   if msg_version >= 6 {
-    cum_qty = parser.read_double()?; // readDecimal
-    avg_price = parser.read_double()?;
+    cum_qty = parser.read_decimal_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails CumQty: {}", e)))?.unwrap_or(0.);
+    avg_price = parser.read_double().map_err(|e| IBKRError::ParseError(format!("ExecDetails AvgPrice: {}", e)))?;
   }
   let mut order_ref = None;
   if msg_version >= 8 {
-    order_ref = parser.read_string().ok().filter(|s| !s.is_empty());
+    order_ref = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails OrderRef: {}", e)))?;
   }
   let mut ev_rule = None;
   let mut ev_multiplier = None;
   if msg_version >= 9 {
-    ev_rule = parser.read_string().ok().filter(|s| !s.is_empty());
-    ev_multiplier = parser.read_double().ok(); // Filter out errors/NaN? TWS sends 0.0 for empty.
+    ev_rule = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails EvRule: {}", e)))?;
+    ev_multiplier = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails EvMultiplier: {}", e)))?;
   }
   let mut model_code = None;
-  model_code = parser.read_string().ok().filter(|s| !s.is_empty());
+  model_code = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails ModelCode: {}", e)))?;
   let mut last_liquidity = None;
-  //if server_version >= min_server_ver::LAST_LIQUIDITY { // Check against server_version
-    last_liquidity = parser.read_int().ok(); // Read as int, store Option<i32>
-  //}
+  last_liquidity = parser.read_int_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails LastLiquidity: {}", e)))?;
   let mut pending_price_revision = None;
-  //if server_version >= min_server_ver::PENDING_PRICE_REVISION { // Check against server_version
-    // Assuming read_bool_from_int helper exists in FieldParser
-    // pending_price_revision = parser.read_bool_from_int().ok();
-    match parser.read_int() { // Read the int directly
-      Ok(val) => pending_price_revision = Some(val != 0),
-      Err(_) => pending_price_revision = None, // Or handle error
-    };
-  //}// PENDING_PRICE_REVISION
-
+  pending_price_revision = parser.read_bool().map_err(|e| IBKRError::ParseError(format!("ExecDetails PendingPriceRevision: {}", e)))?.into();
 
   log::debug!("Parsed Execution Detail: ExecID={}, OrderID={}, Account={}, Symbol={}, Side={}, Qty={}, Price={}, Time={}",
               execution_id, order_id, account_id, contract.symbol, side_str, quantity, price, time_str);
 
-  // Create Execution struct (without commission)
+  // Create Execution struct
   let execution = Execution {
     execution_id,
-    order_id: order_id.to_string(),
+    order_id: order_id.to_string(), // Convert order_id to string if Execution struct expects it
     perm_id,
     client_id,
-    symbol: contract.symbol.clone(), // Keep symbol convenience field
-    contract: contract.clone(),
-    side: OrderSide::from_str(&side_str).unwrap_or(OrderSide::Buy),
+    symbol: contract.symbol.clone(), // Keep convenience field if Execution struct has it
+    contract, // Pass the full contract
+    side: OrderSide::from_str(&side_str).unwrap_or_else(|e| {
+      log::warn!("Failed to parse execution side '{}': {}", side_str, e);
+      OrderSide::Buy // Default or error handling
+    }),
     quantity,
     price,
     time: parse_tws_date_time(&time_str).unwrap_or_else(|e| {
@@ -513,14 +512,12 @@ pub fn process_execution_data(handler: &Arc<dyn AccountHandler>, parser: &mut Fi
       Utc::now()
     }),
     avg_price,
-    commission: None,
+    commission: None, // Commission comes in a separate message
     commission_currency: None,
-    realized_pnl: None,
+    realized_pnl: None, // PNL comes in account updates or separate PNL messages
     exchange: exec_exchange,
     account_id,
-    // Treat liquidation=1 (Liquidation) and 2 (Unknown) as true? Check semantics if needed.
-    // Let's stick to true only if liquidation_int == 1.
-    liquidation: liquidation_int == 1,
+    liquidation: liquidation_int != 0, // Java uses int (0=No, 1=Yes), treat any non-zero as true? Or just 1? Sticking to `!= 0`.
     cum_qty,
     order_ref,
     ev_rule,
@@ -531,9 +528,7 @@ pub fn process_execution_data(handler: &Arc<dyn AccountHandler>, parser: &mut Fi
   };
 
   // --- Call handler ---
-  // Pass req_id (-1 if not present), the parsed contract, and the base execution struct
   handler.execution_details(req_id, &execution.contract, &execution);
-  // ---
 
   Ok(())
 }

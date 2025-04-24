@@ -54,6 +54,7 @@ rust_library(
         "@crates//:log",
         "@crates//:env_logger",
         "@crates//:rusqlite",
+        "@crates//:rust_decimal",
         "@crates//:lazy_static",
         "@crates//:uuid",
     ],

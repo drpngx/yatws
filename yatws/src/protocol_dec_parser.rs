@@ -30,72 +30,72 @@ use std::str::FromStr;
 /// # Returns
 /// A `Result` containing the `DateTime<Utc>` on success, or an `IBKRError::ParseError` on failure.
 pub fn parse_tws_date_time(time_str: &str) -> Result<DateTime<Utc>, IBKRError> {
-    let trimmed = time_str.trim();
-    if trimmed.is_empty() {
-        return Err(IBKRError::ParseError("Cannot parse empty date/time string".to_string()));
-    }
+  let trimmed = time_str.trim();
+  if trimmed.is_empty() {
+    return Err(IBKRError::ParseError("Cannot parse empty date/time string".to_string()));
+  }
 
-    // Try parsing formats with explicit timezones first
-    // These look like "DATETIME TZID"
-    if let Some(space_pos) = trimmed.rfind(|c: char| c.is_whitespace()) {
-        let potential_dt_part = &trimmed[..space_pos];
-        let potential_tz_part = &trimmed[space_pos..].trim(); // Trim whitespace around TZ
+  // Try parsing formats with explicit timezones first
+  // These look like "DATETIME TZID"
+  if let Some(space_pos) = trimmed.rfind(|c: char| c.is_whitespace()) {
+    let potential_dt_part = &trimmed[..space_pos];
+    let potential_tz_part = &trimmed[space_pos..].trim(); // Trim whitespace around TZ
 
-        // Check if the part after the last space looks like a timezone
-        if potential_tz_part.contains('/') || potential_tz_part.to_uppercase() == "UTC" {
-             match Tz::from_str(potential_tz_part) {
-                 Ok(tz) => {
-                    // Try parsing the datetime part with space or hyphen separator
-                    let dt_format_space = "%Y%m%d %H:%M:%S";
-                    let dt_format_hyphen = "%Y%m%d-%H:%M:%S";
+    // Check if the part after the last space looks like a timezone
+    if potential_tz_part.contains('/') || potential_tz_part.to_uppercase() == "UTC" {
+      match Tz::from_str(potential_tz_part) {
+        Ok(tz) => {
+          // Try parsing the datetime part with space or hyphen separator
+          let dt_format_space = "%Y%m%d %H:%M:%S";
+          let dt_format_hyphen = "%Y%m%d-%H:%M:%S";
 
-                    let naive_dt = NaiveDateTime::parse_from_str(potential_dt_part.replace("  ", " ").as_str(), dt_format_space)
-                        .or_else(|_| NaiveDateTime::parse_from_str(potential_dt_part, dt_format_hyphen));
+          let naive_dt = NaiveDateTime::parse_from_str(potential_dt_part.replace("  ", " ").as_str(), dt_format_space)
+            .or_else(|_| NaiveDateTime::parse_from_str(potential_dt_part, dt_format_hyphen));
 
-                    match naive_dt {
-                        Ok(ndt) => {
-                             // Successfully parsed NaiveDateTime and Tz
-                             return tz.from_local_datetime(&ndt)
-                                 .single() // Handle ambiguity/non-existence
-                                 .map(|dt_with_tz| dt_with_tz.with_timezone(&Utc)) // Convert to UTC
-                                 .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for timezone '{}'", ndt, tz)));
-                        },
-                        Err(_) => {
-                            // Timezone looked valid, but datetime part failed. Fall through to other formats.
-                            log::trace!("Potential TZ '{}' found, but DT part '{}' failed parsing. Trying other formats.", potential_tz_part, potential_dt_part);
-                        }
-                    }
-                 },
-                 Err(_) => {
-                    // String after space didn't parse as a valid Tz. Fall through.
-                     log::trace!("Part after space '{}' is not a valid chrono-tz timezone. Trying other formats.", potential_tz_part);
-                 }
+          match naive_dt {
+            Ok(ndt) => {
+              // Successfully parsed NaiveDateTime and Tz
+              return tz.from_local_datetime(&ndt)
+                .single() // Handle ambiguity/non-existence
+                .map(|dt_with_tz| dt_with_tz.with_timezone(&Utc)) // Convert to UTC
+                .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for timezone '{}'", ndt, tz)));
+            },
+            Err(_) => {
+              // Timezone looked valid, but datetime part failed. Fall through to other formats.
+              log::trace!("Potential TZ '{}' found, but DT part '{}' failed parsing. Trying other formats.", potential_tz_part, potential_dt_part);
             }
+          }
+        },
+        Err(_) => {
+          // String after space didn't parse as a valid Tz. Fall through.
+          log::trace!("Part after space '{}' is not a valid chrono-tz timezone. Trying other formats.", potential_tz_part);
         }
+      }
     }
+  }
 
-    // Try parsing "YYYYMMDD-HH:MM:SS" (Assumed UTC)
-    if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y%m%d-%H:%M:%S") {
-         log::trace!("Parsed '{}' as YYYYMMDD-HH:MM:SS (UTC)", trimmed);
-         return Utc.from_local_datetime(&naive_dt)
-            .single()
-            .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for UTC conversion", naive_dt)));
-    }
+  // Try parsing "YYYYMMDD-HH:MM:SS" (Assumed UTC)
+  if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y%m%d-%H:%M:%S") {
+    log::trace!("Parsed '{}' as YYYYMMDD-HH:MM:SS (UTC)", trimmed);
+    return Utc.from_local_datetime(&naive_dt)
+      .single()
+      .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for UTC conversion", naive_dt)));
+  }
 
-    // Try parsing "YYYYMMDD HH:MM:SS" (potentially double space)
-    // **ASSUMING UTC** (Ideally Login TZ, but that's hard)
-    let cleaned_for_space = trimmed.replace("  ", " ");
-    if let Ok(naive_dt) = NaiveDateTime::parse_from_str(&cleaned_for_space, "%Y%m%d %H:%M:%S") {
-         log::warn!("Parsed '{}' as YYYYMMDD HH:MM:SS, assuming UTC (ideally Login TZ)", trimmed);
-         return Utc.from_local_datetime(&naive_dt)
-            .single()
-            .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for UTC conversion", naive_dt)));
-    }
+  // Try parsing "YYYYMMDD HH:MM:SS" (potentially double space)
+  // **ASSUMING UTC** (Ideally Login TZ, but that's hard)
+  let cleaned_for_space = trimmed.replace("  ", " ");
+  if let Ok(naive_dt) = NaiveDateTime::parse_from_str(&cleaned_for_space, "%Y%m%d %H:%M:%S") {
+    log::warn!("Parsed '{}' as YYYYMMDD HH:MM:SS, assuming UTC (ideally Login TZ)", trimmed);
+    return Utc.from_local_datetime(&naive_dt)
+      .single()
+      .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for UTC conversion", naive_dt)));
+  }
 
-    // Add other formats here if needed (e.g., epoch seconds)
+  // Add other formats here if needed (e.g., epoch seconds)
 
-    // If all known formats fail
-    Err(IBKRError::ParseError(format!("Failed to parse TWS date/time string '{}' using known formats", time_str)))
+  // If all known formats fail
+  Err(IBKRError::ParseError(format!("Failed to parse TWS date/time string '{}' using known formats", time_str)))
 }
 
 pub struct FieldParser<'a> {
@@ -151,6 +151,23 @@ impl<'a> FieldParser<'a> {
       .map_err(|e| IBKRError::ParseError(format!("Failed to parse string: {}", e)))
   }
 
+  pub fn read_string_opt(&mut self) -> Result<Option<String>, IBKRError> {
+    if self.current_field >= self.fields.len() {
+      return Err(IBKRError::ParseError("Unexpected end of message".to_string()));
+    }
+
+    let (start, end) = self.fields[self.current_field];
+    self.current_field += 1;
+
+    if start >= end {
+      return Ok(None);
+    }
+
+    Ok(Some(std::str::from_utf8(&self.data[start..end])
+       .map(|s| s.to_string())
+       .map_err(|e| IBKRError::ParseError(format!("Failed to parse string: {}", e)))?))
+  }
+
   /// Read an integer field
   pub fn read_int(&mut self) -> Result<i32, IBKRError> {
     let s = self.read_string()?;
@@ -185,6 +202,56 @@ impl<'a> FieldParser<'a> {
 
     s.parse::<f64>()
       .map_err(|e| IBKRError::ParseError(format!("Failed to parse double: {}", e)))
+  }
+
+  pub fn read_double_max(&mut self) -> Result<Option<f64>, IBKRError> {
+    let val = self.read_double()?;
+    if val == f64::MAX {
+      Ok(None)
+    } else {
+      Ok(Some(val))
+    }
+  }
+
+  pub fn read_int_max(&mut self) -> Result<Option<i32>, IBKRError> {
+    let val = self.read_int()?;
+    // Assuming i32::MAX represents "no value" for ints in this context
+    // Adjust if a different sentinel value is used (e.g., 0 or -1 sometimes)
+    if val == i32::MAX {
+      Ok(None)
+    } else {
+      Ok(Some(val))
+    }
+  }
+
+  // Example using f64 for Decimal. Adjust if using rust_decimal::Decimal
+  pub fn read_decimal_max(&mut self) -> Result<Option<f64>, IBKRError> {
+    // TWS usually sends decimals as strings when MAX needs to be supported
+    let s = self.read_string()?;
+    if s.is_empty() { return Ok(None); } // Or handle as error depending on context
+    match s.parse::<f64>() {
+      Ok(val) => {
+        // Need to know the *exact* string representation TWS uses for MAX decimal
+        // Assuming it might just be f64::MAX converted to string, or a specific string literal
+        // This check might need refinement based on actual TWS behavior.
+        // For now, let's assume f64::MAX check after parsing is sufficient.
+        if val == f64::MAX { Ok(None) } else { Ok(Some(val)) }
+      },
+      Err(e) => Err(IBKRError::ParseError(format!("Failed to parse decimal string '{}': {}", s, e))),
+    }
+    // --- OR ---
+    // If TWS sends MAX as a specific numeric value for decimals:
+    // let val = self.read_double()?; // Assuming it sends as double
+    // if val == f64::MAX { Ok(None) } else { Ok(Some(val)) }
+  }
+
+  pub fn read_i64_max(&mut self) -> Result<Option<i64>, IBKRError> {
+    let val = self.read_i64()?;
+    if val == i64::MAX {
+      Ok(None)
+    } else {
+      Ok(Some(val))
+    }
   }
 
   /// Read a boolean field (as 0 or 1)

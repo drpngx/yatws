@@ -106,7 +106,7 @@ def RunChat(client, argv):
   def ParseArgs(argv):
     parser = argparse.ArgumentParser('Gemini.')
     # parser.add_argument('-c', '--components', type=str, nargs='+', help='Components to upload')
-    # parser.add_argument('-m', '--model', type=str, default='+', help='Components to upload')
+    parser.add_argument('-m', '--model', type=str, default='free', help='Model to use')
     return parser.parse_args(argv[1:])
 
   def GetTurn():
@@ -139,7 +139,13 @@ def RunChat(client, argv):
     return '\n'.join(lines), files
 
   args = ParseArgs(argv)
-  model = 'gemini-2.5-pro-exp-03-25'
+  # https://ai.google.dev/gemini-api/docs/pricing
+  match args.model:
+    case 'free':
+      model = 'gemini-2.5-pro-exp-03-25'
+    case _:
+      model = 'gemini-2.5-pro-preview-03-25'
+
   history = []
 
   chat = client.chats.create(model=model, history=history)
@@ -162,6 +168,13 @@ def RunChat(client, argv):
       logging.info('Ignoring failure: %s', err)
 
 
+def RunListModels(client):
+  models = client.models.list()
+
+  for model in models:
+    print(model.name)
+
+
 def Run(argv):
   _CheckCompFiles()
   client = genai.Client(api_key=os.environ.get('GEMINI_API_KEY'))
@@ -169,7 +182,7 @@ def Run(argv):
     case 'chat':
       RunChat(client, argv[1:])
     case 'list-models':
-      pass
+      RunListModels(client)
     case _:
       raise ValueError(f'Invalid command {argv[1]}')
 
