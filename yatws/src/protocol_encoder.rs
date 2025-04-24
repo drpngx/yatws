@@ -385,15 +385,14 @@ impl Encoder {
   }
 
   fn write_double_max_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<f64>) -> Result<(), IBKRError> {
-    // TWS API requires sending Double.MAX_VALUE (as a string) to represent "not set" or infinity for many optional double fields.
-    const MAX_STR: &str = "1.7976931348623157E308"; // String representation of f64::MAX
+    const UNSET_STR: &str = ""; // String representation of f64::MAX
     match val {
       Some(value) if value.is_finite() && value != f64::MAX => {
         self.write_double_to_cursor(cursor, value) // Use regular double writing for valid numbers
       }
       _ => { // Handles None, MAX, INFINITY, -INFINITY
-        trace!("Encoding optional double as MAX_VALUE string.");
-        self.write_str_to_cursor(cursor, MAX_STR)
+        trace!("Encoding optional double as empty string.");
+        self.write_str_to_cursor(cursor, UNSET_STR)
       }
     }
   }

@@ -12,8 +12,6 @@
 //! - Logging and replay functionality
 
 mod base;
-mod contract;
-mod order;
 mod account;
 mod data;
 mod news;
@@ -33,16 +31,17 @@ mod parser_data_news;
 mod order_builder;
 mod conn_log;
 mod conn_mock;
+pub mod contract;
 pub mod order_manager;
 pub mod account_manager;
 pub mod data_manager;
 pub mod client;
 pub mod handler;
 pub mod conn;
+pub mod order;
 
 pub use order_builder::OrderBuilder;
-pub use order::Order;
-pub use contract::Contract;
+pub use base::IBKRError;
 
 // Re-export the core data structures
 // pub use base::*;

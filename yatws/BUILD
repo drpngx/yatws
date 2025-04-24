@@ -95,8 +95,12 @@ rust_binary(
     edition = "2021",
     deps = [
         ":yatws",
+        "@crates//:anyhow",
+        "@crates//:clap",
         "@crates//:env_logger",
+        "@crates//:inventory",
         "@crates//:log",
+        "@crates//:once_cell",
     ],
     visibility = ["//visibility:public"],
 )
