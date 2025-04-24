@@ -187,7 +187,7 @@ fn log_message_body(direction: &str, body: &[u8], show_hex: bool) {
     info!("{} Body ({} bytes): {:02X?}", direction, body.len(), body);
   } else {
     match std::str::from_utf8(body) {
-      Ok(s) => info!("{} Body ({} bytes): {}", direction, body.len(), s.replace('\0', "|")),
+      Ok(s) => info!("{} Body ({} bytes): {}", direction, body.len(), s.replace('\0', "·")),
       Err(_) => info!("{} Body ({} bytes): Non-UTF8/Binary Data", direction, body.len()),
     }
   }
