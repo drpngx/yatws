@@ -226,7 +226,6 @@ impl<'a> FieldParser<'a> {
 
   // Example using f64 for Decimal. Adjust if using rust_decimal::Decimal
   pub fn read_decimal_max(&mut self) -> Result<Option<f64>, IBKRError> {
-    // TWS usually sends decimals as strings when MAX needs to be supported
     let s = self.read_string()?;
     if s.is_empty() { return Ok(None); } // Or handle as error depending on context
     match s.parse::<f64>() {
