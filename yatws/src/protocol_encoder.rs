@@ -340,6 +340,10 @@ impl Encoder {
     cursor.into_inner()
   }
 
+  fn is_empty(s: Option<&str>) -> bool {
+    s.map_or(true, |val| val.is_empty())
+  }
+
   fn write_str_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, s: &str) -> Result<(), IBKRError> {
     trace!("Encoding string: {}", s);
     cursor.write_all(s.as_bytes()).map_err(|e| IBKRError::InternalError(format!("Buffer write failed: {}", e)))?;
@@ -422,17 +426,19 @@ impl Encoder {
 
   // Helper for formatting DateTime<Utc> to "YYYYMMDD HH:MM:SS (zzz)" format if needed
   // TWS often expects "YYYYMMDD HH:MM:SS" without timezone, sometimes UTC implicitly
-  fn format_datetime_tws(&self, dt: Option<DateTime<Utc>>, include_time: bool) -> String {
+  // `format_spec`: Pass chrono format specifiers like "%Y%m%d %H:%M:%S", "%Y%m%d-%H:%M:%S", "%Y%m%d"
+  // `tz_suffix`: Optional timezone suffix like " UTC" or " EST" if needed by API field
+  fn format_datetime_tws(&self, dt: Option<DateTime<Utc>>, format_spec: &str, tz_suffix: Option<&str>) -> String {
     dt.map(|d| {
-      if include_time {
-        d.format("%Y%m%d %H:%M:%S").to_string() // Common format
-        // d.format("%Y%m%d %H:%M:%S %Z").to_string() // If timezone needed (rarely)
-      } else {
-        d.format("%Y%m%d").to_string()
+      // Format the DateTime according to the specifier
+      let mut formatted = d.format(format_spec).to_string();
+      // Append the timezone suffix if one was provided
+      if let Some(suffix) = tz_suffix {
+        formatted.push_str(suffix);
       }
-    }).unwrap_or_default()
+      formatted
+    }).unwrap_or_default() // Return an empty string if the input Option<DateTime> was None
   }
-
 
   // --- encode_request_ids, etc. ---
   pub fn encode_request_ids(&self) -> Result<Vec<u8>, IBKRError> {
@@ -523,127 +529,519 @@ impl Encoder {
 
   // --- place order ---
   pub fn encode_place_order(&self, id: i32, contract: &Contract, request: &OrderRequest) -> Result<Vec<u8>, IBKRError> {
-    debug!("Encoding place order message for contract {}: ID={}", contract.symbol, id);
+    debug!("Encoding place order message: ID={}, Contract={:?}, Request={:?}", id, contract, request);
 
-    // --- Perform server version checks for features used ---
-    // Example: Check if scale orders are used and if server supports them
-    if (request.scale_init_level_size.is_some() || request.scale_price_increment.is_some())
-      && self.server_version < min_server_ver::SCALE_ORDERS {
-        return Err(IBKRError::Unsupported("Scale orders require server version >= SCALE_ORDERS".to_string()));
+    // --- Pre-Checks (Matching Java Implementation) ---
+    if self.server_version < min_server_ver::SCALE_ORDERS {
+      if request.scale_init_level_size.is_some() || request.scale_price_increment.is_some() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support Scale orders (scaleInitLevelSize, scalePriceIncrement).".to_string(),
+        ));
       }
-    // Add many more checks for Algo orders, Pegged orders, Conditions, MiFID, etc.
+    }
+    if self.server_version < min_server_ver::SSHORT_COMBO_LEGS {
+      if !contract.combo_legs.is_empty() {
+        for leg in &contract.combo_legs {
+          if leg.short_sale_slot != 0 || !leg.designated_location.is_empty() {
+            return Err(IBKRError::Unsupported(
+              "Server version does not support SSHORT flag for combo legs.".to_string(),
+            ));
+          }
+        }
+      }
+    }
+    if self.server_version < min_server_ver::WHAT_IF_ORDERS {
+      if request.what_if {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support what-if orders.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::DELTA_NEUTRAL {
+      if contract.delta_neutral_contract.is_some() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support delta-neutral orders.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::SCALE_ORDERS2 {
+      if request.scale_subs_level_size.is_some() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support Subsequent Level Size for Scale orders.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::ALGO_ORDERS {
+      if !request.algo_strategy.is_none() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support algo orders.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::NOT_HELD {
+      if request.not_held {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support notHeld parameter.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::SEC_ID_TYPE {
+      if !contract.sec_id_type.is_none() || !contract.sec_id.is_none() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support secIdType and secId parameters.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::PLACE_ORDER_CONID {
+      if contract.con_id > 0 {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support conId parameter in placeOrder.".to_string(),
+        ));
+      }
+    }
+    // SSHORTX check for Order.exemptCode
+    if self.server_version < min_server_ver::SSHORTX {
+      // Use the -1 sentinel check like Java for this specific version cutoff if needed
+      if request.exempt_code.is_some() && request.exempt_code != Some(-1) {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support exemptCode parameter.".to_string(),
+        ));
+      }
+    }
+    // SSHORTX check for ComboLeg.exemptCode (Using SSHORTX version)
+    if self.server_version < min_server_ver::SSHORTX {
+      if !contract.combo_legs.is_empty() {
+        for leg in &contract.combo_legs {
+          if leg.exempt_code != -1 { // Java checks against -1
+            return Err(IBKRError::Unsupported(
+              "Server version does not support exemptCode parameter for combo legs.".to_string(),
+            ));
+          }
+        }
+      }
+    }
+    if self.server_version < min_server_ver::HEDGE_ORDERS {
+      if !request.hedge_type.is_none() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support hedge orders.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::OPT_OUT_SMART_ROUTING {
+      if request.opt_out_smart_routing {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support optOutSmartRouting parameter.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::DELTA_NEUTRAL_CONID {
+      if request.delta_neutral_con_id.is_some()
+        || !request.delta_neutral_settling_firm.is_none()
+        || !request.delta_neutral_clearing_account.is_none()
+        || !request.delta_neutral_clearing_intent.is_none() {
+          return Err(IBKRError::Unsupported(
+            "Server version does not support deltaNeutral parameters: ConId, SettlingFirm, ClearingAccount, ClearingIntent".to_string(),
+          ));
+        }
+    }
+    if self.server_version < min_server_ver::DELTA_NEUTRAL_OPEN_CLOSE {
+      if !request.delta_neutral_open_close.is_none()
+        || request.delta_neutral_short_sale
+        || request.delta_neutral_short_sale_slot.is_some()
+        || !request.delta_neutral_designated_location.is_none() {
+          return Err(IBKRError::Unsupported(
+            "Server version does not support deltaNeutral parameters: OpenClose, ShortSale, ShortSaleSlot, DesignatedLocation".to_string(),
+          ));
+        }
+    }
+    if self.server_version < min_server_ver::SCALE_ORDERS3 {
+      if request.scale_price_increment.is_some() && request.scale_price_increment != Some(f64::MAX) {
+        if request.scale_price_adjust_value.is_some()
+          || request.scale_price_adjust_interval.is_some()
+          || request.scale_profit_offset.is_some()
+          || request.scale_auto_reset
+          || request.scale_init_position.is_some()
+          || request.scale_init_fill_qty.is_some()
+          || request.scale_random_percent {
+            return Err(IBKRError::Unsupported(
+              "Server version does not support Scale order parameters: PriceAdjustValue, PriceAdjustInterval, ProfitOffset, AutoReset, InitPosition, InitFillQty and RandomPercent".to_string(),
+            ));
+          }
+      }
+    }
+    if self.server_version < min_server_ver::ORDER_COMBO_LEGS_PRICE && contract.sec_type == SecType::Combo {
+      if !request.order_combo_legs.is_empty() {
+        for leg_price in &request.order_combo_legs {
+          if leg_price.is_some() {
+            return Err(IBKRError::Unsupported(
+              "Server version does not support per-leg prices for order combo legs.".to_string(),
+            ));
+          }
+        }
+      }
+    }
+    if self.server_version < min_server_ver::TRAILING_PERCENT {
+      if request.trailing_percent.is_some() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support trailing percent parameter".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::TRADING_CLASS {
+      if !contract.trading_class.is_none() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support tradingClass parameter in placeOrder.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::ALGO_ID && !request.algo_id.is_none() {
+      return Err(IBKRError::Unsupported("Server version does not support algoId parameter".to_string()));
+    }
+    if self.server_version < min_server_ver::SCALE_TABLE {
+      if !request.scale_table.is_none() || request.active_start_time.is_some() || request.active_stop_time.is_some() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support scaleTable, activeStartTime and activeStopTime parameters.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::ORDER_SOLICITED {
+      if request.solicited {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support order solicited parameter.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::MODELS_SUPPORT {
+      if !request.model_code.is_none() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support model code parameter.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::EXT_OPERATOR && !request.ext_operator.is_none() {
+      return Err(IBKRError::Unsupported("Server version does not support ext operator".to_string()));
+    }
+    if self.server_version < min_server_ver::SOFT_DOLLAR_TIER && request.soft_dollar_tier.is_some() {
+      return Err(IBKRError::Unsupported("Server version does not support soft dollar tier".to_string()));
+    }
+    if self.server_version < min_server_ver::CASH_QTY {
+      if request.cash_qty.is_some() {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support cash quantity parameter".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::DECISION_MAKER
+      && (!request.mifid2_decision_maker.is_none()
+          || !request.mifid2_decision_algo.is_none()) {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support MIFID II decision maker parameters".to_string(),
+        ));
+      }
+    if self.server_version < min_server_ver::MIFID_EXECUTION
+      && (!request.mifid2_execution_trader.is_none()
+          || !request.mifid2_execution_algo.is_none()) {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support MIFID II execution parameters".to_string(),
+        ));
+      }
+    if self.server_version < min_server_ver::AUTO_PRICE_FOR_HEDGE
+      && request.dont_use_auto_price_for_hedge {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support don't use auto price for hedge parameter.".to_string(),
+        ));
+      }
+    if self.server_version < min_server_ver::ORDER_CONTAINER
+      && request.is_oms_container {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support oms container parameter.".to_string(),
+        ));
+      }
+    if self.server_version < min_server_ver::D_PEG_ORDERS
+      && request.discretionary_up_to_limit_price {
+        return Err(IBKRError::Unsupported(
+          "Server version does not support D-Peg orders.".to_string(),
+        ));
+      }
+    if self.server_version < min_server_ver::PRICE_MGMT_ALGO
+      && request.use_price_mgmt_algo.is_some() {
+        return Err(IBKRError::Unsupported("Server version does not support price management algo parameter".to_string()));
+      }
+    if self.server_version < min_server_ver::DURATION
+      && request.duration.is_some() {
+        return Err(IBKRError::Unsupported("Server version does not support duration attribute".to_string()));
+      }
+    if self.server_version < min_server_ver::POST_TO_ATS
+      && request.post_to_ats.is_some() {
+        return Err(IBKRError::Unsupported("Server version does not support postToAts attribute".to_string()));
+      }
+    if self.server_version < min_server_ver::AUTO_CANCEL_PARENT
+      && request.auto_cancel_parent {
+        return Err(IBKRError::Unsupported("Server version does not support autoCancelParent attribute".to_string()));
+      }
+    if self.server_version < min_server_ver::ADVANCED_ORDER_REJECT {
+      if !request.advanced_error_override.is_none() {
+        return Err(IBKRError::Unsupported("Server version does not support advanced error override attribute".to_string()));
+      }
+    }
+    if self.server_version < min_server_ver::MANUAL_ORDER_TIME {
+      if request.manual_order_time.is_some() {
+        return Err(IBKRError::Unsupported("Server version does not support manual order time attribute".to_string()));
+      }
+    }
+    if self.server_version < min_server_ver::PEGBEST_PEGMID_OFFSETS {
+      if request.min_trade_qty.is_some() ||
+        request.min_compete_size.is_some() ||
+        request.compete_against_best_offset.is_some() || // Check includes INFINITY sentinel
+        request.mid_offset_at_whole.is_some() ||
+        request.mid_offset_at_half.is_some() {
+          return Err(IBKRError::Unsupported(
+            "Server version does not support PEG BEST / PEG MID order parameters: minTradeQty, minCompeteSize, competeAgainstBestOffset, midOffsetAtWhole and midOffsetAtHalf".to_string(),
+          ));
+        }
+    }
+    if self.server_version < min_server_ver::CUSTOMER_ACCOUNT {
+      if !request.customer_account.is_none() {
+        return Err(IBKRError::Unsupported("Server version does not support customer account parameter".to_string()));
+      }
+    }
+    if self.server_version < min_server_ver::PROFESSIONAL_CUSTOMER {
+      if request.professional_customer {
+        return Err(IBKRError::Unsupported("Server version does not support professional customer parameter".to_string()));
+      }
+    }
+    if self.server_version < min_server_ver::RFQ_FIELDS &&
+      (!request.external_user_id.is_none() || request.manual_order_indicator.is_some()) {
+        return Err(IBKRError::Unsupported("Server version does not support external user id and manual order indicator parameters".to_string()));
+      }
 
+
+    // --- Start Encoding ---
     let mut cursor = self.start_encoding(OutgoingMessageType::PlaceOrder as i32)?;
-
-    // --- Determine and Write Version ---
-    // Version is NOT sent as the first field in PlaceOrder.
-    // Instead, the number and type of fields implicitly determine the version recognized by TWS.
-    // We need to send fields based on server_version support.
-    // The *highest* feature version number used dictates the effective message version.
 
     // --- Write Order ID ---
     self.write_int_to_cursor(&mut cursor, id)?;
 
     // --- Write Contract Fields ---
-    // Use a consolidated helper for contract fields relevant to placing orders
-    self.encode_contract_for_order(&mut cursor, contract)?;
+    if self.server_version >= min_server_ver::PLACE_ORDER_CONID {
+      self.write_int_to_cursor(&mut cursor, contract.con_id)?;
+    }
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    let right_str = contract.right.map(|r| r.to_string());
+    self.write_optional_str_to_cursor(&mut cursor, right_str.as_deref())?;
+    if self.server_version >= 15 {
+      self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    }
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    if self.server_version >= 14 {
+      self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    }
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    if self.server_version >= 2 {
+      self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
+    }
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    }
+    if self.server_version >= min_server_ver::SEC_ID_TYPE {
+      let sec_id_type_str = contract.sec_id_type.as_ref().map(|t| t.to_string());
+      self.write_optional_str_to_cursor(&mut cursor, sec_id_type_str.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, contract.sec_id.as_deref())?;
+    }
 
-    // --- Write Order Fields (Main Part) ---
+    // --- Write Main Order Fields ---
     self.write_str_to_cursor(&mut cursor, &request.side.to_string())?;
-
-    if self.server_version >= min_server_ver::FRACTIONAL_SIZE_SUPPORT {
-      self.write_str_to_cursor(&mut cursor, &request.quantity.to_string())?; // Use string for fractional
+    if self.server_version >= min_server_ver::FRACTIONAL_POSITIONS {
+      self.write_str_to_cursor(&mut cursor, &request.quantity.to_string())?;
     } else {
       if request.quantity != request.quantity.trunc() {
         warn!("Fractional quantity {} provided but server version {} doesn't support it. Sending truncated integer.", request.quantity, self.server_version);
       }
-      self.write_int_to_cursor(&mut cursor, request.quantity as i32)?; // Send integer
+      self.write_int_to_cursor(&mut cursor, request.quantity.trunc() as i32)?;
     }
-
     self.write_str_to_cursor(&mut cursor, &request.order_type.to_string())?;
-
-    // Limit Price (LmtPrice)
     if self.server_version < min_server_ver::ORDER_COMBO_LEGS_PRICE {
-      self.write_optional_double_to_cursor(&mut cursor, request.limit_price)?; // 0.0 if None
+      self.write_optional_double_to_cursor(&mut cursor, request.limit_price)?;
     } else {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.limit_price)?; // MAX if None
+      self.write_optional_double_max_to_cursor(&mut cursor, request.limit_price)?;
     }
-
-    // Aux Price (Stop Price, Trail Amount, Offset, etc.)
     if self.server_version < min_server_ver::TRAILING_PERCENT {
-      self.write_optional_double_to_cursor(&mut cursor, request.aux_price)?; // 0.0 if None
+      self.write_optional_double_to_cursor(&mut cursor, request.aux_price)?;
     } else {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.aux_price)?; // MAX if None
+      self.write_optional_double_max_to_cursor(&mut cursor, request.aux_price)?;
     }
 
-    // --- Write Extended Order Fields ---
+    // --- Write Extended Order Fields (In Order) ---
     self.write_str_to_cursor(&mut cursor, &request.time_in_force.to_string())?;
     self.write_optional_str_to_cursor(&mut cursor, request.oca_group.as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, request.account.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, request.open_close.as_deref())?; // Defaults to "" (O) if None
-    self.write_int_to_cursor(&mut cursor, request.origin)?; // 0=Customer, 1=Firm
+    self.write_optional_str_to_cursor(&mut cursor, request.open_close.as_deref())?;
+    self.write_int_to_cursor(&mut cursor, request.origin)?;
     self.write_optional_str_to_cursor(&mut cursor, request.order_ref.as_deref())?;
-    self.write_bool_to_cursor(&mut cursor, request.transmit)?; // MUST BE TRUE unless part of combo/OCA leg transmit=false
-    self.write_optional_i64_to_cursor(&mut cursor, request.parent_id)?; // 0 if None
-    self.write_bool_to_cursor(&mut cursor, request.block_order)?;
-    self.write_bool_to_cursor(&mut cursor, request.sweep_to_fill)?;
-    self.write_optional_int_to_cursor(&mut cursor, request.display_size)?; // 0 if None
-    self.write_optional_int_to_cursor(&mut cursor, request.trigger_method)?; // 0 if None
-    self.write_bool_to_cursor(&mut cursor, request.outside_rth)?;
-    self.write_bool_to_cursor(&mut cursor, request.hidden)?;
+    self.write_bool_to_cursor(&mut cursor, request.transmit)?;
+    if self.server_version >= 4 { self.write_optional_i64_to_cursor(&mut cursor, request.parent_id)?; }
+    if self.server_version >= 5 {
+      self.write_bool_to_cursor(&mut cursor, request.block_order)?;
+      self.write_bool_to_cursor(&mut cursor, request.sweep_to_fill)?;
+      self.write_optional_int_to_cursor(&mut cursor, request.display_size)?;
+      self.write_optional_int_to_cursor(&mut cursor, request.trigger_method)?;
+      self.write_bool_to_cursor(&mut cursor, request.outside_rth)?;
+    }
+    if self.server_version >= 7 { self.write_bool_to_cursor(&mut cursor, request.hidden)?; }
 
-    // --- Conditional Fields based on Contract Type / Server Version ---
-
-    // Combo Contract Legs (Price per leg) - Only if contract is Combo
-    if contract.sec_type == SecType::Combo && self.server_version >= min_server_ver::ORDER_COMBO_LEGS_PRICE {
-      // if !contract.combo_legs_price.is_empty() {
-      //   self.write_int_to_cursor(&mut cursor, contract.combo_legs_price.len() as i32)?;
-      //   for leg_price in &contract.combo_legs_price {
-      //     self.write_optional_double_max_to_cursor(&mut cursor, *leg_price)?;
-      //   }
-      // } else {
-      //   self.write_int_to_cursor(&mut cursor, 0)?;
-      // }
-      return Err(IBKRError::Unsupported("Combo not implemented yet".to_string()));
+    // --- Combo Legs (Contract) ---
+    if self.server_version >= 8 && contract.sec_type == SecType::Combo {
+      self.encode_combo_legs(&mut cursor, &contract.combo_legs)?;
     }
 
-    // Smart Combo Routing Params
-    if contract.sec_type == SecType::Combo && self.server_version >= min_server_ver::SMART_COMBO_ROUTING_PARAMS {
-      // self.write_int_to_cursor(&mut cursor, request.smart_combo_routing_params.len() as i32)?; // Add smart_combo_routing_params to OrderRequest
-      // for (tag, value) in &request.smart_combo_routing_params {
-      //   self.write_str_to_cursor(&mut cursor, tag)?;
-      //   self.write_str_to_cursor(&mut cursor, value)?;
-      // }
-      return Err(IBKRError::Unsupported("Combo not implemented yet".to_string()));
+    // --- Order Combo Legs (Prices) ---
+    if self.server_version >= min_server_ver::ORDER_COMBO_LEGS_PRICE && contract.sec_type == SecType::Combo {
+      self.write_int_to_cursor(&mut cursor, request.order_combo_legs.len() as i32)?;
+      for leg_price in &request.order_combo_legs {
+        self.write_optional_double_max_to_cursor(&mut cursor, *leg_price)?;
+      }
     }
 
-    // --- More Extended Order Fields (with version checks) ---
-    // not implemented
-    // if !request.shares_allocation.is_empty() {
-    //   self.write_optional_str_to_cursor(&mut cursor, Some(&request.shares_allocation))?; // Add shares_allocation to OrderRequest
-    // }
-
-    if self.server_version >= min_server_ver::POST_TO_ATS {
-      self.write_optional_int_to_cursor(&mut cursor, request.post_to_ats)?;
+    // --- Smart Combo Routing Params ---
+    if self.server_version >= min_server_ver::SMART_COMBO_ROUTING_PARAMS && contract.sec_type == SecType::Combo {
+      self.write_tag_value_list(&mut cursor, &request.smart_combo_routing_params)?;
     }
 
-    if self.server_version >= min_server_ver::PTA_ORDERS {
-      self.write_optional_str_to_cursor(&mut cursor, request.clearing_account.as_deref())?;
-      self.write_optional_str_to_cursor(&mut cursor, request.clearing_intent.as_deref())?;
+    // --- Deprecated Shares Allocation ---
+    if self.server_version >= 9 { self.write_str_to_cursor(&mut cursor, "")?; }
+
+    // --- Discretionary Amount ---
+    if self.server_version >= 10 { self.write_optional_double_to_cursor(&mut cursor, request.discretionary_amt)?; }
+
+    // --- Good After Time ---
+    if self.server_version >= 11 {
+      let gat_str = self.format_datetime_tws(request.good_after_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
+      self.write_str_to_cursor(&mut cursor, &gat_str)?;
     }
 
-    // --- Fields requiring TRAILING_PERCENT ---
+    // --- Good Till Date ---
+    if self.server_version >= 12 {
+      // Using full format for safety, TWS might accept "YYYYMMDD" too. Add " UTC" suffix.
+      let gtd_str = self.format_datetime_tws(request.good_till_date, "%Y%m%d %H:%M:%S", Some(" UTC"));
+      self.write_str_to_cursor(&mut cursor, &gtd_str)?;
+    }
+
+    // --- Financial Advisor Fields ---
+    if self.server_version >= 13 {
+      self.write_optional_str_to_cursor(&mut cursor, request.fa_group.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, request.fa_method.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, request.fa_percentage.as_deref())?;
+      if self.server_version < min_server_ver::FA_PROFILE_DESUPPORT {
+        self.write_str_to_cursor(&mut cursor, "")?;
+      }
+    }
+
+    // --- Model Code ---
+    if self.server_version >= min_server_ver::MODELS_SUPPORT {
+      self.write_optional_str_to_cursor(&mut cursor, request.model_code.as_deref())?;
+    }
+
+    // --- Short Sale Slot Fields ---
+    if self.server_version >= 18 {
+      self.write_optional_int_to_cursor(&mut cursor, request.short_sale_slot)?;
+      self.write_optional_str_to_cursor(&mut cursor, request.designated_location.as_deref())?;
+    }
+    if self.server_version >= min_server_ver::SSHORTX_OLD {
+      // Handle -1 sentinel according to Java ref for SSHORTX_OLD
+      let exempt_code_to_send = request.exempt_code.unwrap_or(0); // Default to 0 if None
+      if exempt_code_to_send == -1 {
+        self.write_int_to_cursor(&mut cursor, 0)?;
+      } else {
+        self.write_int_to_cursor(&mut cursor, exempt_code_to_send)?;
+      }
+    }
+
+    // --- OCA Type, Rule 80A etc. ---
+    if self.server_version >= 19 {
+      self.write_optional_int_to_cursor(&mut cursor, request.oca_type)?;
+      self.write_optional_str_to_cursor(&mut cursor, request.rule_80a.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, request.settling_firm.as_deref())?;
+      self.write_bool_to_cursor(&mut cursor, request.all_or_none)?;
+      self.write_optional_int_to_cursor(&mut cursor, request.min_quantity)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.percent_offset)?;
+      self.write_bool_to_cursor(&mut cursor, false)?; // deprecated eTradeOnly
+      self.write_bool_to_cursor(&mut cursor, false)?; // deprecated firmQuoteOnly
+      self.write_optional_double_max_to_cursor(&mut cursor, None)?; // deprecated nbboPriceCap
+      self.write_optional_int_to_cursor(&mut cursor, request.auction_strategy)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.starting_price)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.stock_ref_price)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.delta)?;
+      let lower = if self.server_version == 26 && request.order_type == OrderType::Volatility { None } else { request.stock_range_lower };
+      let upper = if self.server_version == 26 && request.order_type == OrderType::Volatility { None } else { request.stock_range_upper };
+      self.write_optional_double_max_to_cursor(&mut cursor, lower)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, upper)?;
+    }
+
+    // --- Override Percentage Constraints ---
+    if self.server_version >= 22 {
+      self.write_bool_to_cursor(&mut cursor, request.override_percentage_constraints)?;
+    }
+
+    // --- Volatility Orders ---
+    if self.server_version >= 26 {
+      self.write_optional_double_max_to_cursor(&mut cursor, request.volatility)?;
+      self.write_optional_int_to_cursor(&mut cursor, request.volatility_type)?;
+      if self.server_version < 28 {
+        let is_delta_neutral_mkt = request.delta_neutral_order_type.as_deref().map_or(false, |s| s.eq_ignore_ascii_case("MKT"));
+        self.write_bool_to_cursor(&mut cursor, is_delta_neutral_mkt)?;
+      } else {
+        self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_order_type.as_deref())?;
+        self.write_optional_double_max_to_cursor(&mut cursor, request.delta_neutral_aux_price)?;
+
+        if self.server_version >= min_server_ver::DELTA_NEUTRAL_CONID && !Encoder::is_empty(request.delta_neutral_order_type.as_deref()) {
+          self.write_optional_int_to_cursor(&mut cursor, request.delta_neutral_con_id)?;
+          self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_settling_firm.as_deref())?;
+          self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_clearing_account.as_deref())?;
+          self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_clearing_intent.as_deref())?;
+        }
+        if self.server_version >= min_server_ver::DELTA_NEUTRAL_OPEN_CLOSE && !Encoder::is_empty(request.delta_neutral_order_type.as_deref()) {
+          self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_open_close.as_deref())?;
+          self.write_bool_to_cursor(&mut cursor, request.delta_neutral_short_sale)?;
+          self.write_optional_int_to_cursor(&mut cursor, request.delta_neutral_short_sale_slot)?;
+          self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_designated_location.as_deref())?;
+        }
+      }
+      self.write_bool_to_cursor(&mut cursor, request.continuous_update.unwrap_or(0) != 0)?;
+      if self.server_version == 26 {
+        let lower = if request.order_type == OrderType::Volatility { request.stock_range_lower } else { None };
+        let upper = if request.order_type == OrderType::Volatility { request.stock_range_upper } else { None };
+        self.write_optional_double_max_to_cursor(&mut cursor, lower)?;
+        self.write_optional_double_max_to_cursor(&mut cursor, upper)?;
+      }
+      self.write_optional_int_to_cursor(&mut cursor, request.reference_price_type)?;
+    }
+
+    // --- Trail Stop Price ---
+    if self.server_version >= 30 {
+      self.write_optional_double_max_to_cursor(&mut cursor, request.trailing_stop_price)?;
+    }
+
+    // --- Trailing Percent ---
     if self.server_version >= min_server_ver::TRAILING_PERCENT {
       self.write_optional_double_max_to_cursor(&mut cursor, request.trailing_percent)?;
     }
 
-    // --- Fields requiring SCALE_ORDERS ---
+    // --- Scale Orders ---
     if self.server_version >= min_server_ver::SCALE_ORDERS {
-      self.write_optional_int_to_cursor(&mut cursor, request.scale_init_level_size)?;
-      self.write_optional_int_to_cursor(&mut cursor, request.scale_subs_level_size)?;
+      if self.server_version >= min_server_ver::SCALE_ORDERS2 {
+        self.write_optional_int_to_cursor(&mut cursor, request.scale_init_level_size)?;
+        self.write_optional_int_to_cursor(&mut cursor, request.scale_subs_level_size)?;
+      } else {
+        self.write_str_to_cursor(&mut cursor, "")?;
+        self.write_optional_int_to_cursor(&mut cursor, request.scale_init_level_size)?;
+      }
       self.write_optional_double_max_to_cursor(&mut cursor, request.scale_price_increment)?;
     }
-    if self.server_version >= min_server_ver::SCALE_ORDERS2 {
+    let scale_price_increment_valid = request.scale_price_increment.map_or(false, |p| p > 0.0 && p != f64::MAX);
+    if self.server_version >= min_server_ver::SCALE_ORDERS3 && scale_price_increment_valid {
       self.write_optional_double_max_to_cursor(&mut cursor, request.scale_price_adjust_value)?;
       self.write_optional_int_to_cursor(&mut cursor, request.scale_price_adjust_interval)?;
       self.write_optional_double_max_to_cursor(&mut cursor, request.scale_profit_offset)?;
@@ -653,57 +1051,84 @@ impl Encoder {
       self.write_bool_to_cursor(&mut cursor, request.scale_random_percent)?;
     }
 
-    // --- Fields requiring HEDGE_ORDERS ---
+    // --- Scale Table ---
+    if self.server_version >= min_server_ver::SCALE_TABLE {
+      self.write_optional_str_to_cursor(&mut cursor, request.scale_table.as_deref())?;
+      // Format DateTime fields
+      let start_time_str = self.format_datetime_tws(request.active_start_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
+      let stop_time_str = self.format_datetime_tws(request.active_stop_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
+      self.write_str_to_cursor(&mut cursor, &start_time_str)?;
+      self.write_str_to_cursor(&mut cursor, &stop_time_str)?;
+    }
+
+    // --- Hedge Orders ---
     if self.server_version >= min_server_ver::HEDGE_ORDERS {
       self.write_optional_str_to_cursor(&mut cursor, request.hedge_type.as_deref())?;
-      if request.hedge_type.is_some() {
-        self.write_optional_str_to_cursor(&mut cursor, request.hedge_param.as_deref())?; // Beta or Ratio
+      if !Encoder::is_empty(request.hedge_type.as_deref()) {
+        self.write_optional_str_to_cursor(&mut cursor, request.hedge_param.as_deref())?;
       }
     }
 
-    // --- Fields requiring OPT_OUT_SMART_ROUTING ---
+    // --- Opt Out Smart Routing ---
     if self.server_version >= min_server_ver::OPT_OUT_SMART_ROUTING {
       self.write_bool_to_cursor(&mut cursor, request.opt_out_smart_routing)?;
     }
 
-    // --- Fields requiring DELTA_NEUTRAL ---
-    if self.server_version >= min_server_ver::DELTA_NEUTRAL_CONID {
+    // --- Clearing Params ---
+    if self.server_version >= min_server_ver::PTA_ORDERS {
+      self.write_optional_str_to_cursor(&mut cursor, request.clearing_account.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, request.clearing_intent.as_deref())?;
+    }
+
+    // --- Not Held ---
+    if self.server_version >= min_server_ver::NOT_HELD {
+      self.write_bool_to_cursor(&mut cursor, request.not_held)?;
+    }
+
+    // --- Contract Delta Neutral ---
+    if self.server_version >= min_server_ver::DELTA_NEUTRAL {
       if let Some(dn) = &contract.delta_neutral_contract {
         self.write_bool_to_cursor(&mut cursor, true)?;
         self.write_int_to_cursor(&mut cursor, dn.con_id)?;
-        // Delta and price are now sent later if server >= min_server_ver::DELTA_NEUTRAL_OPEN_CLOSE
+        self.write_double_to_cursor(&mut cursor, dn.delta)?;
+        self.write_double_to_cursor(&mut cursor, dn.price)?;
       } else {
         self.write_bool_to_cursor(&mut cursor, false)?;
       }
     }
-    if self.server_version >= min_server_ver::DELTA_NEUTRAL_OPEN_CLOSE {
-      if let Some(dn) = &contract.delta_neutral_contract {
-        self.write_optional_double_max_to_cursor(&mut cursor, Some(dn.delta))?; // Send delta
-        self.write_optional_double_max_to_cursor(&mut cursor, Some(dn.price))?; // Send price
-      } else {
-        // Need to send defaults if delta_neutral_contract was present earlier but fields aren't? Check TWS behavior
-        // self.write_optional_double_max_to_cursor(&mut cursor, None)?;
-        // self.write_optional_double_max_to_cursor(&mut cursor, None)?;
-      }
-    }
 
-    // --- Fields requiring ALGO_ORDERS ---
+    // --- Algo Orders ---
     if self.server_version >= min_server_ver::ALGO_ORDERS {
       self.write_optional_str_to_cursor(&mut cursor, request.algo_strategy.as_deref())?;
-      if request.algo_strategy.is_some() {
+      if !Encoder::is_empty(request.algo_strategy.as_deref()) {
         self.write_tag_value_list(&mut cursor, &request.algo_params)?;
       }
     }
+    if self.server_version >= min_server_ver::ALGO_ID {
+      self.write_optional_str_to_cursor(&mut cursor, request.algo_id.as_deref())?;
+    }
 
-    // --- WhatIf Flag ---
-    self.write_bool_to_cursor(&mut cursor, request.what_if)?;
+    // --- What If Flag ---
+    if self.server_version >= min_server_ver::WHAT_IF_ORDERS {
+      self.write_bool_to_cursor(&mut cursor, request.what_if)?;
+    }
 
-    // --- Order Misc Options (TagValue List) ---
-    // not implemented yet
-    // self.write_tag_value_list(&mut cursor, &request.order_misc_options)?; // Add order_misc_options: Vec<(String, String)> to OrderRequest
+    // --- Order Misc Options ---
+    if self.server_version >= min_server_ver::LINKING {
+      let misc_options_str = request.order_misc_options
+        .iter()
+        .map(|(key, value)| format!("{key}={value}")) // Format each pair
+        .collect::<Vec<String>>() // Collect into a vector of strings
+        .join(";"); // Join them with semicolons
+
+      // Write the single resulting string (will add null terminator)
+      self.write_str_to_cursor(&mut cursor, &misc_options_str)?;
+    }
 
     // --- Solicited Flag ---
-    self.write_bool_to_cursor(&mut cursor, request.solicited)?;
+    if self.server_version >= min_server_ver::ORDER_SOLICITED {
+      self.write_bool_to_cursor(&mut cursor, request.solicited)?;
+    }
 
     // --- Randomize Size/Price Flags ---
     if self.server_version >= min_server_ver::RANDOMIZE_SIZE_AND_PRICE {
@@ -711,41 +1136,50 @@ impl Encoder {
       self.write_bool_to_cursor(&mut cursor, request.randomize_price)?;
     }
 
-    // --- Pegged To Benchmark Orders ---
+    // --- Pegged To Benchmark Orders & Conditions ---
     if self.server_version >= min_server_ver::PEGGED_TO_BENCHMARK {
-      if request.order_type == OrderType::PeggedToBenchmark ||
-        request.order_type == OrderType::PeggedBest ||
-        request.order_type == OrderType::PeggedPrimary {
-          self.write_int_to_cursor(&mut cursor, request.reference_contract_id.unwrap_or(0))?;
-          self.write_bool_to_cursor(&mut cursor, request.is_pegged_change_amount_decrease)?;
-          self.write_double_to_cursor(&mut cursor, request.pegged_change_amount.unwrap_or(0.0))?;
-          self.write_double_to_cursor(&mut cursor, request.reference_change_amount.unwrap_or(0.0))?;
-          self.write_optional_str_to_cursor(&mut cursor, request.reference_exchange_id.as_deref())?;
-        }
+      let is_peg_bench = matches!(request.order_type,
+                                  OrderType::PeggedToBenchmark | OrderType::PeggedBest | OrderType::PeggedPrimary
+      );
+      if is_peg_bench {
+        self.write_optional_int_to_cursor(&mut cursor, request.reference_contract_id)?;
+        self.write_bool_to_cursor(&mut cursor, request.is_pegged_change_amount_decrease)?;
+        self.write_optional_double_to_cursor(&mut cursor, request.pegged_change_amount)?;
+        self.write_optional_double_to_cursor(&mut cursor, request.reference_change_amount)?;
+        self.write_optional_str_to_cursor(&mut cursor, request.reference_exchange_id.as_deref())?;
+      }
+
+      // Conditions (Stubbed)
+      self.write_int_to_cursor(&mut cursor, request.conditions.len() as i32)?;
+      if !request.conditions.is_empty() {
+        warn!("Order condition encoding is not fully implemented. Sending count only.");
+        // TODO: Implement full condition encoding
+        self.write_bool_to_cursor(&mut cursor, request.conditions_ignore_rth)?;
+        self.write_bool_to_cursor(&mut cursor, request.conditions_cancel_order)?;
+      }
+
+      // Adjusted Order fields
+      let adj_ord_type_str = request.adjusted_order_type.map(|t| t.to_string());
+      self.write_optional_str_to_cursor(&mut cursor, adj_ord_type_str.as_deref())?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.trigger_price)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.lmt_price_offset)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.adjusted_stop_price)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.adjusted_stop_limit_price)?;
+      self.write_optional_double_max_to_cursor(&mut cursor, request.adjusted_trailing_amount)?;
+      self.write_optional_int_to_cursor(&mut cursor, request.adjustable_trailing_unit)?;
     }
 
-    // --- Box/Volatility Order Components ---
-    if request.order_type == OrderType::Volatility {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.volatility)?;
-      self.write_optional_int_to_cursor(&mut cursor, request.volatility_type)?; // 1=Daily, 2=Annual
-      self.write_optional_int_to_cursor(&mut cursor, request.continuous_update)?; // 0=false, 1=true
-      self.write_optional_int_to_cursor(&mut cursor, request.reference_price_type)?; // 1=Avg Bid/Ask, 2=Bid or Ask
-    }
-    if request.order_type == OrderType::BoxTop { // BOX TOP no longer supported?
-      self.write_optional_double_max_to_cursor(&mut cursor, request.delta)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.stock_ref_price)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.stock_range_lower)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.stock_range_upper)?;
+    // --- Ext Operator ---
+    if self.server_version >= min_server_ver::EXT_OPERATOR {
+      self.write_optional_str_to_cursor(&mut cursor, request.ext_operator.as_deref())?;
     }
 
-    // --- Scale Table ---
-    if self.server_version >= min_server_ver::SCALE_TABLE {
-      self.write_optional_str_to_cursor(&mut cursor, request.scale_table.as_deref())?;
+    // --- Soft Dollar Tier ---
+    if self.server_version >= min_server_ver::SOFT_DOLLAR_TIER {
+      let (name, value) = request.soft_dollar_tier.as_ref().map(|(n, v)| (n.as_str(), v.as_str())).unwrap_or(("", ""));
+      self.write_str_to_cursor(&mut cursor, name)?;
+      self.write_str_to_cursor(&mut cursor, value)?;
     }
-
-    // --- Active Start/Stop Time ---
-    self.write_optional_str_to_cursor(&mut cursor, request.active_start_time.as_deref())?; // "YYYYMMDD HH:MM:SS {tz}"
-    self.write_optional_str_to_cursor(&mut cursor, request.active_stop_time.as_deref())?;
 
     // --- Cash Quantity ---
     if self.server_version >= min_server_ver::CASH_QTY {
@@ -753,9 +1187,11 @@ impl Encoder {
     }
 
     // --- MiFID Fields ---
-    if self.server_version >= min_server_ver::MIFID_EXECUTION {
+    if self.server_version >= min_server_ver::DECISION_MAKER {
       self.write_optional_str_to_cursor(&mut cursor, request.mifid2_decision_maker.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, request.mifid2_decision_algo.as_deref())?;
+    }
+    if self.server_version >= min_server_ver::MIFID_EXECUTION {
       self.write_optional_str_to_cursor(&mut cursor, request.mifid2_execution_trader.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, request.mifid2_execution_algo.as_deref())?;
     }
@@ -765,22 +1201,132 @@ impl Encoder {
       self.write_bool_to_cursor(&mut cursor, request.dont_use_auto_price_for_hedge)?;
     }
 
-    // --- Price Mgmt Algo ---
+    // --- OMS Container ---
+    if self.server_version >= min_server_ver::ORDER_CONTAINER {
+      self.write_bool_to_cursor(&mut cursor, request.is_oms_container)?;
+    }
+
+    // --- Discretionary Up To Limit Price ---
+    if self.server_version >= min_server_ver::D_PEG_ORDERS {
+      self.write_bool_to_cursor(&mut cursor, request.discretionary_up_to_limit_price)?;
+    }
+
+    // --- Use Price Mgmt Algo ---
     if self.server_version >= min_server_ver::PRICE_MGMT_ALGO {
       self.write_optional_bool_to_cursor(&mut cursor, request.use_price_mgmt_algo)?;
     }
 
-    // --- Extended Percent Offset for REL orders ---
-    self.write_optional_double_max_to_cursor(&mut cursor, request.percent_offset)?;
+    // --- Duration ---
+    if self.server_version >= min_server_ver::DURATION {
+      self.write_optional_int_to_cursor(&mut cursor, request.duration)?;
+    }
 
-    // ... Continue adding fields based on server version checks ...
-    // This includes: SoftDollarTier, Duration, PostToATS, AdvancedErrorOverride, ManualOrderTime,
-    // MinTradeQty, MinCompeteSize, CompeteAgainstBestOffset, MidOffsetAtWhole/Half,
-    // BondAccruedInterest, ExternalUserId, ManualOrderIndicator, ExtOperator,
-    // ImbalanceOnly, RouteMarketableToBBO, RefFuturesConId, AutoCancelDate, AutoCancelParent,
-    // ParentPermId, ...
+    // --- Post To ATS ---
+    if self.server_version >= min_server_ver::POST_TO_ATS {
+      self.write_optional_int_to_cursor(&mut cursor, request.post_to_ats)?;
+    }
+
+    // --- Auto Cancel Parent ---
+    if self.server_version >= min_server_ver::AUTO_CANCEL_PARENT {
+      self.write_bool_to_cursor(&mut cursor, request.auto_cancel_parent)?;
+    }
+
+    // --- Advanced Error Override ---
+    if self.server_version >= min_server_ver::ADVANCED_ORDER_REJECT {
+      self.write_optional_str_to_cursor(&mut cursor, request.advanced_error_override.as_deref())?;
+    }
+
+    // --- Manual Order Time ---
+    if self.server_version >= min_server_ver::MANUAL_ORDER_TIME {
+      // Format DateTime to "YYYYMMDD-HH:MM:SS" (No TZ suffix expected)
+      let mot_str = self.format_datetime_tws(request.manual_order_time, "%Y%m%d-%H:%M:%S", None);
+      self.write_str_to_cursor(&mut cursor, &mot_str)?;
+    }
+
+    // --- Peg Best/Mid Offsets ---
+    if self.server_version >= min_server_ver::PEGBEST_PEGMID_OFFSETS {
+      if contract.exchange.eq_ignore_ascii_case("IBKRATS") {
+        self.write_optional_int_to_cursor(&mut cursor, request.min_trade_qty)?;
+      }
+      let is_peg_best = request.order_type == OrderType::PeggedBest;
+      let is_peg_mid = request.order_type == OrderType::PeggedToMidpoint;
+      let mut send_mid_offsets = false;
+
+      if is_peg_best {
+        self.write_optional_int_to_cursor(&mut cursor, request.min_compete_size)?;
+        let offset_val = request.compete_against_best_offset;
+        if offset_val == Some(f64::INFINITY) { // Check sentinel
+          self.write_optional_double_max_to_cursor(&mut cursor, None)?; // Send "" for UpToMid
+          send_mid_offsets = true;
+        } else {
+          self.write_optional_double_max_to_cursor(&mut cursor, offset_val)?;
+        }
+      } else if is_peg_mid {
+        send_mid_offsets = true;
+      }
+
+      if send_mid_offsets {
+        self.write_optional_double_max_to_cursor(&mut cursor, request.mid_offset_at_whole)?;
+        self.write_optional_double_max_to_cursor(&mut cursor, request.mid_offset_at_half)?;
+      }
+    }
+
+    // --- Customer Account ---
+    if self.server_version >= min_server_ver::CUSTOMER_ACCOUNT {
+      self.write_optional_str_to_cursor(&mut cursor, request.customer_account.as_deref())?;
+    }
+
+    // --- Professional Customer ---
+    if self.server_version >= min_server_ver::PROFESSIONAL_CUSTOMER {
+      self.write_bool_to_cursor(&mut cursor, request.professional_customer)?;
+    }
+
+    // --- RFQ Fields ---
+    if self.server_version >= min_server_ver::RFQ_FIELDS {
+      self.write_optional_str_to_cursor(&mut cursor, request.external_user_id.as_deref())?;
+      self.write_optional_int_to_cursor(&mut cursor, request.manual_order_indicator)?;
+    }
+
 
     Ok(self.finish_encoding(cursor))
+  }
+
+
+  // --- Helper to encode contract combo legs (Unchanged from previous version) ---
+  fn encode_combo_legs(&self, cursor: &mut Cursor<Vec<u8>>, legs: &[ComboLeg]) -> Result<(), IBKRError> {
+    // Check if server supports combo legs fields required in placeOrder (version 8+)
+    // Version checks for SSHORT_COMBO_LEGS / SSHORTX_OLD are done inside the loop
+    if self.server_version >= 8 {
+      self.write_int_to_cursor(cursor, legs.len() as i32)?;
+      for leg in legs {
+        self.write_int_to_cursor(cursor, leg.con_id)?;
+        self.write_int_to_cursor(cursor, leg.ratio)?;
+        self.write_str_to_cursor(cursor, &leg.action)?; // BUY/SELL/SSHORT
+        self.write_str_to_cursor(cursor, &leg.exchange)?;
+        self.write_int_to_cursor(cursor, leg.open_close)?; // 0=Same, 1=Open, 2=Close, 3=Unknown
+
+        if self.server_version >= min_server_ver::SSHORT_COMBO_LEGS {
+          self.write_int_to_cursor(cursor, leg.short_sale_slot)?; // 0=Default, 1=Retail, 2=Inst
+          // Only send designatedLocation if it's not empty
+          self.write_optional_str_to_cursor(cursor, Some(leg.designated_location.as_str()).filter(|s| !s.is_empty()))?;
+        }
+        // Use SSHORTX_OLD version for placeOrder exemptCode based on Java reference
+        if self.server_version >= min_server_ver::SSHORTX_OLD {
+          // Java sends int, uses -1 sentinel. We send 0 if None or -1.
+          let code_to_send = leg.exempt_code;
+          if code_to_send == -1 {
+            self.write_int_to_cursor(cursor, 0)?;
+          } else {
+            self.write_int_to_cursor(cursor, code_to_send)?;
+          }
+        }
+      }
+    } else if !legs.is_empty() {
+      // Only warn if combo legs are present but server doesn't support them here
+      warn!("Combo legs provided but server version {} does not support them in placeOrder message context", self.server_version);
+      // Note: Unlike Java pre-check, don't error here, just don't send the fields.
+    }
+    Ok(())
   }
 
 
@@ -827,42 +1373,6 @@ impl Encoder {
     Ok(())
   }
 
-
-  // Helper for combo legs (used by encode_contract_for_order and potentially others)
-  fn encode_combo_legs(&self, cursor: &mut Cursor<Vec<u8>>, legs: &[ComboLeg]) -> Result<(), IBKRError> {
-    // ComboLeg fields are part of the Contract definition when placing orders
-    if self.server_version >= min_server_ver::ORDER_COMBO_LEGS_PRICE { // Check relevant version for combo legs
-      self.write_int_to_cursor(cursor, legs.len() as i32)?;
-      for leg in legs {
-        self.write_int_to_cursor(cursor, leg.con_id)?;
-        self.write_int_to_cursor(cursor, leg.ratio)?;
-        self.write_str_to_cursor(cursor, &leg.action)?; // BUY/SELL/SSHORT
-        self.write_str_to_cursor(cursor, &leg.exchange)?;
-        self.write_int_to_cursor(cursor, leg.open_close)?; // 0=Same, 1=Open, 2=Close, 3=Unknown
-
-        if self.server_version >= min_server_ver::SSHORT_COMBO_LEGS {
-          self.write_int_to_cursor(cursor, leg.short_sale_slot)?; // 0 = Clearing default, 1 = Retail, 2 = Institution
-          if !leg.designated_location.is_empty() {
-            self.write_optional_str_to_cursor(cursor, Some(&leg.designated_location))?;
-          }
-        }
-        if self.server_version >= min_server_ver::SSHORTX_OLD { // SSHORTX_OLD version check
-          self.write_int_to_cursor(cursor, leg.exempt_code)?;
-        }
-      }
-    } else {
-      if !legs.is_empty() {
-        warn!("Combo legs provided but server version {} does not support ORDER_COMBO_LEGS_PRICE", self.server_version);
-        // Or return error?
-      }
-      // Send count 0 if required by older version?
-      // self.write_int_to_cursor(cursor, 0)?;
-    }
-    Ok(())
-  }
-
-
-  // --- Other encoding methods ---
   pub fn encode_request_market_data(&self, req_id: i32, contract: &Contract, generic_tick_list: &str, snapshot: bool, regulatory_snapshot: bool /* Add mkt data options */) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request market data message for contract {}: ReqID={}", contract.symbol, req_id);
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketData as i32)?;
@@ -1049,7 +1559,7 @@ impl Encoder {
     }
 
     // Historical Data Request Parameters
-    self.write_str_to_cursor(&mut cursor, &self.format_datetime_tws(end_date_time, true))?;
+    self.write_str_to_cursor(&mut cursor, &self.format_datetime_tws(end_date_time, "%Y%m%d-%H:%M:%S", Some(" UTC")))?;
     if version >= 3 {
       self.write_str_to_cursor(&mut cursor, bar_size_setting)?; // e.g., "1 day", "30 mins"
     }

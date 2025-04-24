@@ -54,8 +54,8 @@ pub struct OrderRequest {
   pub good_after_time: Option<DateTime<Utc>>,
 
   // Active times for GTC orders
-  pub active_start_time: Option<String>,
-  pub active_stop_time: Option<String>,
+  pub active_start_time: Option<DateTime<Utc>>,
+  pub active_stop_time: Option<DateTime<Utc>>,
 
   // Order attributes
   pub all_or_none: bool,
@@ -112,6 +112,15 @@ pub struct OrderRequest {
   pub discretionary_amt: Option<f64>,
   pub opt_out_smart_routing: bool,
   pub discretionary_up_to_limit_price: bool,
+
+  // Represent Order Combo Legs (Prices)
+  pub order_combo_legs: Vec<Option<f64>>, // List of leg prices (None for MAX_VALUE)
+
+  // Represent Smart Combo Routing Params
+  pub smart_combo_routing_params: Vec<(String, String)>,
+
+  // Represent Order Misc Options
+  pub order_misc_options: Vec<(String, String)>,
 
   // Algo parameters
   pub algo_strategy: Option<String>,
@@ -204,7 +213,7 @@ pub struct OrderRequest {
   pub duration: Option<i32>,
   pub post_to_ats: Option<i32>,
   pub advanced_error_override: Option<String>,
-  pub manual_order_time: Option<String>,
+  pub manual_order_time: Option<DateTime<Utc>>,
   pub min_trade_qty: Option<i32>,
   pub min_compete_size: Option<i32>,
   pub compete_against_best_offset: Option<f64>,
@@ -226,7 +235,7 @@ pub struct OrderRequest {
   // Misc trade parameters
   pub imbalance_only: bool,
   pub route_marketable_to_bbo: bool,
-  pub soft_dollar_tier: Option<String>,
+  pub soft_dollar_tier: Option<(String, String)>,
   pub cash_qty: Option<f64>,
   pub filled_quantity: Option<f64>,
   pub ref_futures_con_id: Option<i32>,
@@ -288,6 +297,9 @@ impl Default for OrderRequest {
       discretionary_amt: None,
       opt_out_smart_routing: false,
       discretionary_up_to_limit_price: false,
+      order_combo_legs: Vec::new(),
+      smart_combo_routing_params: Vec::new(),
+      order_misc_options: Vec::new(),
       algo_strategy: None,
       algo_params: Vec::new(),
       algo_id: None,

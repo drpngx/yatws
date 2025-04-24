@@ -14,6 +14,13 @@ use crate::parser_data_market::*;
 use crate::parser_data_fin::*;
 use crate::parser_data_news::*;
 
+fn msg_to_string(data: &[u8]) -> String {
+  match std::str::from_utf8(data) {
+    Ok(s) => s.replace('\0', "·"),
+    Err(_) => "Non-UTF8/Binary Data".to_string(),
+  }
+}
+
 /// Process a message based on its type. This is the entry point for message handling.
 pub fn process_message(handler: &mut MessageHandler, data: &[u8]) -> Result<(), IBKRError> {
   let mut parser = FieldParser::new(data);
@@ -25,7 +32,7 @@ pub fn process_message(handler: &mut MessageHandler, data: &[u8]) -> Result<(), 
       msg_type_str, e
     ))
   })?;
-  log::debug!("process: {} [{}]", msg_type, data.len());
+  log::debug!("parse message: {} [{}]", msg_type, msg_to_string(data));
   let sver = handler.get_server_version();
   match msg_type {
     4 => process_error_message(&handler.client, &mut parser)?,
