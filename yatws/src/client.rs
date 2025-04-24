@@ -2,6 +2,7 @@ use crate::order_manager::OrderManager;
 use crate::data_manager::DataManager;
 use crate::account_manager::AccountManager;
 use crate::conn::{Connection, SocketConnection, MessageBroker};
+use crate::conn_log::ConnectionLogger;
 use crate::base::IBKRError;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -16,10 +17,13 @@ pub struct IBKRClient {
 }
 
 impl IBKRClient {
-  pub fn new(host: &str, port: u16, client_id: i32) -> Result<Self, IBKRError> {
-    let conn = Box::new(SocketConnection::new(host, port, client_id)?);
+  pub fn new(host: &str, port: u16, client_id: i32, log_config: Option<(String, String)>) -> Result<Self, IBKRError> {
+    let logger = if let Some((dbpath, session_name)) = log_config {
+      Some(ConnectionLogger::new(dbpath, &session_name, host, port, client_id)?)
+    } else { None };
+    let conn = Box::new(SocketConnection::new(host, port, client_id, logger.clone())?);
     let server_version = conn.get_server_version();
-    let message_broker = Arc::new(MessageBroker::new(conn));
+    let message_broker = Arc::new(MessageBroker::new(conn, logger));
     let client_mgr = ClientManager::new(message_broker.clone());
     let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);

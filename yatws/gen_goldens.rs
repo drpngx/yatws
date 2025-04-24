@@ -18,7 +18,7 @@ fn _main() {
   println!("Connecting to TWS at {}:{} with client ID {}", host, port, client_id);
 
   // Create a new connection
-  let conn = SocketConnection::new(host, port, client_id).unwrap();
+  let conn = SocketConnection::new(host, port, client_id, None).unwrap();
 
   println!("Server: {}", conn.get_server_version());
 }
@@ -29,14 +29,16 @@ fn main() {
 
   // Connection parameters
   let host = "127.0.0.1";
-  //let port = 4002;
-  let port = 3002;
+  let port = 4002;
+  // let port = 3002;  // the snooper
   let client_id = 123;
 
   println!("Connecting to TWS at {}:{} with client ID {}", host, port, client_id);
 
+  let log_config = Some(("yatws/testdata/conn_log.db".to_string(), "connect".to_string()));
+
   // Create a new connection
-  let client = IBKRClient::new(host, port, client_id).unwrap();
+  let client = IBKRClient::new(host, port, client_id, log_config).unwrap();
 
   // let acct = client.account();
   // acct.refresh().unwrap();
