@@ -13,15 +13,13 @@ use once_cell::sync::Lazy; // Using once_cell for the map
 use std::collections::HashMap;
 
 // --- Constants ---
-const CENTER_DOT: char = '·'; // Unicode U+00B7
+pub(crate) const CENTER_DOT: char = '·'; // Unicode U+00B7
 
 // --- Static Map for Incoming Message Types ---
-// Create a reverse map from IncomingMessageType enum to names
-// Note: This requires IncomingMessageType and its variants to be public / accessible.
+// (Keep INCOMING_TYPE_MAP as is)
 static INCOMING_TYPE_MAP: Lazy<HashMap<i32, &'static str>> = Lazy::new(|| {
   let mut m = HashMap::new();
-  // Manually list known incoming message types. Add ALL relevant types from IncomingMessageType.
-  // This is tedious but necessary if the enum itself doesn't provide a direct mapping method.
+  // ... (all entries from original file) ...
   m.insert(IncomingMessageType::TickPrice as i32, "TICK_PRICE");
   m.insert(IncomingMessageType::TickSize as i32, "TICK_SIZE");
   m.insert(IncomingMessageType::OrderStatus as i32, "ORDER_STATUS");
@@ -104,14 +102,11 @@ static INCOMING_TYPE_MAP: Lazy<HashMap<i32, &'static str>> = Lazy::new(|| {
   m.insert(IncomingMessageType::WshEventData as i32, "WSH_EVENT_DATA");
   m.insert(IncomingMessageType::HistoricalSchedule as i32, "HISTORICAL_SCHEDULE");
   m.insert(IncomingMessageType::UserInfo as i32, "USER_INFO");
-  // ... add all other incoming types ...
   m
 });
 
 // --- Helper Functions ---
-
-/// Converts byte slice to a String, replacing null bytes (0x00) with CENTER_DOT.
-/// Uses lossy UTF-8 conversion for other bytes.
+// (Keep bytes_to_center_dot_string and parse_message_type_id as is)
 fn bytes_to_center_dot_string(bytes: &[u8]) -> String {
   let mut modified_bytes = Vec::with_capacity(bytes.len());
   for &byte in bytes {
@@ -125,7 +120,6 @@ fn bytes_to_center_dot_string(bytes: &[u8]) -> String {
   String::from_utf8_lossy(&modified_bytes).to_string()
 }
 
-/// Parses the initial integer field (message type ID) from a TWS message payload.
 fn parse_message_type_id(payload: &[u8]) -> Option<i32> {
   payload
     .iter()
@@ -155,25 +149,21 @@ impl fmt::Display for LogDirection {
   }
 }
 
-// The logger state needs to be behind a Mutex for thread safety
 struct ConnectionLoggerInner {
   db: DbConnection,
   session_id: i64,
   start_time_instant: Instant,
-  // start_time_system: SystemTime, // Kept in DB now
 }
 
-#[derive(Clone)] // Clone shares the Arc, pointing to the same Mutex-protected inner state
+#[derive(Clone)]
 pub struct ConnectionLogger {
   inner: Arc<Mutex<ConnectionLoggerInner>>,
 }
 
 impl ConnectionLogger {
-  /// Creates a new logger, initializing the database schema, deleting any previous
-  /// session with the same name, and starting a new session record.
   pub fn new<P: AsRef<Path>>(
     db_path: P,
-    session_name: &str, // Added session name parameter
+    session_name: &str,
     host: &str,
     port: u16,
     client_id: i32,
@@ -182,16 +172,14 @@ impl ConnectionLogger {
       "Initializing connection logger at path: {:?}, Session Name: '{}'",
       db_path.as_ref(), session_name
     );
-    let mut db = DbConnection::open(db_path) // Make db mutable for transaction
+    let mut db = DbConnection::open(db_path)
       .map_err(|e| IBKRError::ConfigurationError(format!("Failed to open logger database: {}", e)))?;
 
     db.pragma_update(None, "journal_mode", "WAL")
       .map_err(|e| IBKRError::ConfigurationError(format!("Failed to set WAL mode: {}", e)))?;
-    // Ensure foreign key support is enabled (good practice)
     db.execute("PRAGMA foreign_keys = ON;", [])
       .map_err(|e| IBKRError::ConfigurationError(format!("Failed to enable foreign keys: {}", e)))?;
 
-    // Create tables if they don't exist
     Self::create_tables(&db)?;
 
     let start_time_instant = Instant::now();
@@ -201,9 +189,8 @@ impl ConnectionLogger {
       .map_err(|e| IBKRError::InternalError(format!("System time error: {}", e)))?
       .as_millis() as i64;
 
-    // --- Delete existing session and insert new one within a transaction ---
     let session_id = Self::delete_and_insert_session(
-      &mut db, // Pass mutable ref for transaction
+      &mut db,
       session_name,
       start_time_unix_ms,
       host,
@@ -214,7 +201,7 @@ impl ConnectionLogger {
     log::info!("Started logger session ID: {} for name '{}'", session_id, session_name);
 
     let inner_state = ConnectionLoggerInner {
-      db, // Move the connection into the struct
+      db,
       session_id,
       start_time_instant,
     };
@@ -229,11 +216,12 @@ impl ConnectionLogger {
       "BEGIN;
              CREATE TABLE IF NOT EXISTS sessions (
                  session_id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                 session_name        TEXT NOT NULL UNIQUE, -- Added UNIQUE session name
+                 session_name        TEXT NOT NULL UNIQUE,
                  start_time_unix_ms  INTEGER NOT NULL,
                  host                TEXT NOT NULL,
                  port                INTEGER NOT NULL,
-                 client_id           INTEGER NOT NULL
+                 client_id           INTEGER NOT NULL,
+                 server_version      INTEGER NULL -- <<< ADDED: Make nullable initially
              );
              CREATE TABLE IF NOT EXISTS messages (
                  message_id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,9 +231,9 @@ impl ConnectionLogger {
                  message_type_id       INTEGER NULL,
                  message_type_name     TEXT NULL,
                  payload_text          TEXT NOT NULL,
-                 FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE -- CASCADE is key
+                 FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
              );
-             -- Indices (unchanged conceptually, but add one for session_name)
+             -- Indices
              CREATE INDEX IF NOT EXISTS idx_sessions_name ON sessions (session_name);
              CREATE INDEX IF NOT EXISTS idx_messages_session_time ON messages (session_id, relative_timestamp_ms);
              CREATE INDEX IF NOT EXISTS idx_messages_session_type ON messages (session_id, message_type_name);
@@ -255,21 +243,17 @@ impl ConnectionLogger {
     Ok(())
   }
 
-  // New function to handle atomic delete & insert
   fn delete_and_insert_session(
-    db: &mut DbConnection, // Needs mutable connection for transaction
+    db: &mut DbConnection,
     session_name: &str,
     start_time_unix_ms: i64,
     host: &str,
     port: u16,
     client_id: i32,
   ) -> Result<i64, IBKRError> {
-    // Start a transaction
     let tx = db.transaction()
       .map_err(|e| IBKRError::LoggingError(format!("Failed to start logger transaction: {}", e)))?;
 
-    // Delete previous session(s) with the same name
-    // ON DELETE CASCADE handles deleting related messages
     let deleted_count = tx.execute("DELETE FROM sessions WHERE session_name = ?1", params![session_name])
       .map_err(|e| IBKRError::LoggingError(format!("Failed to delete previous session '{}': {}", session_name, e)))?;
 
@@ -277,7 +261,7 @@ impl ConnectionLogger {
       log::warn!("Deleted {} previous log session(s) named '{}'", deleted_count, session_name);
     }
 
-    // Insert the new session record
+    // Insert WITHOUT server_version initially
     tx.execute(
       "INSERT INTO sessions (session_name, start_time_unix_ms, host, port, client_id) VALUES (?1, ?2, ?3, ?4, ?5)",
       params![session_name, start_time_unix_ms, host, port, client_id],
@@ -285,17 +269,43 @@ impl ConnectionLogger {
 
     let new_session_id = tx.last_insert_rowid();
 
-    // Commit the transaction
     tx.commit()
       .map_err(|e| IBKRError::LoggingError(format!("Failed to commit logger transaction: {}", e)))?;
 
     Ok(new_session_id)
   }
 
+  /// Sets the server version for the current session in the database.
+  /// Should be called after the connection handshake is complete.
+  pub fn set_session_server_version(&self, server_version: i32) {
+    match self.inner.lock() {
+      Ok(guard) => {
+        match guard.db.execute(
+          "UPDATE sessions SET server_version = ?1 WHERE session_id = ?2",
+          params![server_version, guard.session_id],
+        ) {
+          Ok(updated_rows) => {
+            if updated_rows == 1 {
+              log::info!("Logged server_version={} for session_id={}", server_version, guard.session_id);
+            } else {
+              log::warn!("Failed to log server_version={} for session_id={}: Session not found or already set?", server_version, guard.session_id);
+            }
+          }
+          Err(e) => {
+            log::error!("Failed to update server_version in logger database for session_id={}: {}", guard.session_id, e);
+          }
+        }
+      }
+      Err(poisoned) => {
+        log::error!("ConnectionLogger mutex poisoned while setting server version: {}", poisoned);
+      }
+    }
+  }
+
 
   /// Logs a single message (sent or received).
   pub fn log_message(&self, direction: LogDirection, payload: &[u8]) {
-    // (Parsing logic before lock remains the same)
+    // (Parsing logic remains the same)
     let message_type_id = parse_message_type_id(payload);
     let message_type_name = match direction {
       LogDirection::Send => message_type_id.and_then(|id| {
@@ -337,7 +347,6 @@ impl ConnectionLogger {
             );
           }
           Err(e) => {
-            // Use IBKRError type here if desired, or just log
             log::error!("Failed to log message to database: {}", e);
           }
         }

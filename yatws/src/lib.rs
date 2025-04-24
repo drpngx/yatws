@@ -32,6 +32,7 @@ mod parser_data_fin;
 mod parser_data_news;
 mod order_builder;
 mod conn_log;
+mod conn_mock;
 pub mod order_manager;
 pub mod account_manager;
 pub mod data_manager;

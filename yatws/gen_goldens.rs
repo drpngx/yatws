@@ -34,11 +34,11 @@ fn main() {
   let client_id = 123;
 
   println!("Connecting to TWS at {}:{} with client ID {}", host, port, client_id);
-
-  let log_config = Some(("yatws/testdata/conn_log.db".to_string(), "connect".to_string()));
+  let log_config = ("yatws/testdata/conn_log.db".to_string(), "connect".to_string());
 
   // Create a new connection
-  let client = IBKRClient::new(host, port, client_id, log_config).unwrap();
+  //let client = IBKRClient::new(host, port, client_id, Some(log_config)).unwrap();
+  let client = IBKRClient::from_db(&log_config.0, &log_config.1).unwrap();
 
   // let acct = client.account();
   // acct.refresh().unwrap();

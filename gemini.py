@@ -30,6 +30,8 @@ def ComponentFiles(comp):
       'yatws/src/handler.rs',
       'yatws/src/min_server_ver.rs',
       'yatws/src/conn.rs',
+      'yatws/src/conn_log.rs',
+      'yatws/src/conn_mock.rs',
       'yatws/src/order.rs',
       'yatws/src/order_builder.rs',
       'yatws/src/lib.rs',

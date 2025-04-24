@@ -29,6 +29,7 @@ rust_library(
         "src/min_server_ver.rs",
         "src/conn.rs",
         "src/conn_log.rs",
+        "src/conn_mock.rs",
         "src/client.rs",
         "src/order_manager.rs",
         "src/account_manager.rs",

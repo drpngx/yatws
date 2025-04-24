@@ -3,6 +3,7 @@ use crate::data_manager::DataManager;
 use crate::account_manager::AccountManager;
 use crate::conn::{Connection, SocketConnection, MessageBroker};
 use crate::conn_log::ConnectionLogger;
+use crate::conn_mock::MockConnection;
 use crate::base::IBKRError;
 use parking_lot::RwLock;
 use std::sync::Arc;
@@ -24,6 +25,27 @@ impl IBKRClient {
     let conn = Box::new(SocketConnection::new(host, port, client_id, logger.clone())?);
     let server_version = conn.get_server_version();
     let message_broker = Arc::new(MessageBroker::new(conn, logger));
+    let client_mgr = ClientManager::new(message_broker.clone());
+    let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
+    let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
+    let data_mgr = Arc::new(DataManager::new(message_broker.clone()));
+    let msg_handler = MessageHandler::new(server_version, client_mgr.clone(),
+                                          account_mgr.clone(), order_mgr.clone());
+    message_broker.set_message_handler(msg_handler);
+    order_init()?;
+    Ok(IBKRClient {
+      client_mgr,
+      order_mgr,
+      account_mgr,
+      data_mgr,
+    })
+  }
+
+  /// Create a new client using a stored interaction.
+  pub fn from_db(db_path: &str, session_name: &str) -> Result<IBKRClient, IBKRError> {
+    let conn = Box::new(MockConnection::new(db_path, session_name)?);
+    let server_version = conn.get_server_version();
+    let message_broker = Arc::new(MessageBroker::new(conn, None));
     let client_mgr = ClientManager::new(message_broker.clone());
     let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
