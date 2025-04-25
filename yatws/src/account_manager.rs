@@ -864,7 +864,8 @@ impl AccountHandler for AccountManager {
     } // else: ReqID not found
   }
 
-  fn commission_report(&self, exec_id: &str, commission: f64, currency: &str, realized_pnl: Option<f64>) {
+  fn commission_report(&self, exec_id: &str, commission: f64, currency: &str,
+                       _yield: Option<f64>, _yield_redemption: Option<f64>) {
     debug!("Handler: Commission Report: ExecID={}, Commission={}, Currency={}",
            exec_id, commission, currency);
 
@@ -878,7 +879,6 @@ impl AccountHandler for AccountManager {
         // Found the matching execution, update its commission fields
         execution.commission = Some(commission);
         execution.commission_currency = Some(currency.to_string());
-        execution.realized_pnl = realized_pnl;
         debug!("Merged commission into Execution: {}", exec_id);
         // Clone the updated execution to notify observers *after* releasing the lock
         updated_execution = Some(execution.clone());

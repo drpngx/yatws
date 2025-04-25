@@ -93,7 +93,6 @@ pub struct Execution {
   pub avg_price: f64,     // Average price of the order containing this execution
   pub commission: Option<f64>, // Populated from CommissionReport
   pub commission_currency: Option<String>, // Populated from CommissionReport
-  pub realized_pnl: Option<f64>, // Populated from CommissionReport
   pub exchange: String,    // Exchange where execution occurred
   pub account_id: String,  // Account ID associated with the execution
   /// Liquidation status: 0 = Not liquidation, 1 = Liquidation, 2 = Unknown. Stored as bool (true if 1 or 2).

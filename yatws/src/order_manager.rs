@@ -100,7 +100,7 @@ impl OrderManager {
   /// This sends an order to the system and returns immediately without waiting for confirmation.
   /// The assigned client order ID is returned.
   pub fn place_order(&self, contract: Contract, request: OrderRequest) -> Result<String, IBKRError> {
-    info!("Placing order: {:?} for {}", request.side, contract.symbol);
+    info!("Placing order: {:?} x {:.0} for {}", request.side, request.quantity, contract.symbol);
     if !request.transmit {
       // TODO: Support complex orders where transmit=false later
       warn!("Placing order with transmit=false. This is usually for complex orders and may not work as expected standalone.");

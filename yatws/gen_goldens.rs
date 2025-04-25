@@ -214,7 +214,7 @@ mod test_cases {
 
     // --- SELL Order ---
     info!("Placing SELL MKT order for 1 share to close position...");
-    let (_, sell_request) = OrderBuilder::new(OrderSide::Buy, 1.0).market().for_stock("SPY").build()?;
+    let (_, sell_request) = OrderBuilder::new(OrderSide::Sell, 1.0).market().for_stock("SPY").build()?;
     let sell_order_id = order_mgr.place_order(contract.clone(), sell_request).context("Failed to place SELL order")?;
     info!("SELL order placed with ID: {}", sell_order_id);
 
@@ -257,9 +257,8 @@ mod test_cases {
     // Now print out the executions for the day.
     info!("Retrieving all executed trades.");
     for e in acct_mgr.get_day_executions()? {
-      info!("  oid: {}, {} {} x {:.0} @ {:.2}: pnl: {:.2}, comm: {:.2}",
+      info!("  oid: {}, {} {} x {:.0} @ {:.2}: comm: {:.2}",
             e.order_id, e.side, e.symbol, e.quantity, e.price,
-            e.realized_pnl.unwrap_or(0.0),
             e.commission.unwrap_or(0.0));
     }
     Ok(())

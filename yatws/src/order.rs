@@ -526,6 +526,7 @@ impl FromStr for OrderSide {
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     match s.to_uppercase().as_str() {
       "BUY" => Ok(OrderSide::Buy),
+      "BOT" => Ok(OrderSide::Buy),
       "SELL" => Ok(OrderSide::Sell),
       "SSHOR" => Ok(OrderSide::SellShort),
       _ => Err(IBKRError::ParseError(format!("Unknown OrderSide string: {}", s))),

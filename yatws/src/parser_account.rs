@@ -92,7 +92,6 @@ pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut F
   }
   // --- End Parse Contract ---
 
-
   let position = parser.read_double()?;
   let market_price = parser.read_double()?;
   let market_value = parser.read_double()?;
@@ -112,7 +111,6 @@ pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut F
     account_name = parser.read_string()?;
   }
 
-  // --- Call the handler ---
   handler.portfolio_value(
     &contract,
     position,
@@ -123,11 +121,9 @@ pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut F
     realized_pnl,
     &account_name,
   );
-  // ---
 
   log::debug!("Parsed Portfolio Value: Account={}, Symbol={}, Pos={}, MktPx={}, MktVal={}, AvgCost={}, UnPNL={}, RealPNL={}",
               account_name, contract.symbol, position, market_price, market_value, average_cost, unrealized_pnl, realized_pnl);
-
 
   Ok(())
 }
@@ -137,9 +133,7 @@ pub fn process_account_update_time(handler: &Arc<dyn AccountHandler>, parser: &m
   let _version = parser.read_int()?;
   let time_stamp = parser.read_string()?;
 
-  // --- Call the handler ---
   handler.account_update_time(&time_stamp);
-  // ---
 
   log::debug!("Parsed Account Update Time: {}", time_stamp);
 
@@ -151,9 +145,7 @@ pub fn process_account_download_end(handler: &Arc<dyn AccountHandler>, parser: &
   let _version = parser.read_int()?;
   let account = parser.read_string()?;
 
-  // --- Call the handler ---
   handler.account_download_end(&account);
-  // ---
 
   log::debug!("Parsed Account Download End: {}", account);
   Ok(())
@@ -164,9 +156,7 @@ pub fn process_managed_accounts(handler: &Arc<dyn AccountHandler>, parser: &mut 
   let _version = parser.read_int()?;
   let accounts_list = parser.read_string()?;
 
-  // --- Call the handler ---
   handler.managed_accounts(&accounts_list);
-  // ---
 
   log::debug!("Parsed Managed Accounts: {}", accounts_list);
   Ok(())
@@ -227,9 +217,7 @@ pub fn process_position(handler: &Arc<dyn AccountHandler>, parser: &mut FieldPar
     avg_cost = parser.read_double()?;
   }
 
-  // --- Call the handler ---
   handler.position(&account, &contract, position, avg_cost);
-  // ---
 
   log::debug!("Parsed Position: Account={}, Symbol={}, Position={}, AvgCost={}",
               account, contract.symbol, position, avg_cost);
@@ -238,9 +226,7 @@ pub fn process_position(handler: &Arc<dyn AccountHandler>, parser: &mut FieldPar
 
 /// Process position end message
 pub fn process_position_end(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
-  // --- Call the handler ---
   handler.position_end();
-  // ---
   log::debug!("Parsed Position End");
   Ok(())
 }
@@ -255,9 +241,7 @@ pub fn process_account_summary(handler: &Arc<dyn AccountHandler>, parser: &mut F
   let value = parser.read_string()?;
   let currency = parser.read_string()?;
 
-  // --- Call the handler ---
   handler.account_summary(req_id, &account, &tag, &value, &currency);
-  // ---
 
   log::debug!("Parsed Account Summary: ReqId={}, Account={}, Tag={}, Value={}, Currency={}",
               req_id, account, tag, value, currency);
@@ -269,9 +253,7 @@ pub fn process_account_summary_end(handler: &Arc<dyn AccountHandler>, parser: &m
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
 
-  // --- Call the handler ---
   handler.account_summary_end(req_id);
-  // ---
 
   log::debug!("Parsed Account Summary End: {}", req_id);
   Ok(())
@@ -306,10 +288,7 @@ pub fn process_pnl(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) 
     }
   }
 
-
-  // --- Call the handler ---
   handler.pnl(req_id, daily_pnl, unrealized_pnl, realized_pnl);
-  // ---
 
   log::debug!("Parsed PnL: ReqId={}, Daily={}, Unrealized={:?}, Realized={:?}",
               req_id, daily_pnl, unrealized_pnl, realized_pnl);
@@ -353,9 +332,7 @@ pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldP
     }
   }
 
-  // --- Call the handler ---
   handler.pnl_single(req_id, pos, daily_pnl, unrealized_pnl, realized_pnl, value);
-  // ---
 
   log::debug!("Parsed PnLSingle: ReqId={}, Pos={}, Daily={}, Unrealized={:?}, Realized={:?}, Value={}",
               req_id, pos, daily_pnl, unrealized_pnl, realized_pnl, value);
@@ -363,15 +340,16 @@ pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldP
 }
 
 
-// --- Update other process functions similarly ---
-// process_commission_report, process_position_multi, process_position_multi_end,
-// process_account_update_multi, process_account_update_multi_end
-// Need definitions for CommissionReport struct etc.
-
 // Add a placeholder implementation for CommissionReport parsing if needed
-pub fn process_commission_report(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
-  log::warn!("Parsing CommissionReport not implemented yet.");
-  // Implementation would parse commission report data and call handler.commission_report()
+pub fn process_commission_report(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
+  let _version = parser.read_int()?;
+  let exec_id = parser.read_string().map_err(|e| IBKRError::ParseError(format!("CommissionReport exec_id: {}", e)))?;
+  let commission = parser.read_double().map_err(|e| IBKRError::ParseError(format!("CommissionReport comm: {}", e)))?;
+  let currency = parser.read_string().map_err(|e| IBKRError::ParseError(format!("CommissionReport currency: {}", e)))?;
+  let yld = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("CommissionReport yield: {}", e)))?;
+  let yld_red = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("CommissionReport yield redemption: {}", e)))?;
+
+  handler.commission_report(&exec_id, commission, &currency, yld, yld_red);
   Ok(())
 }
 
@@ -514,10 +492,9 @@ pub fn process_execution_data(
     avg_price,
     commission: None, // Commission comes in a separate message
     commission_currency: None,
-    realized_pnl: None, // PNL comes in account updates or separate PNL messages
     exchange: exec_exchange,
     account_id,
-    liquidation: liquidation_int != 0, // Java uses int (0=No, 1=Yes), treat any non-zero as true? Or just 1? Sticking to `!= 0`.
+    liquidation: liquidation_int != 0,
     cum_qty,
     order_ref,
     ev_rule,
@@ -527,7 +504,6 @@ pub fn process_execution_data(
     pending_price_revision,
   };
 
-  // --- Call handler ---
   handler.execution_details(req_id, &execution.contract, &execution);
 
   Ok(())
@@ -540,5 +516,6 @@ pub fn process_execution_data_end(handler: &Arc<dyn AccountHandler>, parser: &mu
 
   log::debug!("Execution Data End: {}", req_id);
 
+  handler.execution_details_end(req_id);
   Ok(())
 }

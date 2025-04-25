@@ -74,11 +74,6 @@ pub trait OrderHandler: Send + Sync {
 
   /// Indicates the end of the completed orders transmission.
   fn completed_orders_end(&self);
-
-  // --- Optional/Future methods for executions and commissions ---
-  // fn execution_details(&self, req_id: i32, contract: &Contract, execution: &Execution);
-  // fn execution_details_end(&self, req_id: i32);
-  // fn commission_report(&self, commission_report: &CommissionReport);
 }
 
 /// Information about the account such as open positions and cash balance.
@@ -118,7 +113,7 @@ pub trait AccountHandler: Send + Sync {
 
   fn execution_details(&self, req_id: i32, _contract: &Contract, execution: &Execution);
   fn execution_details_end(&self, req_id: i32);
-  fn commission_report(&self, exec_id: &str, commission: f64, currency: &str, realized_pnl: Option<f64>);
+  fn commission_report(&self, exec_id: &str, commission: f64, currency: &str, yld: Option<f64>, yield_redemption: Option<f64>);
 
   // --- Methods for multi-account updates (optional to implement fully initially) ---
   // fn position_multi(&self, req_id: i32, account: &str, model_code: &str, contract: &Contract, pos: f64, avg_cost: f64);
