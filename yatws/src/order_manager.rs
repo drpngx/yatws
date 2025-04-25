@@ -501,6 +501,7 @@ impl OrderManager {
       // though place_order tries to prevent this. Or if no one is waiting.
       debug!("No active waiters found (or condvar not yet created) for order {}", order_id);
     }
+    debug!("Notified for {}", order_id);
   }
 
 }
@@ -696,9 +697,11 @@ impl OrderHandler for OrderManager {
       order_book.insert(order_id_str.clone(), new_order_arc.clone());
 
       // Ensure condvar exists for this new order
-      let mut condvars_write = self.order_update_condvars.write();
-      condvars_write.entry(order_id_str.clone())
-        .or_insert_with(|| Arc::new((Mutex::new(()), Condvar::new())));
+      {
+       let mut condvars_write = self.order_update_condvars.write();
+        condvars_write.entry(order_id_str.clone())
+          .or_insert_with(|| Arc::new((Mutex::new(()), Condvar::new())));
+      }
 
       // Update permId mapping if available
       // if let Some(perm_id) = new_order_arc.read().perm_id { // Assuming permId exists

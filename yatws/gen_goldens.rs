@@ -256,6 +256,48 @@ mod test_cases {
     }
   }
 
+  pub(super) fn order_many_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+    info!("--- Testing Sending Orders In Rapid Successiuon ---");
+    let order_mgr = client.orders();
+    let limit_price = 546.0;  // Slightly lower than ask.
+    let mut oid = vec![];
+    for k in 0..10 {
+      let limit_price = limit_price + (k as f64) * 0.01;
+      let (contract, buy_request) = OrderBuilder::new(OrderSide::Buy, 1.0).limit(limit_price).for_stock("SPY").build()?;
+      debug!("Request[{}]: {:?}", k, buy_request);
+      let buy_order_id = order_mgr.place_order(contract.clone(), buy_request).context("Failed to place BUY order")?;
+      info!("BUY order placed with {}", buy_order_id);
+      oid.push(buy_order_id);
+    }
+
+    let oid = oid;  // not mut.
+    log::info!("Wait for orders submitted.");
+    for o in &oid {
+      match order_mgr.try_wait_order_submitted(o, Duration::from_secs(1)) {
+        Ok(status) => {
+          info!("BUY order {} status: {:?}", o, status);
+        }
+        Err(e) => {
+          error!("Error or timeout waiting for BUY order {}: {:?}", o, e);
+        }
+      }
+    }
+    log::info!("Cancel orders");
+    for o in &oid {
+      order_mgr.cancel_order(o);
+      match order_mgr.try_wait_order_canceled(o, Duration::from_secs(3)) {
+        Ok(status) => {
+          info!("BUY order {} status: {:?}", o, status);
+        }
+        Err(e) => {
+          error!("Error or timeout waiting for cancel order {}: {:?}", o, e);
+        }
+      }
+    }
+    log::info!("All done");
+    Ok(())
+  }
+
   pub(super) fn order_limit_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
     info!("--- Testing Limit Order ---");
     let order_mgr = client.orders();
@@ -339,6 +381,7 @@ inventory::submit! { TestDefinition { name: "time", func: test_cases::time_impl 
 inventory::submit! { TestDefinition { name: "account-details", func: test_cases::account_details_impl } }
 inventory::submit! { TestDefinition { name: "order-market", func: test_cases::order_market_impl } }
 inventory::submit! { TestDefinition { name: "order-limit", func: test_cases::order_limit_impl } }
+inventory::submit! { TestDefinition { name: "order-many", func: test_cases::order_many_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 
 
