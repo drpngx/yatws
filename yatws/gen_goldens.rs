@@ -253,7 +253,16 @@ mod test_cases {
         info!("Verified position closed (Not found in list). Test successful.");
         Ok(()) // Success!
       }
+    }?;
+    // Now print out the executions for the day.
+    info!("Retrieving all executed trades.");
+    for e in acct_mgr.get_day_executions()? {
+      info!("  oid: {}, {} {} x {:.0} @ {:.2}: pnl: {:.2}, comm: {:.2}",
+            e.order_id, e.side, e.symbol, e.quantity, e.price,
+            e.realized_pnl.unwrap_or(0.0),
+            e.commission.unwrap_or(0.0));
     }
+    Ok(())
   }
 
   pub(super) fn order_many_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
