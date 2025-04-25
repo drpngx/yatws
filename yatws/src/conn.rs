@@ -212,18 +212,16 @@ mod socket {
 
 
   // --- SocketConnection Implementation ---
-    impl SocketConnection {
+  impl SocketConnection {
     // Modify new to accept logger (as before)
     pub fn new(host: &str, port: u16, client_id: i32, logger: Option<ConnectionLogger>) -> Result<Self, IBKRError> {
       info!("Initiating connection to TWS at {}:{}", host, port);
 
       let (mut stream, server_version, connection_time) = Self::connect_h1_h2(host, port)?;
 
-      // --- <<< ADDED: Log server version if logger exists >>> ---
       if let Some(ref logr) = logger {
         logr.set_session_server_version(server_version);
       }
-      // --- <<< END ADDED >>> ---
 
       let inner = SocketConnectionInner {
         server_version,
@@ -250,59 +248,59 @@ mod socket {
 
     // connect_h1_h2 remains the same
     fn connect_h1_h2(host: &str, port: u16) -> Result<(TcpStream, i32, String), IBKRError> {
-        let timeout = Duration::from_secs(10);
-        let addr = format!("{}:{}", host, port);
+      let timeout = Duration::from_secs(10);
+      let addr = format!("{}:{}", host, port);
 
-        let socket_addrs: Vec<_> = match addr.as_str().to_socket_addrs() {
-            Ok(iter) => iter.collect(),
-            Err(e) => return Err(IBKRError::ConfigurationError(format!("Invalid address '{}': {}", addr, e))),
-        };
-        if socket_addrs.is_empty() {
-            return Err(IBKRError::ConfigurationError(format!("No valid IP addresses found for {}", addr)));
-        }
+      let socket_addrs: Vec<_> = match addr.as_str().to_socket_addrs() {
+        Ok(iter) => iter.collect(),
+        Err(e) => return Err(IBKRError::ConfigurationError(format!("Invalid address '{}': {}", addr, e))),
+      };
+      if socket_addrs.is_empty() {
+        return Err(IBKRError::ConfigurationError(format!("No valid IP addresses found for {}", addr)));
+      }
 
-        let mut stream = TcpStream::connect_timeout(&socket_addrs[0], timeout)
-            .map_err(|e| IBKRError::ConnectionFailed(format!("Connect failed to {}: {}", socket_addrs[0], e)))?;
+      let mut stream = TcpStream::connect_timeout(&socket_addrs[0], timeout)
+        .map_err(|e| IBKRError::ConnectionFailed(format!("Connect failed to {}: {}", socket_addrs[0], e)))?;
 
-        stream.set_write_timeout(Some(timeout))
-            .map_err(|e| IBKRError::ConnectionFailed(format!("Failed to set write timeout: {}", e)))?;
+      stream.set_write_timeout(Some(timeout))
+        .map_err(|e| IBKRError::ConnectionFailed(format!("Failed to set write timeout: {}", e)))?;
 
-        // --- Handshake H1 ---
-        info!("Sending Handshake H1...");
-        let api_prefix = b"API\0";
-        const MIN_VERSION: i32 = 100;
-        const MAX_VERSION: i32 = min_server_ver::MAX_SUPPORTED_VERSION;
-        let version_payload = if MIN_VERSION < MAX_VERSION { format!("v{}..{}", MIN_VERSION, MAX_VERSION) } else { format!("v{}", MIN_VERSION) };
-        let connect_options = ""; // Optional connect options like "+PACEAPI"
-        let version_payload_full = if !connect_options.is_empty() { format!("{} {}", version_payload, connect_options) } else { version_payload };
-        let version_bytes = version_payload_full.as_bytes();
-        let version_len_u32 = version_bytes.len() as u32;
+      // --- Handshake H1 ---
+      info!("Sending Handshake H1...");
+      let api_prefix = b"API\0";
+      const MIN_VERSION: i32 = 100;
+      const MAX_VERSION: i32 = min_server_ver::MAX_SUPPORTED_VERSION;
+      let version_payload = if MIN_VERSION < MAX_VERSION { format!("v{}..{}", MIN_VERSION, MAX_VERSION) } else { format!("v{}", MIN_VERSION) };
+      let connect_options = ""; // Optional connect options like "+PACEAPI"
+      let version_payload_full = if !connect_options.is_empty() { format!("{} {}", version_payload, connect_options) } else { version_payload };
+      let version_bytes = version_payload_full.as_bytes();
+      let version_len_u32 = version_bytes.len() as u32;
 
-        let mut h1_message = Vec::with_capacity(api_prefix.len() + 4 + version_bytes.len());
-        h1_message.extend_from_slice(api_prefix);
-        h1_message.write_u32::<BigEndian>(version_len_u32).unwrap(); // Use byteorder
-        h1_message.extend_from_slice(version_bytes);
+      let mut h1_message = Vec::with_capacity(api_prefix.len() + 4 + version_bytes.len());
+      h1_message.extend_from_slice(api_prefix);
+      h1_message.write_u32::<BigEndian>(version_len_u32).unwrap(); // Use byteorder
+      h1_message.extend_from_slice(version_bytes);
 
-        // Send H1
-        stream.write_all(&h1_message).map_err(|e| IBKRError::SocketError(format!("Sending H1: {}", e)))?;
-        stream.flush().map_err(|e| IBKRError::SocketError(format!("Flushing H1: {}", e)))?;
-        info!("Sent Handshake H1 ({} bytes)", h1_message.len());
+      // Send H1
+      stream.write_all(&h1_message).map_err(|e| IBKRError::SocketError(format!("Sending H1: {}", e)))?;
+      stream.flush().map_err(|e| IBKRError::SocketError(format!("Flushing H1: {}", e)))?;
+      info!("Sent Handshake H1 ({} bytes)", h1_message.len());
 
-        // --- H2: Read Server Ack ---
-        info!("Waiting for Handshake H2 (Server Ack)...");
-        let h2_body = read_framed_message_body(&mut stream, timeout)?;
-        info!("Received Handshake H2 body ({} bytes)", h2_body.len());
+      // --- H2: Read Server Ack ---
+      info!("Waiting for Handshake H2 (Server Ack)...");
+      let h2_body = read_framed_message_body(&mut stream, timeout)?;
+      info!("Received Handshake H2 body ({} bytes)", h2_body.len());
 
-        let h2_parts: Vec<&[u8]> = h2_body.splitn(3, |&b| b == 0).collect(); // Split by null bytes
-        if h2_parts.len() < 2 || h2_parts[0].is_empty() || h2_parts[1].is_empty() {
-            return Err(IBKRError::ParseError(format!("Invalid H2 body format: {:02X?}", h2_body)));
-        }
-        let server_version_str = std::str::from_utf8(h2_parts[0]).map_err(|e| IBKRError::ParseError(format!("Invalid UTF8 server version: {}", e)))?;
-        let server_version = server_version_str.parse::<i32>().map_err(|e| IBKRError::ParseError(format!("Parsing server version '{}': {}", server_version_str, e)))?;
-        let connection_time = std::str::from_utf8(h2_parts[1]).map_err(|e| IBKRError::ParseError(format!("Invalid UTF8 connection time: {}", e)))?.to_string();
-        info!("Parsed ServerVersion={}, ConnectionTime='{}'", server_version, connection_time);
+      let h2_parts: Vec<&[u8]> = h2_body.splitn(3, |&b| b == 0).collect(); // Split by null bytes
+      if h2_parts.len() < 2 || h2_parts[0].is_empty() || h2_parts[1].is_empty() {
+        return Err(IBKRError::ParseError(format!("Invalid H2 body format: {:02X?}", h2_body)));
+      }
+      let server_version_str = std::str::from_utf8(h2_parts[0]).map_err(|e| IBKRError::ParseError(format!("Invalid UTF8 server version: {}", e)))?;
+      let server_version = server_version_str.parse::<i32>().map_err(|e| IBKRError::ParseError(format!("Parsing server version '{}': {}", server_version_str, e)))?;
+      let connection_time = std::str::from_utf8(h2_parts[1]).map_err(|e| IBKRError::ParseError(format!("Invalid UTF8 connection time: {}", e)))?.to_string();
+      info!("Parsed ServerVersion={}, ConnectionTime='{}'", server_version, connection_time);
 
-        Ok((stream, server_version, connection_time))
+      Ok((stream, server_version, connection_time))
     }
 
 
@@ -314,72 +312,71 @@ mod socket {
       server_version: i32,
       logger_clone: Option<ConnectionLogger>,
     ) -> Result<(), IBKRError> {
-        log::info!("Starting the reader thread.");
+      log::info!("Starting the reader thread.");
 
-        let stop_flag_clone = self.stop_flag.clone();
-        let reader_thread_handle_clone = self.reader_thread.clone();
-        let thread_logger = logger_clone.clone();
+      let stop_flag_clone = self.stop_flag.clone();
+      let reader_thread_handle_clone = self.reader_thread.clone();
+      let thread_logger = logger_clone.clone();
 
-        *self.stop_flag.lock() = false;
+      *self.stop_flag.lock() = false;
 
-        let handle = thread::spawn(move || {
-            debug!("Message reader thread started (Server Version: {})", server_version);
-            let read_loop_timeout = Duration::from_secs(2);
+      let handle = thread::spawn(move || {
+        debug!("Message reader thread started (Server Version: {})", server_version);
+        let read_loop_timeout = Duration::from_secs(2);
 
-            loop {
-            if *stop_flag_clone.lock() {
-                debug!("Reader thread received stop signal.");
-                break;
+        loop {
+          if *stop_flag_clone.lock() {
+            debug!("Reader thread received stop signal.");
+            break;
+          }
+
+          match read_framed_message_body(&mut reader_stream, read_loop_timeout) {
+            Ok(msg_data) => {
+              if msg_data.is_empty() { continue; }
+
+              // --- Log Received Message ---
+              if let Some(logger) = &thread_logger {
+                logger.log_message(LogDirection::Recv, &msg_data);
+              }
+              // --- End Logging ---
+
+              if let Err(e) = process_message(&mut handler, &msg_data) {
+                error!("Error processing message: {:?}", e);
+              }
+            },
+            Err(IBKRError::Timeout(_)) => {
+              continue;
             }
-
-            match read_framed_message_body(&mut reader_stream, read_loop_timeout) {
-                Ok(msg_data) => {
-                if msg_data.is_empty() { continue; }
-
-                // --- Log Received Message ---
-                if let Some(logger) = &thread_logger {
-                    logger.log_message(LogDirection::Recv, &msg_data);
-                }
-                // --- End Logging ---
-
-                if let Err(e) = process_message(&mut handler, &msg_data) {
-                    error!("Error processing message: {:?}", e);
-                }
-                },
-                Err(IBKRError::Timeout(_)) => {
-                continue;
-                }
-                Err(IBKRError::ConnectionFailed(msg)) | Err(IBKRError::SocketError(msg)) => {
-                if msg.contains("timed out") || msg.contains("reset") || msg.contains("broken pipe") || msg.contains("refused") || msg.contains("closed") || msg.contains("EOF") || msg.contains("network") || msg.contains("host is down") {
-                    error!("Connection lost/error in reader thread: {}", msg);
-                    handler.connection_closed(); // Notify handler
-                    break; // Exit loop
-                } else {
-                    warn!("Unhandled socket/connection error in reader: {}", msg);
-                    thread_sleep(Duration::from_millis(100));
-                }
-                },
-                Err(e) => {
-                error!("Non-IO error in reader thread: {:?}", e);
+            Err(IBKRError::ConnectionFailed(msg)) | Err(IBKRError::SocketError(msg)) => {
+              if msg.contains("timed out") || msg.contains("reset") || msg.contains("broken pipe") || msg.contains("refused") || msg.contains("closed") || msg.contains("EOF") || msg.contains("network") || msg.contains("host is down") {
+                error!("Connection lost/error in reader thread: {}", msg);
+                handler.connection_closed(); // Notify handler
+                break; // Exit loop
+              } else {
+                warn!("Unhandled socket/connection error in reader: {}", msg);
                 thread_sleep(Duration::from_millis(100));
-                }
+              }
+            },
+            Err(e) => {
+              error!("Non-IO error in reader thread: {:?}", e);
+              thread_sleep(Duration::from_millis(100));
             }
-            } // End loop
+          }
+        } // End loop
 
-            // --- Cleanup ---
-            info!("Message reader thread stopping cleanup...");
-            *stop_flag_clone.lock() = true;
+        // --- Cleanup ---
+        info!("Message reader thread stopping cleanup...");
+        *stop_flag_clone.lock() = true;
 
-            *reader_thread_handle_clone.lock() = None;
-            debug!("Message reader thread finished.");
-        }); // End thread::spawn
+        *reader_thread_handle_clone.lock() = None;
+        debug!("Message reader thread finished.");
+      }); // End thread::spawn
 
-        *self.reader_thread.lock() = Some(handle);
-        Ok(())
+      *self.reader_thread.lock() = Some(handle);
+      Ok(())
     }
 
   } // end impl SocketConnection
-
 
   // --- Implement the Connection Trait ---
   impl Connection for SocketConnection {
