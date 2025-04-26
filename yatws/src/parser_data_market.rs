@@ -155,11 +155,10 @@ pub fn process_market_data_type(handler: &Arc<dyn MarketDataHandler>, parser: &m
   Ok(())
 }
 
-/// Process market depth exchanges message
-pub fn process_mkt_depth_exchanges(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
-  // Implementation would parse market depth exchanges message
-  Ok(())
-}
+/// Process tick option computation message
+pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+   Ok(())
+ }
 
 /// Process tick req params message
 pub fn process_tick_req_params(handler: &Arc<dyn MarketDataHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {

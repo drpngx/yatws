@@ -1,11 +1,14 @@
 // yatws/src/handler.rs
 // Handlers for events parsed from the server.
-use crate::contract::Contract;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::order::{OrderRequest, OrderStatus, OrderState};
 use crate::account::Execution;
+use crate::contract::{
+  Contract, ContractDetails, SoftDollarTier, FamilyCode, ContractDescription,
+  DepthMktDataDescription, SmartComponent, MarketRule, HistoricalSession, PriceIncrement
+};
 
 
 /// Meta messages such as errors and time.
@@ -122,12 +125,60 @@ pub trait AccountHandler: Send + Sync {
   // fn account_update_multi_end(&self, req_id: i32);
 }
 
-/// Contract types etc.
 pub trait ReferenceDataHandler: Send + Sync {
-  // fn contract_details(&self, req_id: i32, contract_details: &ContractDetails);
-  // fn contract_details_end(&self, req_id: i32);
-  // fn bond_contract_details(&self, req_id: i32, contract_details: &ContractDetails);
-  // // ... other methods ...
+  /// Provides details for a contract requested via `reqContractDetails`.
+  fn contract_details(&self, req_id: i32, contract_details: &ContractDetails);
+
+  /// Provides details for a bond contract requested via `reqContractDetails`.
+  fn bond_contract_details(&self, req_id: i32, contract_details: &ContractDetails);
+
+  /// Indicates the end of a contract details request.
+  fn contract_details_end(&self, req_id: i32);
+
+  /// Provides option parameters (expirations and strikes) for a requested underlying.
+  fn security_definition_option_parameter(
+    &self,
+    req_id: i32,
+    exchange: &str,
+    underlying_con_id: i32,
+    trading_class: &str,
+    multiplier: &str,
+    expirations: &[String], // Using slice for borrowing
+    strikes: &[f64],         // Using slice for borrowing
+  );
+
+  /// Indicates the end of a security definition option parameter request.
+  fn security_definition_option_parameter_end(&self, req_id: i32);
+
+  /// Provides the tiers for soft dollar commissions.
+  fn soft_dollar_tiers(&self, req_id: i32, tiers: &[SoftDollarTier]);
+
+  /// Provides the family codes used in linked accounts.
+  fn family_codes(&self, family_codes: &[FamilyCode]);
+
+  /// Provides contracts matching a requested symbol pattern.
+  fn symbol_samples(&self, req_id: i32, contract_descriptions: &[ContractDescription]);
+
+  /// Provides exchanges offering market depth for a requested contract.
+  fn mkt_depth_exchanges(&self, descriptions: &[DepthMktDataDescription]);
+
+  /// Provides the components of a SMART routing destination.
+  fn smart_components(&self, req_id: i32, components: &HashMap<i32, (String, char)>);
+
+  /// Provides details about a specific market rule.
+  fn market_rule(&self, market_rule_id: i32, price_increments: &[PriceIncrement]);
+
+  /// Provides the trading schedule for a contract over a requested time period.
+  fn historical_schedule(
+    &self,
+    req_id: i32,
+    start_date_time: &str,
+    end_date_time: &str,
+    time_zone: &str,
+    sessions: &[HistoricalSession],
+  );
+
+  // Add other reference data methods as needed (e.g., scanner parameters)
 }
 
 /// Micro-structure: quotes etc.
@@ -146,7 +197,6 @@ pub trait FinancialAdvisorHandler: Send + Sync {
 
 struct Dummy {}
 impl FinancialAdvisorHandler for Dummy {}
-impl ReferenceDataHandler for Dummy {}
 impl MarketDataHandler for Dummy {}
 impl NewsDataHandler for Dummy {}
 impl FinancialDataHandler for Dummy {}
@@ -167,15 +217,16 @@ impl MessageHandler {
   pub fn new(server_version: i32,
              client: Arc<dyn ClientHandler>,
              account: Arc<dyn AccountHandler>,
-             order: Arc<dyn OrderHandler>) -> Self {
+             order: Arc<dyn OrderHandler>,
+             data_ref: Arc<dyn ReferenceDataHandler>) -> Self {
     let dummy = Arc::new(Dummy {});
     MessageHandler {
       server_version,
       client,
       account,
       order,
+      data_ref,
       fin_adv: dummy.clone(),
-      data_ref: dummy.clone(),
       data_market: dummy.clone(),
       data_news: dummy.clone(),
       data_fin: dummy.clone(),

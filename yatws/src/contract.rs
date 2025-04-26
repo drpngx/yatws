@@ -412,12 +412,16 @@ impl FromStr for OptionRight {
 #[derive(Debug, Clone)]
 pub struct ContractDetails {
   pub contract: Contract,
+  pub stock_type: String,   // ETF, ADR, etc
   pub market_name: String,
   pub min_tick: f64,
   pub price_magnifier: i32,
   pub order_types: String,
   pub valid_exchanges: String,
   pub underlying_con_id: i32,
+  pub underlying_symbol: String,
+  pub underlying_sec_type: Option<SecType>,
+  pub real_expiration_date: String,
   pub long_name: String,
   pub contract_month: String,
   pub industry: String,
@@ -428,11 +432,11 @@ pub struct ContractDetails {
   pub liquid_hours: String,
   pub ev_rule: String,
   pub ev_multiplier: f64,
-  pub sec_id_list: Vec<(String, String)>, // List of (sec_id_type, sec_id)
+  pub sec_id_list: Vec<TagValue>, // List of (sec_id_type, sec_id)
   pub min_size: f64,
   pub size_increment: f64,
   pub suggested_size_increment: f64,
-  pub aggGroup: Option<i32>,
+  pub agg_group: Option<i32>,
   pub market_rule_ids: String,
   pub fund_name: Option<String>,
   pub fund_family: Option<String>,
@@ -450,6 +454,7 @@ pub struct BondDetails {
   pub coupon: f64,
   pub next_option_date: Option<DateTime<Utc>>,
   pub next_option_type: Option<String>,
+  pub next_option_partial: bool,
   pub callable: bool,
   pub puttable: bool,
   pub convertible: bool,
@@ -458,18 +463,23 @@ pub struct BondDetails {
   pub bond_type: String,
   pub coupon_type: String,
   pub duration: f64,
+  pub notes: String,
 }
 
 impl Default for ContractDetails {
   fn default() -> Self {
     ContractDetails {
       contract: Contract::new(),
+      stock_type: String::new(),
       market_name: String::new(),
       min_tick: 0.0,
       price_magnifier: 1,
       order_types: String::new(),
       valid_exchanges: String::new(),
       underlying_con_id: 0,
+      underlying_symbol: String::new(),
+      underlying_sec_type: None,
+      real_expiration_date: String::new(),
       long_name: String::new(),
       contract_month: String::new(),
       industry: String::new(),
@@ -485,7 +495,7 @@ impl Default for ContractDetails {
       min_size: 0.0,
       size_increment: 0.0,
       suggested_size_increment: 0.0,
-      aggGroup: None,
+      agg_group: None,
       market_rule_ids: String::new(),
       fund_name: None,
       fund_family: None,
@@ -504,6 +514,7 @@ impl Default for BondDetails {
       coupon: 0.0,
       next_option_date: None,
       next_option_type: None,
+      next_option_partial: false,
       callable: false,
       puttable: false,
       convertible: false,
@@ -512,6 +523,7 @@ impl Default for BondDetails {
       bond_type: String::new(),
       coupon_type: String::new(),
       duration: 0.0,
+      notes: String::new(),
     }
   }
 }
@@ -599,4 +611,73 @@ impl fmt::Display for WhatToShow {
     };
     write!(f, "{}", s)
   }
+}
+
+// ----- Reference data:
+/// Represents a soft dollar tier details.
+#[derive(Debug, Clone, Default)]
+pub struct SoftDollarTier {
+  pub name: String,
+  pub value: String,
+  pub display_name: String,
+}
+
+/// Represents a family code.
+#[derive(Debug, Clone, Default)]
+pub struct FamilyCode {
+  pub account_id: String,
+  pub family_code_str: String,
+}
+
+/// Describes a contract for symbol matching results.
+#[derive(Debug, Clone)]
+pub struct ContractDescription {
+  pub contract: Contract,
+  pub derivative_sec_types: Vec<String>,
+}
+
+/// Represents an entry in a market depth exchange description.
+#[derive(Debug, Clone, Default)]
+pub struct DepthMktDataDescription {
+  pub exchange: String,
+  pub sec_type: String,
+  pub listing_exch: String, // Added based on Java EDecoder
+  pub service_data_type: String,
+  pub agg_group: Option<i32>, // Optional based on server version
+}
+
+/// Represents a component of a SMART route.
+#[derive(Debug, Clone)]
+pub struct SmartComponent {
+  pub bit_number: i32,
+  pub exchange: String,
+  pub exchange_letter: char,
+}
+
+/// Represents a price increment rule.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PriceIncrement {
+  pub low_edge: f64,
+  pub increment: f64,
+}
+
+/// Represents a market rule ID and its associated price increments.
+#[derive(Debug, Clone, Default)]
+pub struct MarketRule {
+  pub market_rule_id: i32,
+  pub price_increments: Vec<PriceIncrement>,
+}
+
+/// Represents a session in the historical data schedule.
+#[derive(Debug, Clone, Default)]
+pub struct HistoricalSession {
+  pub start_date_time: String, // Consider parsing to DateTime<Tz> if needed
+  pub end_date_time: String,   // Consider parsing to DateTime<Tz> if needed
+  pub ref_date: String,        // Consider parsing to Date if needed
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct TagValue {
+  pub tag: String,
+  pub value: String,
 }

@@ -1598,4 +1598,98 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
+  // --- DataRef
+  /// Encodes a request for security definition option parameters.
+  pub fn encode_request_sec_def_opt_params(
+    &self,
+    req_id: i32,
+    underlying_symbol: &str,
+    fut_fop_exchange: &str, // Left empty for options
+    underlying_sec_type: SecType, // Typically STK
+    underlying_con_id: i32,
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request security definition option parameters: ReqID={}, UnderlyingSymbol={}, UnderlyingConID={}", req_id, underlying_symbol, underlying_con_id);
+
+    if self.server_version < min_server_ver::SEC_DEF_OPT_PARAMS_REQ {
+      return Err(IBKRError::Unsupported("Server version does not support security definition option parameters request.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestSecDefOptParams as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    self.write_str_to_cursor(&mut cursor, underlying_symbol)?;
+    self.write_str_to_cursor(&mut cursor, fut_fop_exchange)?; // FUTURES_SEC_TYPE? No, just exchange or ""
+    self.write_str_to_cursor(&mut cursor, &underlying_sec_type.to_string())?;
+    self.write_int_to_cursor(&mut cursor, underlying_con_id)?;
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for soft dollar tiers.
+  pub fn encode_request_soft_dollar_tiers(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request soft dollar tiers: ReqID={}", req_id);
+    if self.server_version < min_server_ver::SOFT_DOLLAR_TIER {
+      return Err(IBKRError::Unsupported("Server version does not support soft dollar tier requests.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestSoftDollarTiers as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for family codes.
+  pub fn encode_request_family_codes(&self) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request family codes");
+    if self.server_version < min_server_ver::REQ_FAMILY_CODES {
+      return Err(IBKRError::Unsupported("Server version does not support family codes request.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestFamilyCodes as i32)?;
+    // No version field according to Java client
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for contracts matching a symbol pattern.
+  pub fn encode_request_matching_symbols(&self, req_id: i32, pattern: &str) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request matching symbols: ReqID={}, Pattern={}", req_id, pattern);
+    if self.server_version < min_server_ver::REQ_MATCHING_SYMBOLS {
+      return Err(IBKRError::Unsupported("Server version does not support matching symbols request.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMatchingSymbols as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    self.write_str_to_cursor(&mut cursor, pattern)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for market depth exchanges.
+  pub fn encode_request_mkt_depth_exchanges(&self) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request market depth exchanges");
+    if self.server_version < min_server_ver::REQ_MKT_DEPTH_EXCHANGES {
+      return Err(IBKRError::Unsupported("Server version does not support market depth exchanges request.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMktDepthExchanges as i32)?;
+    // No version field according to Java client
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for SMART routing components.
+  pub fn encode_request_smart_components(&self, req_id: i32, bbo_exchange: &str) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request smart components: ReqID={}, BBOExchange={}", req_id, bbo_exchange);
+    if self.server_version < min_server_ver::REQ_SMART_COMPONENTS {
+      return Err(IBKRError::Unsupported("Server version does not support smart components request.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestSmartComponents as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    self.write_str_to_cursor(&mut cursor, bbo_exchange)?; // Name of BBO exchange (e.g., ISLAND)
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for market rule details.
+  pub fn encode_request_market_rule(&self, market_rule_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request market rule: RuleID={}", market_rule_id);
+    if self.server_version < min_server_ver::MARKET_RULES {
+      return Err(IBKRError::Unsupported("Server version does not support market rule requests.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketRule as i32)?;
+    self.write_int_to_cursor(&mut cursor, market_rule_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
 } // end impl Encoder
