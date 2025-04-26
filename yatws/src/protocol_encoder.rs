@@ -7,7 +7,7 @@ use crate::contract::{Contract, ContractDetails, OptionRight, SecType, ComboLeg,
 use crate::order::{Order, OrderRequest, TimeInForce, OrderType, OrderSide, OrderState};
 use crate::account::{AccountInfo, ExecutionFilter};
 use crate::min_server_ver::min_server_ver;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, SecondsFormat};
 use log::{debug, trace, warn, error};
 use std::io::{self, Write};
 use num_traits::cast::ToPrimitive;
@@ -1912,5 +1912,99 @@ impl Encoder {
     self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
+
+  // --- News ---
+
+  /// Encodes a request for available news providers.
+  pub fn encode_request_news_providers(&self) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request news providers");
+    if self.server_version < min_server_ver::REQ_NEWS_PROVIDERS {
+      return Err(IBKRError::Unsupported("Server version does not support news provider requests.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestNewsProviders as i32)?;
+    // No version or parameters for this message
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for a specific news article's body.
+  pub fn encode_request_news_article(
+    &self,
+    req_id: i32,
+    provider_code: &str,
+    article_id: &str,
+    news_article_options: &[(String, String)], // TagValue list
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request news article: ReqID={}, Provider={}, ArticleID={}", req_id, provider_code, article_id);
+    if self.server_version < min_server_ver::REQ_NEWS_ARTICLE {
+      return Err(IBKRError::Unsupported("Server version does not support news article requests.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestNewsArticle as i32)?;
+    let version = 1; // Version supporting options
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    self.write_str_to_cursor(&mut cursor, provider_code)?;
+    self.write_str_to_cursor(&mut cursor, article_id)?;
+
+    if self.server_version >= min_server_ver::NEWS_QUERY_ORIGINS {
+      self.write_tag_value_list(&mut cursor, news_article_options)?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for historical news headlines.
+  pub fn encode_request_historical_news(
+    &self,
+    req_id: i32,
+    con_id: i32,
+    provider_codes: &str, // Comma-separated list (e.g., "BZ+FLY")
+    start_date_time: Option<DateTime<Utc>>,
+    end_date_time: Option<DateTime<Utc>>,
+    total_results: i32,
+    historical_news_options: &[(String, String)], // TagValue list
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request historical news: ReqID={}, ConID={}, Providers={}", req_id, con_id, provider_codes);
+    if self.server_version < min_server_ver::REQ_HISTORICAL_NEWS {
+      return Err(IBKRError::Unsupported("Server version does not support historical news requests.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestHistoricalNews as i32)?;
+    let version = 1; // Version supporting options
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    self.write_int_to_cursor(&mut cursor, con_id)?;
+    self.write_str_to_cursor(&mut cursor, provider_codes)?;
+    // Format dates as "yyyy-MM-dd HH:mm:ss.fff"
+    let start_str = start_date_time.map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true)).unwrap_or_default();
+    let end_str = end_date_time.map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true)).unwrap_or_default();
+    self.write_str_to_cursor(&mut cursor, &start_str)?;
+    self.write_str_to_cursor(&mut cursor, &end_str)?;
+    self.write_int_to_cursor(&mut cursor, total_results)?;
+
+    if self.server_version >= min_server_ver::NEWS_QUERY_ORIGINS {
+      self.write_tag_value_list(&mut cursor, historical_news_options)?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to subscribe to news bulletins.
+  pub fn encode_request_news_bulletins(&self, all_msgs: bool) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request news bulletins: AllMsgs={}", all_msgs);
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestNewsBulletins as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_bool_to_cursor(&mut cursor, all_msgs)?; // true = all bulletins, false = only new bulletins
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel news bulletin subscription.
+  pub fn encode_cancel_news_bulletins(&self) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel news bulletins");
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelNewsBulletins as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
 
 } // end impl Encoder

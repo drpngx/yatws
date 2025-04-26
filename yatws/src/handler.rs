@@ -13,7 +13,7 @@ use crate::data::{
   TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
   MarketDataTypeEnum, TickNewsData, MarketDepthRow
 };
-
+use crate::data::{NewsProvider, NewsArticleData, HistoricalNews, NewsBulletin};
 
 /// Meta messages such as errors and time.
 pub trait ClientHandler: Send + Sync {
@@ -245,8 +245,29 @@ pub trait FinancialDataHandler: Send + Sync {
 }
 
 pub trait NewsDataHandler: Send + Sync {
-  // fn tick_news(&self, req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str,
-  //              headline: &str, extra_data: &str);
+  /// Provides the list of available news providers.
+  fn news_providers(&self, providers: &[NewsProvider]);
+
+  /// Provides the content of a requested news article.
+  fn news_article(&self, req_id: i32, article_type: i32, article_text: &str);
+
+  /// Provides a historical news headline.
+  fn historical_news(&self, req_id: i32, time: &str, provider_code: &str, article_id: &str, headline: &str);
+
+  /// Indicates the end of a historical news request.
+  fn historical_news_end(&self, req_id: i32, has_more: bool);
+
+  /// Receives a real-time news bulletin update.
+  fn update_news_bulletin(
+    &self,
+    msg_id: i32,     // The bulletin ID, used to update or cancel
+    msg_type: i32,   // 1 = Regular, 2 = Exchange no longer available, 3 = Exchange is available
+    news_message: &str, // The bulletin text
+    origin_exch: &str, // The exchange of origin
+  );
+
+  /// Receives a news tick indicating a new headline.
+  fn tick_news(&self, req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str, headline: &str, extra_data: &str);
 }
 
 pub trait FinancialAdvisorHandler: Send + Sync {
@@ -254,7 +275,6 @@ pub trait FinancialAdvisorHandler: Send + Sync {
 
 struct Dummy {}
 impl FinancialAdvisorHandler for Dummy {}
-impl NewsDataHandler for Dummy {}
 impl FinancialDataHandler for Dummy {}
 
 pub struct MessageHandler {
@@ -275,7 +295,8 @@ impl MessageHandler {
              account: Arc<dyn AccountHandler>,
              order: Arc<dyn OrderHandler>,
              data_ref: Arc<dyn ReferenceDataHandler>,
-             data_market: Arc<dyn MarketDataHandler>) -> Self {
+             data_market: Arc<dyn MarketDataHandler>,
+             data_news: Arc<dyn NewsDataHandler>) -> Self {
     let dummy = Arc::new(Dummy {});
     MessageHandler {
       server_version,
@@ -284,8 +305,8 @@ impl MessageHandler {
       order,
       data_ref,
       data_market,
+      data_news,
       fin_adv: dummy.clone(),
-      data_news: dummy.clone(),
       data_fin: dummy.clone(),
     }
   }
