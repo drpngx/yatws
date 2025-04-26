@@ -1,4 +1,5 @@
 bazel-*
+target
 *.pyc
 rust-project.json
 IBJts

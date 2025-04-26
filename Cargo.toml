@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "yatws",
+]
+
+# Workspace-wide resolver settings
+resolver = "2"
