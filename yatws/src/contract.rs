@@ -144,31 +144,8 @@ pub struct Contract {
 
 impl Contract {
   pub fn new() -> Self {
-    Self {
-      con_id: 0,
-      symbol: String::new(),
-      sec_type: SecType::Stock,
-      last_trade_date_or_contract_month: None,
-      last_trade_date: None,
-      strike: None,
-      right: None,
-      multiplier: None,
-      exchange: String::new(),
-      primary_exchange: None,
-      currency: String::new(),
-      local_symbol: None,
-      trading_class: None,
-      sec_id_type: None,
-      sec_id: None,
-      description: None,
-      issuer_id: None,
-      delta_neutral_contract: None,
-      include_expired: false,
-      combo_legs_descrip: None,
-      combo_legs: Vec::new(),
-    }
+    Self::default()
   }
-
   /// Create a new stock contract
   pub fn stock(symbol: &str) -> Self {
     Self::stock_with_exchange(symbol, "SMART", "USD")
@@ -280,6 +257,34 @@ impl Contract {
     }
 
     sb
+  }
+}
+
+impl Default for Contract {
+  fn default() -> Contract {
+    Self {
+      con_id: 0,
+      symbol: String::new(),
+      sec_type: SecType::Stock,
+      last_trade_date_or_contract_month: None,
+      last_trade_date: None,
+      strike: None,
+      right: None,
+      multiplier: None,
+      exchange: String::new(),
+      primary_exchange: None,
+      currency: String::new(),
+      local_symbol: None,
+      trading_class: None,
+      sec_id_type: None,
+      sec_id: None,
+      description: None,
+      issuer_id: None,
+      delta_neutral_contract: None,
+      include_expired: false,
+      combo_legs_descrip: None,
+      combo_legs: Vec::new(),
+    }
   }
 }
 

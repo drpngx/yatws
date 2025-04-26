@@ -38,6 +38,7 @@ rust_library(
     edition = "2021",
     proc_macro_deps = [
         "@crates//:async-trait",
+        "@crates//:bitmask-enum",
     ],
     deps = [
         "@crates//:chrono",

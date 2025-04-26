@@ -6,8 +6,12 @@ use std::sync::Arc;
 use crate::order::{OrderRequest, OrderStatus, OrderState};
 use crate::account::Execution;
 use crate::contract::{
-  Contract, ContractDetails, SoftDollarTier, FamilyCode, ContractDescription,
+  Bar, Contract, ContractDetails, SoftDollarTier, FamilyCode, ContractDescription,
   DepthMktDataDescription, SmartComponent, MarketRule, HistoricalSession, PriceIncrement
+};
+use crate::data::{
+  TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
+  MarketDataTypeEnum, TickNewsData, MarketDepthRow
 };
 
 
@@ -183,6 +187,57 @@ pub trait ReferenceDataHandler: Send + Sync {
 
 /// Micro-structure: quotes etc.
 pub trait MarketDataHandler: Send + Sync {
+  // --- Tick Data ---
+  fn tick_price(&self, req_id: i32, tick_type: i32, price: f64, attrib: TickAttrib);
+  fn tick_size(&self, req_id: i32, tick_type: i32, size: f64); // Use f64 for Decimal size
+  fn tick_string(&self, req_id: i32, tick_type: i32, value: &str);
+  fn tick_generic(&self, req_id: i32, tick_type: i32, value: f64);
+  fn tick_efp(&self, req_id: i32, tick_type: i32, basis_points: f64, formatted_basis_points: &str,
+              implied_futures_price: f64, hold_days: i32, future_last_trade_date: &str,
+              dividend_impact: f64, dividends_to_last_trade_date: f64);
+  fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData);
+  fn tick_snapshot_end(&self, req_id: i32);
+  fn market_data_type(&self, req_id: i32, market_data_type: MarketDataTypeEnum);
+  fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32);
+
+  // --- Real Time Bars ---
+  fn real_time_bar(&self, req_id: i32, time: i64, open: f64, high: f64, low: f64, close: f64,
+                   volume: f64, wap: f64, count: i32); // Use f64 for Decimal volume/wap
+
+  // --- Historical Data ---
+  fn historical_data(&self, req_id: i32, bar: &Bar);
+  fn historical_data_update(&self, req_id: i32, bar: &Bar);
+  fn historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str);
+  fn historical_ticks(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool); // time, price, size
+  fn historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool); // time, attrib, priceBid, priceAsk, sizeBid, sizeAsk
+  fn historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool); // time, attrib, price, size, exchange, specialConditions
+
+  // --- Tick By Tick ---
+  fn tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: i64, price: f64, size: f64,
+                           tick_attrib_last: TickAttribLast, exchange: &str, special_conditions: &str);
+  fn tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64, bid_size: f64,
+                          ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk);
+  fn tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64);
+
+  // --- Market Depth ---
+  fn update_mkt_depth(&self, req_id: i32, position: i32, operation: i32, side: i32, price: f64, size: f64);
+  fn update_mkt_depth_l2(&self, req_id: i32, position: i32, market_maker: &str, operation: i32,
+                         side: i32, price: f64, size: f64, is_smart_depth: bool);
+
+  // --- Other Market Data ---
+  fn delta_neutral_validation(&self, req_id: i32, /* con_id: i32, delta: f64, price: f64 */); // Add DeltaNeutralContract if needed
+  fn histogram_data(&self, req_id: i32, /* items: &[(f64, f64)] */); // Add HistogramEntry if needed
+  fn scanner_parameters(&self, xml: &str);
+  fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, distance: &str,
+                  benchmark: &str, projection: &str, legs_str: Option<&str>);
+  fn scanner_data_end(&self, req_id: i32);
+
+  // --- Errors ---
+  fn market_data_error(&self, req_id: i32, error_code: i32, error_msg: &str); // Specific error callback
+
+  // --- Rerouting ---
+  fn reroute_mkt_data_req(&self, req_id: i32, con_id: i32, exchange: &str);
+  fn reroute_mkt_depth_req(&self, req_id: i32, con_id: i32, exchange: &str);
 }
 
 /// Fundamentals.
@@ -190,6 +245,8 @@ pub trait FinancialDataHandler: Send + Sync {
 }
 
 pub trait NewsDataHandler: Send + Sync {
+  // fn tick_news(&self, req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str,
+  //              headline: &str, extra_data: &str);
 }
 
 pub trait FinancialAdvisorHandler: Send + Sync {
@@ -197,7 +254,6 @@ pub trait FinancialAdvisorHandler: Send + Sync {
 
 struct Dummy {}
 impl FinancialAdvisorHandler for Dummy {}
-impl MarketDataHandler for Dummy {}
 impl NewsDataHandler for Dummy {}
 impl FinancialDataHandler for Dummy {}
 
@@ -218,7 +274,8 @@ impl MessageHandler {
              client: Arc<dyn ClientHandler>,
              account: Arc<dyn AccountHandler>,
              order: Arc<dyn OrderHandler>,
-             data_ref: Arc<dyn ReferenceDataHandler>) -> Self {
+             data_ref: Arc<dyn ReferenceDataHandler>,
+             data_market: Arc<dyn MarketDataHandler>) -> Self {
     let dummy = Arc::new(Dummy {});
     MessageHandler {
       server_version,
@@ -226,8 +283,8 @@ impl MessageHandler {
       account,
       order,
       data_ref,
+      data_market,
       fin_adv: dummy.clone(),
-      data_market: dummy.clone(),
       data_news: dummy.clone(),
       data_fin: dummy.clone(),
     }

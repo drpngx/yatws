@@ -1,6 +1,6 @@
 use crate::order_manager::OrderManager;
 use crate::account_manager::AccountManager;
-use crate::data_manager::DataRefManager;
+use crate::data_manager::{DataRefManager, DataMarketManager};
 use crate::conn::{Connection, SocketConnection, MessageBroker};
 use crate::conn_log::ConnectionLogger;
 use crate::conn_mock::MockConnection;
@@ -15,6 +15,7 @@ pub struct IBKRClient {
   order_mgr: Arc<OrderManager>,
   account_mgr: Arc<AccountManager>,
   data_ref_mgr: Arc<DataRefManager>,
+  data_market_mgr: Arc<DataMarketManager>,
 }
 
 impl IBKRClient {
@@ -29,9 +30,10 @@ impl IBKRClient {
     let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
     let data_ref_mgr = DataRefManager::new(message_broker.clone());
+    let data_market_mgr = DataMarketManager::new(message_broker.clone());
     let msg_handler = MessageHandler::new(server_version, client_mgr.clone(),
                                           account_mgr.clone(), order_mgr.clone(),
-                                          data_ref_mgr.clone());
+                                          data_ref_mgr.clone(), data_market_mgr.clone());
     message_broker.set_message_handler(msg_handler);
     order_init()?;
     Ok(IBKRClient {
@@ -39,6 +41,7 @@ impl IBKRClient {
       order_mgr,
       account_mgr,
       data_ref_mgr,
+      data_market_mgr,
     })
   }
 
@@ -51,9 +54,10 @@ impl IBKRClient {
     let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
     let data_ref_mgr = DataRefManager::new(message_broker.clone());
+    let data_market_mgr = DataMarketManager::new(message_broker.clone());
     let msg_handler = MessageHandler::new(server_version, client_mgr.clone(),
                                           account_mgr.clone(), order_mgr.clone(),
-                                          data_ref_mgr.clone());
+                                          data_ref_mgr.clone(), data_market_mgr.clone());
     message_broker.set_message_handler(msg_handler);
     order_init()?;
     Ok(IBKRClient {
@@ -61,6 +65,7 @@ impl IBKRClient {
       order_mgr,
       account_mgr,
       data_ref_mgr,
+      data_market_mgr,
     })
   }
 
@@ -78,6 +83,10 @@ impl IBKRClient {
 
   pub fn data_ref(&self) -> Arc<DataRefManager> {
     self.data_ref_mgr.clone()
+  }
+
+  pub fn data_market(&self) -> Arc<DataMarketManager> {
+    self.data_market_mgr.clone()
   }
 }
 

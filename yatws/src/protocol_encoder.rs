@@ -3,7 +3,7 @@
 
 use std::io::Cursor;
 use crate::base::IBKRError;
-use crate::contract::{Contract, ContractDetails, OptionRight, SecType, ComboLeg};
+use crate::contract::{Contract, ContractDetails, OptionRight, SecType, ComboLeg, WhatToShow, BarSize};
 use crate::order::{Order, OrderRequest, TimeInForce, OrderType, OrderSide, OrderState};
 use crate::account::{AccountInfo, ExecutionFilter};
 use crate::min_server_ver::min_server_ver;
@@ -1689,6 +1689,227 @@ impl Encoder {
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketRule as i32)?;
     self.write_int_to_cursor(&mut cursor, market_rule_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for real-time bars.
+  pub fn encode_request_real_time_bars(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    bar_size: i32, // Currently only 5 seconds is supported by API
+    what_to_show: &str, // TRADES, MIDPOINT, BID, ASK
+    use_rth: bool,
+    real_time_bars_options: &[(String, String)], // TagValue list
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request real time bars: ReqID={}, Contract={}, BarSize={}, What={}, RTH={}",
+           req_id, contract.symbol, bar_size, what_to_show, use_rth);
+
+    if self.server_version < min_server_ver::REAL_TIME_BARS {
+      return Err(IBKRError::Unsupported("Server version does not support real time bars.".to_string()));
+    }
+    // Bar size validation (API currently only supports 5 seconds)
+    if bar_size != 5 {
+      warn!("Requesting real-time bars with size {}. API currently only supports 5 seconds.", bar_size);
+      // Proceed anyway, TWS might handle it or return error
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestRealTimeBars as i32)?;
+    let version = 3; // Version supporting options
+
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // Encode contract fields (minimal set needed for real time bars)
+    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+
+    // Bar parameters
+    self.write_int_to_cursor(&mut cursor, bar_size)?; // Currently only 5 is supported
+    self.write_str_to_cursor(&mut cursor, what_to_show)?;
+    self.write_bool_to_cursor(&mut cursor, use_rth)?;
+
+    // Real time bar options (TagValue list)
+    if version >= 2 {
+      self.write_tag_value_list(&mut cursor, real_time_bars_options)?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel real-time bars.
+  pub fn encode_cancel_real_time_bars(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel real time bars: ReqID={}", req_id);
+    if self.server_version < min_server_ver::REAL_TIME_BARS {
+      return Err(IBKRError::Unsupported("Server version does not support real time bars cancellation.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelRealTimeBars as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for tick-by-tick data.
+  pub fn encode_request_tick_by_tick_data(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    tick_type: &str, // "Last", "AllLast", "BidAsk", "MidPoint"
+    number_of_ticks: i32, // Use 0 for streaming
+    ignore_size: bool, // True to ignore size filter, False to use size filter
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request tick-by-tick data: ReqID={}, Contract={}, Type={}, NumTicks={}, IgnoreSize={}",
+           req_id, contract.symbol, tick_type, number_of_ticks, ignore_size);
+
+    if self.server_version < min_server_ver::TICK_BY_TICK {
+      return Err(IBKRError::Unsupported("Server version does not support tick-by-tick data.".to_string()));
+    }
+    if number_of_ticks != 0 && self.server_version < min_server_ver::TICK_BY_TICK_IGNORE_SIZE {
+      return Err(IBKRError::Unsupported("Server version does not support historical tick-by-tick data.".to_string()));
+    }
+    if ignore_size && self.server_version < min_server_ver::TICK_BY_TICK_IGNORE_SIZE {
+      return Err(IBKRError::Unsupported("Server version does not support ignoreSize parameter for tick-by-tick data.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestTickByTickData as i32)?;
+    // No explicit version field for this message in Java EClient
+
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // Contract fields (minimal needed)
+    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+
+    // Tick-by-tick parameters
+    self.write_str_to_cursor(&mut cursor, tick_type)?;
+
+    if self.server_version >= min_server_ver::TICK_BY_TICK_IGNORE_SIZE {
+      self.write_int_to_cursor(&mut cursor, number_of_ticks)?; // 0 for streaming
+      self.write_bool_to_cursor(&mut cursor, ignore_size)?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel tick-by-tick data.
+  pub fn encode_cancel_tick_by_tick_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel tick-by-tick data: ReqID={}", req_id);
+    if self.server_version < min_server_ver::TICK_BY_TICK {
+      return Err(IBKRError::Unsupported("Server version does not support tick-by-tick data cancellation.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelTickByTickData as i32)?;
+    // No explicit version field
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for market depth (Level II).
+  pub fn encode_request_market_depth(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    num_rows: i32,
+    is_smart_depth: bool,
+    mkt_depth_options: &[(String, String)],
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request market depth: ReqID={}, Contract={}, Rows={}, Smart={}",
+           req_id, contract.symbol, num_rows, is_smart_depth);
+
+    if self.server_version < min_server_ver::REQ_MKT_DEPTH_EXCHANGES {
+      // Although REQ_MKT_DEPTH is older, options require newer version
+      if !mkt_depth_options.is_empty() {
+        return Err(IBKRError::Unsupported("Server version does not support market depth options. ".to_string()));
+      }
+    }
+    if is_smart_depth && self.server_version < min_server_ver::SMART_DEPTH {
+      return Err(IBKRError::Unsupported("Server version does not support SMART depth.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketDepth as i32)?;
+    let version = 5; // Version supporting isSmartDepth and options
+
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // Contract fields
+    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+
+    // Depth parameters
+    self.write_int_to_cursor(&mut cursor, num_rows)?;
+
+    if version >= 4 { // isSmartDepth introduced in v4
+      self.write_bool_to_cursor(&mut cursor, is_smart_depth)?;
+    }
+
+    if version >= 5 { // mktDepthOptions introduced in v5
+      self.write_tag_value_list(&mut cursor, mkt_depth_options)?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel market depth.
+  pub fn encode_cancel_market_depth(&self, req_id: i32, is_smart_depth: bool) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel market depth: ReqID={}, Smart={}", req_id, is_smart_depth);
+
+    if is_smart_depth && self.server_version < min_server_ver::SMART_DEPTH {
+      return Err(IBKRError::Unsupported("Server version does not support SMART depth cancellation.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelMarketDepth as i32)?;
+    let version = 1; // Version supporting isSmartDepth
+
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    if version >= 1 { // isSmartDepth added in v1 of cancel msg
+      self.write_bool_to_cursor(&mut cursor, is_smart_depth)?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel historical data.
+  pub fn encode_cancel_historical_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel historical data: ReqID={}", req_id);
+    if self.server_version < 24 { // Version check from Java EClientSocket
+      return Err(IBKRError::Unsupported("Server version does not support historical data cancellation.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelHistoricalData as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
 
