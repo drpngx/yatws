@@ -472,9 +472,7 @@ impl OrderBuilder {
   }
   pub fn limit_on_open(mut self, limit_price: f64) -> Self {
     self = self.limit(limit_price);
-    // TIF needs to be OPG, handled externally or enum extended
-    log::warn!("Limit on Open requires TIF 'OPG'. Ensure OrderRequest.tif is set appropriately if needed.");
-    self.order.time_in_force = TimeInForce::Day; // Placeholder TIF
+    self.order.time_in_force = TimeInForce::MarketOnOpen;
     self.tif_set = true;
     self
   }
@@ -487,9 +485,7 @@ impl OrderBuilder {
   }
   pub fn market_on_open(mut self) -> Self {
     self = self.market();
-    // TIF needs to be OPG, handled externally or enum extended
-    log::warn!("Market on Open requires TIF 'OPG'. Ensure OrderRequest.tif is set appropriately if needed.");
-    self.order.time_in_force = TimeInForce::Day; // Placeholder TIF
+    self.order.time_in_force = TimeInForce::MarketOnOpen;
     self.tif_set = true;
     self
   }
