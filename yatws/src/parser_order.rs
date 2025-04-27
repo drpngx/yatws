@@ -941,7 +941,6 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   }
 }
 
-/// Process next valid ID message
 pub fn process_next_valid_id(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?; // Version is typically 1
   let id = parser.read_int()?;

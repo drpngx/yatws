@@ -26,23 +26,27 @@ pub struct HistoricalNews {
   pub headline: String,
 }
 
-/// News article
+/// Represents a news article, typically received via streaming updates (tick_news).
 #[derive(Debug, Clone)]
 pub struct NewsArticle {
+  /// A unique identifier, possibly combining provider and article ID.
   pub id: String,
+  /// Timestamp of the article.
   pub time: DateTime<Utc>,
+  /// News provider code (e.g., "BZ", "FLY").
   pub provider_code: String,
+  /// The provider's unique ID for the article.
   pub article_id: String,
+  /// The headline text.
   pub headline: String,
-  pub summary: Option<String>,
-  pub content: Option<String>,
-}
-
-/// News subscription
-#[derive(Debug, Clone)]
-pub struct NewsSubscription {
-  pub id: String,
-  pub sources: Vec<String>,
+  // --- Fields below are typically NOT available from tick_news or historical_news headlines ---
+  // pub summary: Option<String>, // Would require parsing article_text if available
+  /// Full content, only available via get_news_article (in NewsArticleData).
+  pub content: Option<String>, // Usually None for streamed headlines
+  /// Type of article (0=text, 1=HTML), only from get_news_article.
+  pub article_type: Option<i32>, // Usually None for streamed headlines
+  // Add extra_data from tick_news if needed
+  pub extra_data: Option<String>,
 }
 
 /// News observer trait

@@ -11,14 +11,14 @@ use crate::data::{
   HistoricalDataRequestState, TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
   MarketDataTypeEnum, MarketDepthRow, TickByTickData,
 };
-use crate::news::{NewsProvider, NewsArticleData, HistoricalNews};
+use crate::news::{NewsProvider, NewsArticle, NewsArticleData, HistoricalNews, NewsObserver};
 use crate::data_wsh::WshEventDataRequest;
 use crate::handler::{ReferenceDataHandler, MarketDataHandler, NewsDataHandler, FinancialDataHandler};
 use crate::protocol_encoder::Encoder;
-use parking_lot::{Condvar, Mutex};
+use parking_lot::{Condvar, Mutex, RwLock};
 use chrono::{Utc, TimeZone};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::Duration;
 use log::{debug, info, trace, warn};
 
@@ -1528,7 +1528,7 @@ impl MarketDataHandler for DataMarketManager {
   }
 }
 
-// --- DataRefManager ---
+// --- DataNewsManager ---
 // --- State for Pending News Requests ---
 #[derive(Debug, Default)]
 struct NewsRequestState {
@@ -1548,6 +1548,8 @@ pub struct DataNewsManager {
   message_broker: Arc<MessageBroker>,
   request_states: Mutex<HashMap<i32, NewsRequestState>>,
   request_cond: Condvar,
+  // --- Observer list ---
+  observers: RwLock<Vec<Weak<dyn NewsObserver>>>,
 }
 
 impl DataNewsManager {
@@ -1556,8 +1558,49 @@ impl DataNewsManager {
       message_broker,
       request_states: Mutex::new(HashMap::new()),
       request_cond: Condvar::new(),
+      // --- Initialize observer list ---
+      observers: RwLock::new(Vec::new()),
     })
   }
+
+  // --- Add observer management methods ---
+
+  /// Registers an observer to receive streaming news updates.
+  /// Observers are held weakly.
+  pub fn add_observer(&self, observer: Arc<dyn NewsObserver>) {
+      let mut observers = self.observers.write();
+      // Avoid adding duplicates if observer is already present (optional check)
+      if observers.iter().all(|weak| weak.strong_count() == 0 || !Arc::ptr_eq(&weak.upgrade().unwrap(), &observer)) {
+          debug!("Adding news observer");
+          observers.push(Arc::downgrade(&observer));
+      } else {
+          debug!("News observer already present, not adding again.");
+      }
+      // Clean up dead observers while we have write lock
+      observers.retain(|weak| weak.strong_count() > 0);
+  }
+
+  // Optional: Add remove_observer or clear_observers if needed
+
+  /// Clears all registered news observers.
+  pub fn clear_observers(&self) {
+      debug!("Clearing all news observers");
+      let mut observers = self.observers.write();
+      observers.clear();
+  }
+
+  // --- Helper to notify observers ---
+  fn notify_observers(&self, article: &NewsArticle) {
+      let observers = self.observers.read();
+      for weak_observer in observers.iter() {
+          if let Some(observer) = weak_observer.upgrade() {
+              trace!("Notifying observer about news article: {}", article.id);
+              observer.on_news_article(article);
+          }
+          // No cleanup here, do it during add/remove or periodically
+      }
+  }
+
 
   // --- Helper to wait for completion ---
   fn wait_for_completion<F, R>(
@@ -1766,6 +1809,18 @@ impl NewsDataHandler for DataNewsManager {
       state.news_article = Some(NewsArticleData { req_id, article_type, article_text: article_text.to_string() });
       info!("News article received for request {}. Notifying waiter.", req_id);
       self.request_cond.notify_all();
+      // Optionally, create a NewsArticle and notify observers, but lacks metadata
+      // let article = NewsArticle {
+      //     id: format!("{}-{}", "unknown", req_id), // No provider/article ID here
+      //     time: Utc::now(), // No timestamp provided
+      //     provider_code: "unknown".to_string(),
+      //     article_id: req_id.to_string(), // Use req_id as placeholder?
+      //     headline: format!("Article ReqID {}", req_id), // Placeholder
+      //     content: Some(article_text.to_string()),
+      //     article_type: Some(article_type),
+      //     extra_data: None,
+      // };
+      // self.notify_observers(&article);
     } else {
       warn!("Received news article for unknown or completed request ID: {}", req_id);
     }
@@ -1799,15 +1854,42 @@ impl NewsDataHandler for DataNewsManager {
   }
 
   fn update_news_bulletin(&self, msg_id: i32, msg_type: i32, news_message: &str, origin_exch: &str) {
-    // This is streaming data - typically logged or passed to a real-time observer
+    // This is streaming data - log or pass to observer
     info!("Handler: News Bulletin Update: ID={}, Type={}, Origin={}, Msg='{}'", msg_id, msg_type, origin_exch, news_message);
-    // No state update in the manager for blocking calls needed here.
+    // Attempt to parse into a NewsArticle if desired, format is unstructured.
+    // Example: Might look for patterns, but highly unreliable.
+    // Let's create a basic article and notify.
+    let article = NewsArticle {
+        id: format!("BULLETIN/{}", msg_id), // Create a unique ID
+        time: Utc::now(), // Timestamp is arrival time
+        provider_code: origin_exch.to_string(), // Use origin exchange as provider?
+        article_id: msg_id.to_string(),
+        headline: format!("Bulletin Type {}: {}", msg_type, news_message.chars().take(50).collect::<String>()), // Truncate msg for headline
+        content: Some(news_message.to_string()), // Full message as content
+        article_type: Some(0), // Assume plain text
+        extra_data: Some(format!("Origin: {}, Type: {}", origin_exch, msg_type)),
+    };
+    self.notify_observers(&article);
   }
 
-  fn tick_news(&self, req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str, headline: &str, _extra_data: &str) {
-    // This is streaming data - typically logged or passed to a real-time observer
-    info!("Handler: Tick News: ReqID={}, Time={}, Provider={}, Article={}, Headline='{}'", req_id, time_stamp, provider_code, article_id, headline);
-    // No state update in the manager for blocking calls needed here.
+  fn tick_news(&self, _req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str, headline: &str, extra_data: &str) {
+    // This is streaming data -> Notify observers
+    if let Some(time) = Utc.timestamp_opt(time_stamp, 0).single() {
+        let article = NewsArticle {
+            id: format!("{}/{}", provider_code, article_id), // Combine for unique ID
+            time,
+            provider_code: provider_code.to_string(),
+            article_id: article_id.to_string(),
+            headline: headline.to_string(),
+            content: None, // Content not available from tick
+            article_type: None, // Type not available from tick
+            extra_data: Some(extra_data.to_string()).filter(|s| !s.is_empty()), // Only store if non-empty
+        };
+        debug!("Handler: Tick News -> Notifying observers: {}", article.id);
+        self.notify_observers(&article);
+    } else {
+        warn!("Failed to parse timestamp {} for tick news", time_stamp);
+    }
   }
 }
 
