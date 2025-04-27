@@ -7,7 +7,7 @@ use crate::message_parser::process_message;
 use crate::conn_log::LogDirection;
 
 use parking_lot::Mutex;
-use rusqlite::{params, Connection as DbConnection, Result as SqlResult, Row, Statement};
+use rusqlite::{params, Connection as DbConnection};
 use std::path::Path;
 use std::sync::Arc;
 use std::str::FromStr;
@@ -57,7 +57,6 @@ struct LoggedMessage {
 // --- Mock Connection Implementation ---
 struct MockConnectionState {
   db_conn: Option<DbConnection>,
-  session_id: i64,
   server_version: i32,
   logged_messages: Vec<LoggedMessage>,
   message_iter_index: usize,
@@ -163,7 +162,7 @@ impl MockConnection {
     log::info!("Creating MockConnection for session '{}' from DB: {:?} (Strict SEND Check, AutoPump)",
                session_name, db_path.as_ref());
 
-    let mut db = DbConnection::open(db_path)
+    let db = DbConnection::open(db_path)
       .map_err(|e| IBKRError::ConfigurationError(format!("Mock: Failed to open logger DB: {}", e)))?;
 
     let (session_id, server_version_opt): (i64, Option<i32>) = db.query_row(
@@ -213,7 +212,6 @@ impl MockConnection {
 
     let inner_state = MockConnectionState {
       db_conn: Some(db),
-      session_id,
       server_version,
       logged_messages,
       message_iter_index: 0,

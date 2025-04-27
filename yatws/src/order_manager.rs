@@ -5,7 +5,7 @@ use std::time::Duration;
 use chrono::Utc;
 use log::{debug, error, info, warn};
 
-use crate::order::{Order, OrderRequest, OrderUpdates, OrderState, OrderStatus, TimeInForce};
+use crate::order::{Order, OrderRequest, OrderUpdates, OrderState, OrderStatus};
 use crate::contract::Contract;
 use crate::conn::MessageBroker;
 use crate::base::IBKRError;
@@ -383,7 +383,7 @@ impl OrderManager {
             book.get(order_id).map(|o| (o.read().state.status, o.read().state.error.clone()))
           };
           match final_state_after_timeout {
-            Some((status, Some(err))) => return Err(err), // Return error if found
+            Some((_status, Some(err))) => return Err(err), // Return error if found
             Some((status, None)) if target_statuses.contains(&status) => return Ok(status), // Return success if target met concurrently
             Some((status, None)) if status.is_terminal() => return Err(IBKRError::InvalidOrder(format!("Order {} terminated in state {:?} unexpectedly on timeout while waiting for {:?}", order_id, status, target_statuses))),
             _ => return Err(IBKRError::Timeout(format!("Timeout waiting for order {} status ({:?})", order_id, target_statuses))), // Return timeout error
@@ -748,7 +748,6 @@ impl OrderHandler for OrderManager {
     };
 
     if let Some(order_arc) = order_arc {
-      let order_clone;
       { // Scope write lock
         let mut order = order_arc.write();
         // Mark order as errored. Often implies cancellation or rejection.
@@ -761,7 +760,6 @@ impl OrderHandler for OrderManager {
         order.state.error = Some(ibkr_error.clone());
         order.updated_at = Utc::now();
         debug!("Marked order {} with error: {:?} -> {:?}", order_id_str, previous_status, order.state.status);
-        order_clone = order.clone();
       } // release lock
 
       self.notify_observers_error(&order_id_str, &ibkr_error); // Notify observers
@@ -816,7 +814,7 @@ impl OrderHandler for OrderManager {
   fn completed_order(
     &self,
     contract: &Contract,
-    order_request: &OrderRequest,
+    _order_request: &OrderRequest,
     order_state: &OrderState,
   ) {
     // CompletedOrder message lacks the client order ID. Correlation is difficult.

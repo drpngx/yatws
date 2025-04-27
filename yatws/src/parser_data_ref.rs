@@ -1,14 +1,14 @@
 // yatws/src/parser_data_ref.rs
 use std::str::FromStr;
 use std::sync::Arc;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use crate::handler::ReferenceDataHandler;
 use crate::base::IBKRError;
 use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time};
 use crate::contract::{
-  BondDetails, Contract, ContractDetails, SecType, OptionRight, SecIdType, SoftDollarTier, FamilyCode,
-  ContractDescription, DepthMktDataDescription, PriceIncrement, MarketRule,
-  HistoricalSession, ComboLeg, TagValue
+  BondDetails, Contract, ContractDetails, SecType, OptionRight, SoftDollarTier, FamilyCode,
+  ContractDescription, DepthMktDataDescription, PriceIncrement,
+  HistoricalSession, TagValue
 };
 use crate::min_server_ver::min_server_ver;
 use log::{debug, warn};

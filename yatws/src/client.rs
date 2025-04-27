@@ -5,7 +5,6 @@ use crate::conn::{Connection, SocketConnection, MessageBroker};
 use crate::conn_log::ConnectionLogger;
 use crate::conn_mock::MockConnection;
 use crate::base::IBKRError;
-use parking_lot::RwLock;
 use std::sync::Arc;
 use mgr::ClientManager;
 use crate::handler::MessageHandler;
@@ -115,7 +114,7 @@ mod mgr {
   use crate::handler::ClientHandler; // Import the trait we will implement
   use chrono::{DateTime, TimeZone, Utc};
   use log::{debug, error, info, warn};
-  use parking_lot::{RwLock, Mutex, Condvar, WaitTimeoutResult};
+  use parking_lot::{Mutex, Condvar};
   use crate::protocol_encoder::Encoder;
   use std::time::Duration;
   use std::sync::atomic::{AtomicBool, Ordering};

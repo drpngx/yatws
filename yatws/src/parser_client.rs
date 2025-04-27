@@ -5,7 +5,6 @@ use crate::handler::ClientHandler;
 
 use crate::base::IBKRError;
 use crate::protocol_dec_parser::FieldParser;
-use crate::protocol_decoder::IncomingMessageType; // Import message type enum
 use log::warn;
 
 /// Process an error message (Type 4)

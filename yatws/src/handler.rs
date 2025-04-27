@@ -1,19 +1,18 @@
 // yatws/src/handler.rs
 // Handlers for events parsed from the server.
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::order::{OrderRequest, OrderStatus, OrderState};
 use crate::account::Execution;
 use crate::contract::{
   Bar, Contract, ContractDetails, SoftDollarTier, FamilyCode, ContractDescription,
-  DepthMktDataDescription, SmartComponent, MarketRule, HistoricalSession, PriceIncrement
+  DepthMktDataDescription, HistoricalSession, PriceIncrement
 };
 use crate::data::{
   TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
-  MarketDataTypeEnum, TickNewsData, MarketDepthRow
+  MarketDataTypeEnum,
 };
-use crate::data::{NewsProvider, NewsArticleData, HistoricalNews, NewsBulletin};
+use crate::news::NewsProvider;
 
 /// Meta messages such as errors and time.
 pub trait ClientHandler: Send + Sync {

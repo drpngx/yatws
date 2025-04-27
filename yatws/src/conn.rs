@@ -1,10 +1,9 @@
 // yatws/src/conn.rs
 
-use std::fmt;
 use crate::base::IBKRError;
 use crate::handler::MessageHandler;
 pub use socket::SocketConnection;
-use parking_lot::{RwLock, Mutex}; // Keep parking_lot Mutex for connection
+use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -99,7 +98,9 @@ mod socket {
   // --- SocketConnection Structs ---
   #[derive(Clone)]
   pub struct SocketConnection {
+    #[allow(dead_code)]
     host: String,
+    #[allow(dead_code)]
     port: u16,
     client_id: i32,
     inner_state: Arc<PLMutex<SocketConnectionInner>>,
@@ -112,6 +113,7 @@ mod socket {
   // Inner state holds the potentially mutable parts
   struct SocketConnectionInner {
     server_version: i32,
+    #[allow(dead_code)]
     connection_time: String,
     connected: bool,
     h3_sent: bool,
@@ -217,7 +219,7 @@ mod socket {
     pub fn new(host: &str, port: u16, client_id: i32, logger: Option<ConnectionLogger>) -> Result<Self, IBKRError> {
       info!("Initiating connection to TWS at {}:{}", host, port);
 
-      let (mut stream, server_version, connection_time) = Self::connect_h1_h2(host, port)?;
+      let (stream, server_version, connection_time) = Self::connect_h1_h2(host, port)?;
 
       if let Some(ref logr) = logger {
         logr.set_session_server_version(server_version);

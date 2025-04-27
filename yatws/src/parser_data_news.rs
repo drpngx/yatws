@@ -5,7 +5,7 @@ use crate::handler::NewsDataHandler;
 use crate::base::IBKRError;
 use crate::protocol_dec_parser::FieldParser;
 
-use crate::data::{NewsProvider, NewsArticleData, HistoricalNews, NewsBulletin};
+use crate::news::NewsProvider;
 use log::debug;
 
 /// Process news article message

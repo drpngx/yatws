@@ -2,6 +2,7 @@
 // Minimum server version constants for the IBKR API
 
 /// Minimum server versions for specific functionality
+#[allow(dead_code)]
 pub mod min_server_ver {
   pub const REAL_TIME_BARS: i32 = 34;
   pub const SCALE_ORDERS: i32 = 35;

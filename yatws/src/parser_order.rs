@@ -1,11 +1,10 @@
 // yatws/src/parser_order.rs
 use std::sync::Arc;
-use chrono::{DateTime, Utc}; // Added DateTime
 use std::str::FromStr;
 use crate::base::IBKRError;
 use crate::protocol_dec_parser::FieldParser;
 use crate::contract::{Contract, OptionRight, SecType, DeltaNeutralContract, ComboLeg}; // Added DeltaNeutralContract, ComboLeg
-use crate::order::{Order, OrderState, OrderStatus, OrderType, OrderSide, TimeInForce, OrderRequest, OrderUpdates}; // Added OrderState, OrderStatus, OrderUpdates
+use crate::order::{OrderState, OrderStatus, OrderType, OrderSide, TimeInForce, OrderRequest}; // Added OrderState, OrderStatus, OrderUpdates
 use crate::min_server_ver::min_server_ver;
 use log::{debug, warn}; // Added warn
 use crate::handler::OrderHandler;
@@ -749,7 +748,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       let conditions_count = self.parser.read_int()?;
       if conditions_count > 0 {
         let mut conditions_data = Vec::with_capacity(conditions_count as usize);
-        for i in 0..conditions_count {
+        for _i in 0..conditions_count {
           // --- Simplified condition reading ---
           // Read type, then skip a fixed number of fields as a placeholder.
           // This is HIGHLY UNRELIABLE. A proper implementation needs detailed logic per type.
@@ -941,154 +940,6 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
     self.parser.remaining_fields()
   }
 }
-
-// --- Helper to read common contract fields ---
-fn read_contract_fields(parser: &mut FieldParser, msg_version: i32, server_version: i32) -> Result<Contract, IBKRError> {
-  let mut contract = Contract::new();
-
-  if server_version >= min_server_ver::CONTRACT_CONID {
-    contract.con_id = parser.read_int()?;
-  }
-  contract.symbol = parser.read_string()?;
-  let sec_type_str = parser.read_string()?;
-  contract.sec_type = SecType::from_str(&sec_type_str).unwrap_or(SecType::Stock);
-  let expiry = parser.read_string()?;
-  if !expiry.is_empty() {
-    contract.last_trade_date_or_contract_month = Some(expiry);
-  }
-  let strike = parser.read_double()?;
-  if strike != 0.0 {
-    contract.strike = Some(strike);
-  }
-  let right_str = parser.read_string()?;
-  if !right_str.is_empty() && right_str != "?" {
-    contract.right = match right_str.to_uppercase().as_str() {
-      "C" | "CALL" => Some(OptionRight::Call),
-      "P" | "PUT" => Some(OptionRight::Put),
-      _ => { warn!("Unknown option right string: {}", right_str); None }
-    };
-  }
-  if msg_version >= 32 { // Multiplier specific to OpenOrder v32+
-    let multiplier = parser.read_string()?;
-    if !multiplier.is_empty() { contract.multiplier = Some(multiplier); }
-  }
-  contract.exchange = parser.read_string()?;
-  contract.currency = parser.read_string()?;
-  if msg_version >= 2 { // LocalSymbol specific to OpenOrder v2+
-    let local_symbol = parser.read_string()?;
-    if !local_symbol.is_empty() { contract.local_symbol = Some(local_symbol); }
-  }
-  if server_version >= min_server_ver::TRADING_CLASS {
-    let trading_class = parser.read_string()?;
-    if !trading_class.is_empty() { contract.trading_class = Some(trading_class); }
-  }
-  if server_version >= min_server_ver::SEC_ID_TYPE {
-    let sec_id_type_str = parser.read_string()?;
-    contract.sec_id_type = crate::contract::SecIdType::from_str(&sec_id_type_str).ok();
-    let sec_id = parser.read_string()?;
-    if !sec_id.is_empty() { contract.sec_id = Some(sec_id); }
-  }
-  Ok(contract)
-}
-
-// --- Helper to read common order request fields ---
-fn read_order_request_fields(parser: &mut FieldParser, msg_version: i32, server_version: i32) -> Result<OrderRequest, IBKRError> {
-  let mut order_request = OrderRequest::default();
-  let action_str = parser.read_string()?;
-  order_request.side = match action_str.as_str() {
-    "BUY" => OrderSide::Buy, "SELL" => OrderSide::Sell, "SSHORT" => OrderSide::SellShort,
-    _ => { warn!("Unknown order side/action string: {}", action_str); return Err(IBKRError::ParseError(format!("Unknown order side: {}", action_str))); }
-  };
-  if server_version >= min_server_ver::FRACTIONAL_POSITIONS {
-    let qty_str = parser.read_string()?;
-    order_request.quantity = qty_str.parse().map_err(|e| IBKRError::ParseError(format!("Failed to parse fractional quantity '{}': {}", qty_str, e)))?;
-  } else {
-    order_request.quantity = parser.read_int()? as f64;
-  }
-  let order_type_str = parser.read_string()?;
-  order_request.order_type = OrderType::from_str(&order_type_str).unwrap_or_else(|_| { warn!("Unknown order type string: {}", order_type_str); OrderType::None });
-  let tif_str = parser.read_string()?;
-  order_request.time_in_force = TimeInForce::from_str(&tif_str).unwrap_or_else(|_| { warn!("Unknown TimeInForce string: {}", tif_str); TimeInForce::Day });
-  order_request.oca_group = Some(parser.read_string()?).filter(|s| !s.is_empty());
-  order_request.account = Some(parser.read_string()?).filter(|s| !s.is_empty());
-  if msg_version >= 7 {
-    order_request.open_close = Some(parser.read_string()?).filter(|s| !s.is_empty());
-    order_request.origin = parser.read_int()?;
-  }
-  order_request.order_ref = Some(parser.read_string()?).filter(|s| !s.is_empty());
-  if msg_version >= 4 { order_request.transmit = parser.read_bool()?; }
-  if msg_version >= 5 { order_request.parent_id = Some(parser.read_int()? as i64).filter(|&id| id != 0); }
-  if msg_version >= 6 {
-    order_request.block_order = parser.read_bool()?;
-    order_request.sweep_to_fill = parser.read_bool()?;
-    order_request.display_size = Some(parser.read_int()?).filter(|&ds| ds > 0);
-    order_request.trigger_method = Some(parser.read_int()?).filter(|&tm| tm >= 0);
-    order_request.outside_rth = parser.read_bool()?;
-  }
-  if msg_version >= 7 { order_request.hidden = parser.read_bool()?; }
-  if msg_version >= 8 {
-    let gat_str = parser.read_string()?;
-    if !gat_str.is_empty() { warn!("Parsing for GoodAfterTime ('{}') not implemented.", gat_str); /* TODO */ }
-  }
-  if msg_version >= 9 {
-    let gtd_str = parser.read_string()?;
-    if !gtd_str.is_empty() { warn!("Parsing for GoodTillDate ('{}') not implemented.", gtd_str); /* TODO */ }
-  }
-  if msg_version >= 10 {
-    order_request.rule_80a = Some(parser.read_string()?).filter(|s| !s.is_empty());
-    order_request.all_or_none = parser.read_bool()?;
-    order_request.min_quantity = Some(parser.read_int()?).filter(|&mq| mq > 0);
-    order_request.percent_offset = parser.read_double().ok().filter(|&po| po != f64::MAX);
-  }
-  if msg_version >= 13 {
-    order_request.fa_group = Some(parser.read_string()?).filter(|s| !s.is_empty());
-    order_request.fa_method = Some(parser.read_string()?).filter(|s| !s.is_empty());
-    order_request.fa_percentage = Some(parser.read_string()?).filter(|s| !s.is_empty());
-  }
-  // LmtPrice / AuxPrice position varies. Read them after FA fields for versions >= ~20
-  if msg_version >= 20 { // Need to confirm exact version
-    order_request.limit_price = parser.read_double().ok().filter(|&p| p != f64::MAX);
-    order_request.aux_price = parser.read_double().ok().filter(|&p| p != f64::MAX);
-  } else if msg_version < 4 { // Very old versions
-    order_request.limit_price = parser.read_double().ok().filter(|&p| p != f64::MAX);
-    order_request.aux_price = parser.read_double().ok().filter(|&p| p != f64::MAX);
-  }
-  // TODO: Parse TrailStopPrice, TrailingPercent, ShortSaleSlot, DiscretionaryAmt, etc. based on msg_version
-  Ok(order_request)
-}
-
-// --- Helper to read common OrderState fields ---
-fn read_order_state_fields(parser: &mut FieldParser, msg_version: i32, server_version: i32) -> Result<OrderState, IBKRError> {
-  let mut order_state = OrderState::default();
-  order_state.status = parse_order_status(&parser.read_string()?);
-  if msg_version >= 2 {
-    order_state.initial_margin_before = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-    order_state.maintenance_margin_before = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-    order_state.equity_with_loan_before = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-  }
-  if msg_version >= 10 { // Verify version
-    order_state.initial_margin_change = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-    order_state.maintenance_margin_change = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-    order_state.equity_with_loan_change = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-  }
-  if msg_version >= 3 { // Verify version
-    order_state.initial_margin_after = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-    order_state.maintenance_margin_after = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-    order_state.equity_with_loan_after = Some(parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
-  }
-  if msg_version >= 10 { // Verify version
-    order_state.commission = parser.read_double().ok().filter(|&c| c != f64::MAX);
-    order_state.min_commission = parser.read_double().ok().filter(|&c| c != f64::MAX);
-    order_state.max_commission = parser.read_double().ok().filter(|&c| c != f64::MAX);
-    order_state.commission_currency = Some(parser.read_string()?).filter(|s| !s.is_empty());
-  }
-  if msg_version >= 14 { // Verify version
-    order_state.warning_text = Some(parser.read_string()?).filter(|s| !s.is_empty());
-  }
-  // CompletedTime/Status are read specifically in process_completed_order if present
-  Ok(order_state)
-}
-
 
 /// Process next valid ID message
 pub fn process_next_valid_id(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
@@ -1380,7 +1231,7 @@ pub fn process_completed_order<'a>(
 }
 
 /// Process completed orders end message
-pub fn process_completed_orders_end(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_completed_orders_end(handler: &Arc<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   // let _version = parser.read_int()?; // If version added later
   debug!("Parsed Completed Orders End");
   handler.completed_orders_end(); // Call handler

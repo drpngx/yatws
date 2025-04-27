@@ -4,23 +4,23 @@ use crate::base::IBKRError;
 use crate::conn::MessageBroker;
 use crate::contract::{
   Bar, Contract, ContractDetails, SecType, SoftDollarTier, FamilyCode, ContractDescription,
-  DepthMktDataDescription, SmartComponent, MarketRule, PriceIncrement, HistoricalSession,
+  DepthMktDataDescription, MarketRule, PriceIncrement, HistoricalSession,
 };
 use crate::data::{
   MarketDataSubscription, RealTimeBarSubscription, TickByTickSubscription, MarketDepthSubscription,
   HistoricalDataRequestState, TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
   MarketDataTypeEnum, MarketDepthRow, TickByTickData,
-  NewsProvider, NewsArticleData, HistoricalNews,
 };
+use crate::news::{NewsProvider, NewsArticleData, HistoricalNews};
 use crate::data_wsh::WshEventDataRequest;
 use crate::handler::{ReferenceDataHandler, MarketDataHandler, NewsDataHandler, FinancialDataHandler};
 use crate::protocol_encoder::Encoder;
-use parking_lot::{Condvar, Mutex, RwLock};
+use parking_lot::{Condvar, Mutex};
 use chrono::{Utc, TimeZone};
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
-use log::{debug, error, info, trace, warn};
+use log::{debug, info, trace, warn};
 
 
 // --- State for Pending Requests ---
@@ -70,7 +70,7 @@ struct DataRefRequestState {
 }
 
 #[derive(Debug, Clone)]
-struct SecDefOptParamsResult {
+pub struct SecDefOptParamsResult {
   exchange: String,
   underlying_con_id: i32,
   trading_class: String,
@@ -994,7 +994,7 @@ impl DataMarketManager {
     use_rth: bool,
     format_date: i32, // 1 for yyyyMMdd HH:mm:ss, 2 for system time (seconds)
     keep_up_to_date: bool, // Subscribe to updates after initial load
-    chart_options: &[(String, String)], // TagValue list
+    _chart_options: &[(String, String)], // TagValue list
   ) -> Result<Vec<Bar>, IBKRError> {
     info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}",
           contract.symbol, duration_str, bar_size_setting, what_to_show);
@@ -1190,9 +1190,9 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn tick_efp(&self, req_id: i32, tick_type: i32, basis_points: f64, formatted_basis_points: &str,
-              implied_futures_price: f64, hold_days: i32, future_last_trade_date: &str,
-              dividend_impact: f64, dividends_to_last_trade_date: f64) {
+  fn tick_efp(&self, req_id: i32, tick_type: i32, basis_points: f64, _formatted_basis_points: &str,
+              _implied_futures_price: f64, _hold_days: i32, _future_last_trade_date: &str,
+              _dividend_impact: f64, _dividends_to_last_trade_date: f64) {
     trace!("Handler: Tick EFP: ID={}, Type={}, BasisPts={}", req_id, tick_type, basis_points);
     // EFP data doesn't typically fit into the standard MarketDataSubscription fields.
     // An observer pattern or dedicated callback might be better here.
@@ -1228,7 +1228,7 @@ impl MarketDataHandler for DataMarketManager {
     // Store the type in all relevant subscription types?
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
       state.market_data_type = Some(market_data_type);
-    } else if let Some(MarketSubscription::MarketDepth(state)) = subs.get_mut(&req_id) {
+    } else if let Some(MarketSubscription::MarketDepth(_state)) = subs.get_mut(&req_id) {
       // Market depth might also care about frozen status
       // state.market_data_type = Some(market_data_type); // Add field if needed
     }
@@ -1498,8 +1498,8 @@ impl MarketDataHandler for DataMarketManager {
     // Usually handled by a one-off request, not stored in subscription state.
   }
 
-  fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, distance: &str,
-                  benchmark: &str, projection: &str, legs_str: Option<&str>) {
+  fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, _distance: &str,
+                  _benchmark: &str, _projection: &str, _legs_str: Option<&str>) {
     trace!("Handler: Scanner Data Row: ID={}, Rank={}, Symbol={}", req_id, rank, contract_details.contract.symbol);
     // Needs state management if scanner results are tracked.
   }
@@ -1804,7 +1804,7 @@ impl NewsDataHandler for DataNewsManager {
     // No state update in the manager for blocking calls needed here.
   }
 
-  fn tick_news(&self, req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str, headline: &str, extra_data: &str) {
+  fn tick_news(&self, req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str, headline: &str, _extra_data: &str) {
     // This is streaming data - typically logged or passed to a real-time observer
     info!("Handler: Tick News: ReqID={}, Time={}, Provider={}, Article={}, Headline='{}'", req_id, time_stamp, provider_code, article_id, headline);
     // No state update in the manager for blocking calls needed here.

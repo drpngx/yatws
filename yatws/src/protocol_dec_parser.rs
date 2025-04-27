@@ -133,6 +133,9 @@ impl<'a> FieldParser<'a> {
     }
   }
 
+  #[allow(dead_code)]
+  pub fn curpos(&self) -> usize { self.pos }
+
   /// Read a string field
   pub fn read_string(&mut self) -> Result<String, IBKRError> {
     if self.current_field >= self.fields.len() {
@@ -244,6 +247,7 @@ impl<'a> FieldParser<'a> {
     // if val == f64::MAX { Ok(None) } else { Ok(Some(val)) }
   }
 
+  #[allow(dead_code)]
   pub fn read_i64_max(&mut self) -> Result<Option<i64>, IBKRError> {
     let val = self.read_i64()?;
     if val == i64::MAX {

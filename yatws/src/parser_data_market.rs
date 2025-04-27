@@ -1,13 +1,12 @@
 // yatws/src/parser_data_market.rs
 use std::sync::Arc;
-use chrono::{DateTime, NaiveDateTime, Utc, TimeZone}; // Added TimeZone
+use chrono::{Utc, TimeZone}; // Added TimeZone
 use crate::handler::MarketDataHandler;
 use crate::base::IBKRError;
-use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time}; // Added parse_tws_date_time
-use crate::contract::{ContractDetails, OptionRight, Bar, SecType, Contract}; // Added Contract
-use crate::data::{TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataTypeEnum, TickOptionComputationData, TickNewsData}; // Added new types
+use crate::protocol_dec_parser::FieldParser;
+use crate::contract::{ContractDetails, OptionRight, Bar, SecType}; // Added Contract
+use crate::data::{TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataTypeEnum, TickOptionComputationData}; // Added new types
 use crate::min_server_ver::min_server_ver; // Added min_server_ver
-use bitmask_enum::bitmask;
 use std::str::FromStr;
 
 

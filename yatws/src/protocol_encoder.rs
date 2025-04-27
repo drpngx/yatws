@@ -3,16 +3,14 @@
 
 use std::io::Cursor;
 use crate::base::IBKRError;
-use crate::contract::{Contract, ContractDetails, OptionRight, SecType, ComboLeg, WhatToShow, BarSize};
-use crate::order::{Order, OrderRequest, TimeInForce, OrderType, OrderSide, OrderState};
-use crate::account::{AccountInfo, ExecutionFilter};
+use crate::contract::{Contract, SecType, ComboLeg};
+use crate::order::{OrderRequest, OrderType};
+use crate::account::ExecutionFilter;
 use crate::data_wsh::WshEventDataRequest;
 use crate::min_server_ver::min_server_ver;
 use chrono::{DateTime, Utc, SecondsFormat};
-use log::{debug, trace, warn, error};
-use std::io::{self, Write};
-use num_traits::cast::ToPrimitive;
-use std::collections::HashMap;
+use log::{debug, trace, warn};
+use std::io::Write;
 
 /// Message tags for outgoing messages
 #[repr(i32)]
@@ -331,7 +329,7 @@ impl Encoder {
 
   // --- Helper methods (start_encoding, finish_encoding, write_*, etc.) ---
   fn start_encoding(&self, msg_type: i32) -> Result<Cursor<Vec<u8>>, IBKRError> {
-    let mut buffer = Vec::new();
+    let buffer = Vec::new();
     let mut cursor = Cursor::new(buffer);
     self.write_int_to_cursor(&mut cursor, msg_type)?;
     Ok(cursor)
@@ -1362,7 +1360,7 @@ impl Encoder {
     // Note: The delta/price fields are sent later in the Order part based on version
     // This part just sends the DN contract identification fields.
     if self.server_version >= min_server_ver::DELTA_NEUTRAL_CONID {
-      if let Some(dn) = &contract.delta_neutral_contract {
+      if let Some(_dn) = &contract.delta_neutral_contract {
         if self.server_version >= min_server_ver::PLACE_ORDER_CONID { // Check if DN fields belong here
           // DN conId, delta, price might be sent later in the order part
         } else {
@@ -1642,7 +1640,7 @@ impl Encoder {
     if self.server_version < min_server_ver::REQ_FAMILY_CODES {
       return Err(IBKRError::Unsupported("Server version does not support family codes request.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestFamilyCodes as i32)?;
+    let cursor = self.start_encoding(OutgoingMessageType::RequestFamilyCodes as i32)?;
     // No version field according to Java client
     Ok(self.finish_encoding(cursor))
   }
@@ -1665,7 +1663,7 @@ impl Encoder {
     if self.server_version < min_server_ver::REQ_MKT_DEPTH_EXCHANGES {
       return Err(IBKRError::Unsupported("Server version does not support market depth exchanges request.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMktDepthExchanges as i32)?;
+    let cursor = self.start_encoding(OutgoingMessageType::RequestMktDepthExchanges as i32)?;
     // No version field according to Java client
     Ok(self.finish_encoding(cursor))
   }
@@ -1922,7 +1920,7 @@ impl Encoder {
     if self.server_version < min_server_ver::REQ_NEWS_PROVIDERS {
       return Err(IBKRError::Unsupported("Server version does not support news provider requests.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestNewsProviders as i32)?;
+    let cursor = self.start_encoding(OutgoingMessageType::RequestNewsProviders as i32)?;
     // No version or parameters for this message
     Ok(self.finish_encoding(cursor))
   }

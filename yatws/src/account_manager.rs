@@ -4,12 +4,11 @@ use crate::account::{AccountInfo, AccountState, AccountValue, Position, AccountO
 use crate::base::IBKRError;
 use crate::contract::Contract;
 use crate::handler::AccountHandler;
-use crate::order::OrderSide;
 use crate::conn::MessageBroker;
-use parking_lot::{RwLock, Mutex, Condvar, WaitTimeoutResult};
+use parking_lot::{RwLock, Mutex, Condvar};
 use crate::protocol_encoder::Encoder;
 
-use chrono::{DateTime, Utc, TimeZone};
+use chrono::{Utc, TimeZone};
 use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::sync::{Arc};
@@ -69,7 +68,7 @@ impl AccountManager {
   }
 
   // --- Helper to get specific account value ---
-  fn get_account_value(&self, key: &str) -> Result<Option<AccountValue>, IBKRError> {
+  pub fn get_account_value(&self, key: &str) -> Result<Option<AccountValue>, IBKRError> {
     // read() returns the guard directly
     let state = self.account_state.read();
     // Optional: Check for poison if needed: if state.is_poisoned() { ... }
@@ -109,12 +108,12 @@ impl AccountManager {
         .and_then(|v| v.value.parse::<f64>().ok())
         .unwrap_or_else(|| { warn!("Failed to parse '{}', using 0.0", key); 0.0 })
     };
-    let parse_int_or_err = |key: &str| -> Result<i32, IBKRError> {
-      state.values.get(key)
-        .ok_or_else(|| IBKRError::InternalError(format!("Key '{}' not found in account values", key)))?
-        .value.parse::<i32>()
-        .map_err(|e| IBKRError::ParseError(format!("Failed to parse value for key '{}': {}", key, e)))
-    };
+    // let parse_int_or_err = |key: &str| -> Result<i32, IBKRError> {
+    //   state.values.get(key)
+    //     .ok_or_else(|| IBKRError::InternalError(format!("Key '{}' not found in account values", key)))?
+    //     .value.parse::<i32>()
+    //     .map_err(|e| IBKRError::ParseError(format!("Failed to parse value for key '{}': {}", key, e)))
+    // };
     let parse_int_or_minus_one = |key: &str| -> i32 {
       state.values.get(key)
         .and_then(|v| v.value.parse::<i32>().ok())
@@ -211,7 +210,7 @@ impl AccountManager {
     let wait_timeout = Duration::from_secs(20); // Adjust timeout as needed
     let commission_grace_period = Duration::from_secs(2); // Time to wait for commissions after end signal
     let start_time = std::time::Instant::now();
-    let mut final_results = Vec::new();
+    let final_results: Vec<_>;
 
     { // Scope for locking and waiting
       let mut exec_state = self.executions_state.lock();
@@ -820,7 +819,7 @@ impl AccountHandler for AccountManager {
     self.check_and_notify_account_update();
   }
 
-  fn pnl_single(&self, _req_id: i32, pos_idx: i32, daily_pnl: f64, unrealized_pnl: Option<f64>, realized_pnl: Option<f64>, value: f64) {
+  fn pnl_single(&self, _req_id: i32, pos_idx: i32, _daily_pnl: f64, _unrealized_pnl: Option<f64>, _realized_pnl: Option<f64>, _value: f64) {
     warn!("Handler: PnLSingle received - updating position by index '{}' is not reliably implemented. Use PortfolioValue updates.", pos_idx);
     // This message provides PnL for a position identified by its index (pos_idx) in the TWS portfolio monitor.
     // Matching this index to a contract ID reliably is difficult without maintaining the exact order TWS uses.

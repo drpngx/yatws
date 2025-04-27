@@ -2,13 +2,13 @@
 
 use crate::base::IBKRError;
 use crate::protocol_decoder::IncomingMessageType;
-use crate::protocol_encoder::{self, OutgoingMessageType}; // Use the encoder's identify function
+use crate::protocol_encoder;
 
-use rusqlite::{params, Connection as DbConnection, OptionalExtension, Result as SqlResult};
+use rusqlite::{params, Connection as DbConnection};
 use std::fmt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use once_cell::sync::Lazy; // Using once_cell for the map
 use std::collections::HashMap;
 
@@ -308,7 +308,7 @@ impl ConnectionLogger {
     // (Parsing logic remains the same)
     let message_type_id = parse_message_type_id(payload);
     let message_type_name = match direction {
-      LogDirection::Send => message_type_id.and_then(|id| {
+      LogDirection::Send => message_type_id.and_then(|_id| {
         protocol_encoder::identify_outgoing_type(payload)
       }),
       LogDirection::Recv => message_type_id.and_then(|id| {
@@ -319,7 +319,7 @@ impl ConnectionLogger {
 
     // (Locking and insertion logic remains mostly the same)
     match self.inner.lock() {
-      Ok(mut guard) => {
+      Ok(guard) => {
         let now_instant = Instant::now();
         let relative_timestamp_s = now_instant
           .duration_since(guard.start_time_instant)

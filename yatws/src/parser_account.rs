@@ -353,25 +353,25 @@ pub fn process_commission_report(handler: &Arc<dyn AccountHandler>, parser: &mut
   Ok(())
 }
 
-pub fn process_position_multi(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_position_multi(_handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing PositionMulti not implemented yet.");
   // Implementation would parse position multi message and call handler.position_multi()
   Ok(())
 }
 
-pub fn process_position_multi_end(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_position_multi_end(_handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing PositionMultiEnd not implemented yet.");
   // Implementation would parse position multi end message and call handler.position_multi_end()
   Ok(())
 }
 
-pub fn process_account_update_multi(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_account_update_multi(_handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing AccountUpdateMulti not implemented yet.");
   // Implementation would parse account update multi message and call handler.account_update_multi()
   Ok(())
 }
 
-pub fn process_account_update_multi_end(handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
+pub fn process_account_update_multi_end(_handler: &Arc<dyn AccountHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
   log::warn!("Parsing AccountUpdateMultiEnd not implemented yet.");
   // Implementation would parse account update multi end message and call handler.account_update_multi_end()
   Ok(())
@@ -386,7 +386,7 @@ pub fn process_execution_data(
 
   // Version Handling: Java EClientSocket reads version *only* if server < LAST_LIQUIDITY.
   // Otherwise, it assumes version >= 7. Let's replicate this.
-  let mut msg_version = server_version; // Assume high version initially
+  let msg_version = server_version; // Assume high version initially
 
   let mut req_id = -1; // Default for messages before version 7
   if msg_version >= 7 {
@@ -461,12 +461,9 @@ pub fn process_execution_data(
     ev_rule = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails EvRule: {}", e)))?;
     ev_multiplier = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails EvMultiplier: {}", e)))?;
   }
-  let mut model_code = None;
-  model_code = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails ModelCode: {}", e)))?;
-  let mut last_liquidity = None;
-  last_liquidity = parser.read_int_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails LastLiquidity: {}", e)))?;
-  let mut pending_price_revision = None;
-  pending_price_revision = parser.read_bool().map_err(|e| IBKRError::ParseError(format!("ExecDetails PendingPriceRevision: {}", e)))?.into();
+  let model_code = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails ModelCode: {}", e)))?;
+  let last_liquidity = parser.read_int_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails LastLiquidity: {}", e)))?;
+  let pending_price_revision = parser.read_bool().map_err(|e| IBKRError::ParseError(format!("ExecDetails PendingPriceRevision: {}", e)))?.into();
 
   log::debug!("Parsed Execution Detail: ExecID={}, OrderID={}, Account={}, Symbol={}, Side={}, Qty={}, Price={}, Time={}",
               execution_id, order_id, account_id, contract.symbol, side_str, quantity, price, time_str);
