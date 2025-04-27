@@ -39,6 +39,7 @@ pub mod client;
 pub mod handler;
 pub mod conn;
 pub mod order;
+pub mod data_wsh;  // For now, we just provide the structs.
 
 pub use order_builder::OrderBuilder;
 pub use base::IBKRError;

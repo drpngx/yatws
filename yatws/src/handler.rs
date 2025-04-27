@@ -242,6 +242,17 @@ pub trait MarketDataHandler: Send + Sync {
 
 /// Fundamentals.
 pub trait FinancialDataHandler: Send + Sync {
+  /// Provides fundamental data requested via `reqFundamentalData`.
+  /// The `data` string is typically XML or other formatted text.
+  fn fundamental_data(&self, req_id: i32, data: &str);
+
+  /// Provides Wall Street Horizon metadata requested via `reqWshMetaData`.
+  /// The `data_json` is expected to be a JSON string.
+  fn wsh_meta_data(&self, req_id: i32, data_json: &str);
+
+  /// Provides a Wall Street Horizon event data update requested via `reqWshEventData`.
+  /// The `data_json` is expected to be a JSON string representing one event.
+  fn wsh_event_data(&self, req_id: i32, data_json: &str);
 }
 
 pub trait NewsDataHandler: Send + Sync {
@@ -275,7 +286,6 @@ pub trait FinancialAdvisorHandler: Send + Sync {
 
 struct Dummy {}
 impl FinancialAdvisorHandler for Dummy {}
-impl FinancialDataHandler for Dummy {}
 
 pub struct MessageHandler {
   server_version: i32,
@@ -296,7 +306,8 @@ impl MessageHandler {
              order: Arc<dyn OrderHandler>,
              data_ref: Arc<dyn ReferenceDataHandler>,
              data_market: Arc<dyn MarketDataHandler>,
-             data_news: Arc<dyn NewsDataHandler>) -> Self {
+             data_news: Arc<dyn NewsDataHandler>,
+             data_fin: Arc<dyn FinancialDataHandler>) -> Self {
     let dummy = Arc::new(Dummy {});
     MessageHandler {
       server_version,
@@ -306,8 +317,8 @@ impl MessageHandler {
       data_ref,
       data_market,
       data_news,
+      data_fin,
       fin_adv: dummy.clone(),
-      data_fin: dummy.clone(),
     }
   }
   // TODO: move this to ClientManager.

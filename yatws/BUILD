@@ -13,6 +13,7 @@ rust_library(
         "src/account.rs",
         "src/news.rs",
         "src/data.rs",
+        "src/data_wsh.rs",
         "src/protocol_encoder.rs",
         "src/protocol_decoder.rs",
         "src/protocol_dec_parser.rs",

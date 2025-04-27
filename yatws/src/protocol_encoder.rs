@@ -6,6 +6,7 @@ use crate::base::IBKRError;
 use crate::contract::{Contract, ContractDetails, OptionRight, SecType, ComboLeg, WhatToShow, BarSize};
 use crate::order::{Order, OrderRequest, TimeInForce, OrderType, OrderSide, OrderState};
 use crate::account::{AccountInfo, ExecutionFilter};
+use crate::data_wsh::WshEventDataRequest;
 use crate::min_server_ver::min_server_ver;
 use chrono::{DateTime, Utc, SecondsFormat};
 use log::{debug, trace, warn, error};
@@ -2006,5 +2007,171 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
+  // --- Fundamental Data ---
 
+  /// Encodes a request for fundamental data.
+  pub fn encode_request_fundamental_data(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    report_type: &str, // e.g., "ReportsFinSummary", "ReportSnapshot", "RESC", "CalendarReport"
+    fundamental_data_options: &[(String, String)], // TagValue list (added in v3)
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request fundamental data: ReqID={}, Contract={}, ReportType={}", req_id, contract.symbol, report_type);
+
+    if self.server_version < min_server_ver::FUNDAMENTAL_DATA {
+      return Err(IBKRError::Unsupported("Server version does not support fundamental data requests.".to_string()));
+    }
+    let version = if self.server_version >= min_server_ver::FUND_DATA_FIELDS { 3 } else { 2 }; // Version 3 adds options
+    if version < 3 && !fundamental_data_options.is_empty() {
+      warn!("Fundamental data options provided but server version {} does not support them (requires v{} / FUND_DATA_FIELDS). Options ignored.", self.server_version, min_server_ver::FUND_DATA_FIELDS);
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestFundamentalData as i32)?;
+
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // Contract fields (minimal set needed, match Java client)
+    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?; // Version 2+ requires conId
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
+
+    // Report type
+    self.write_str_to_cursor(&mut cursor, report_type)?;
+
+    // Fundamental data options (TagValue list - Added in version 3)
+    if version >= 3 {
+      self.write_tag_value_list(&mut cursor, fundamental_data_options)?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel fundamental data.
+  pub fn encode_cancel_fundamental_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel fundamental data: ReqID={}", req_id);
+    if self.server_version < min_server_ver::FUNDAMENTAL_DATA {
+      return Err(IBKRError::Unsupported("Server version does not support fundamental data cancellation.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelFundamentalData as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  // --- Wall Street Horizon (WSH) ---
+
+  /// Encodes a request for WSH metadata.
+  pub fn encode_request_wsh_meta_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request WSH metadata: ReqID={}", req_id);
+    if self.server_version < min_server_ver::WSHE_CALENDAR {
+      return Err(IBKRError::UpdateTws(format!(
+        "It does not support WSHE Calendar API. Server version {}, requires {}",
+        self.server_version, min_server_ver::WSHE_CALENDAR
+      )));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestWshMetaData as i32)?;
+    // No version field
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel WSH metadata.
+  pub fn encode_cancel_wsh_meta_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel WSH metadata: ReqID={}", req_id);
+    if self.server_version < min_server_ver::WSHE_CALENDAR {
+      return Err(IBKRError::UpdateTws(format!(
+        "It does not support WSHE Calendar API. Server version {}, requires {}",
+        self.server_version, min_server_ver::WSHE_CALENDAR
+      )));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelWshMetaData as i32)?;
+    // No version field
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for WSH event data.
+  pub fn encode_request_wsh_event_data(
+    &self,
+    req_id: i32,
+    wsh_event_data: &WshEventDataRequest, // Use the defined struct
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request WSH event data: ReqID={}, Filters={:?}", req_id, wsh_event_data);
+
+    if self.server_version < min_server_ver::WSHE_CALENDAR {
+      return Err(IBKRError::UpdateTws(format!(
+        "It does not support WSHE Calendar API. Server version {}, requires {}",
+        self.server_version, min_server_ver::WSHE_CALENDAR
+      )));
+    }
+
+    // Check filter support based on version
+    if self.server_version < min_server_ver::WSH_EVENT_DATA_FILTERS {
+      if wsh_event_data.filter.is_some() || wsh_event_data.fill_watchlist || wsh_event_data.fill_portfolio || wsh_event_data.fill_competitors {
+        return Err(IBKRError::UpdateTws(format!(
+          "It does not support WSH event data filters. Server version {}, requires {}",
+          self.server_version, min_server_ver::WSH_EVENT_DATA_FILTERS
+        )));
+      }
+    }
+
+    if self.server_version < min_server_ver::WSH_EVENT_DATA_FILTERS_DATE {
+      if wsh_event_data.start_date.is_some() || wsh_event_data.end_date.is_some() || wsh_event_data.total_limit != Some(i32::MAX) {
+        // Note: Java checks against Integer.MAX_VALUE. We check against Some(i32::MAX).
+        // If total_limit is None, it's equivalent to MAX_VALUE not being sent.
+        // Let's adjust the check slightly: allow None or Some(i32::MAX) if version < FILTERS_DATE
+        if wsh_event_data.start_date.is_some() || wsh_event_data.end_date.is_some() || (wsh_event_data.total_limit.is_some() && wsh_event_data.total_limit != Some(i32::MAX)) {
+          return Err(IBKRError::UpdateTws(format!(
+            "It does not support WSH event data date filters. Server version {}, requires {}",
+            self.server_version, min_server_ver::WSH_EVENT_DATA_FILTERS_DATE
+          )));
+        }
+      }
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestWshEventData as i32)?;
+    // No explicit version field sent
+
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    // Send conId, default to 0 if None
+    self.write_int_to_cursor(&mut cursor, wsh_event_data.con_id.unwrap_or(0))?;
+
+    if self.server_version >= min_server_ver::WSH_EVENT_DATA_FILTERS {
+      self.write_optional_str_to_cursor(&mut cursor, wsh_event_data.filter.as_deref())?;
+      self.write_bool_to_cursor(&mut cursor, wsh_event_data.fill_watchlist)?;
+      self.write_bool_to_cursor(&mut cursor, wsh_event_data.fill_portfolio)?;
+      self.write_bool_to_cursor(&mut cursor, wsh_event_data.fill_competitors)?;
+    }
+
+    if self.server_version >= min_server_ver::WSH_EVENT_DATA_FILTERS_DATE {
+      self.write_optional_str_to_cursor(&mut cursor, wsh_event_data.start_date.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, wsh_event_data.end_date.as_deref())?;
+      // Send totalLimit, default to i32::MAX if None (matching Java MAX_VALUE behavior)
+      self.write_int_to_cursor(&mut cursor, wsh_event_data.total_limit.unwrap_or(i32::MAX))?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel WSH event data.
+  pub fn encode_cancel_wsh_event_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel WSH event data: ReqID={}", req_id);
+    if self.server_version < min_server_ver::WSHE_CALENDAR {
+      return Err(IBKRError::UpdateTws(format!(
+        "It does not support WSHE Calendar API. Server version {}, requires {}",
+        self.server_version, min_server_ver::WSHE_CALENDAR
+      )));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelWshEventData as i32)?;
+    // No version field
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
 } // end impl Encoder

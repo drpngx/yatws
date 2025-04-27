@@ -43,6 +43,7 @@ def ComponentFiles(comp):
       'yatws/src/data_manager.rs',
       'yatws/src/account_manager.rs',
       'yatws/src/data.rs',
+      'yatws/src/data_wsh.rs',
       'yatws/src/client.rs'
     ],
     'tcp': [
