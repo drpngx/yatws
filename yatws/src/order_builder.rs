@@ -744,7 +744,8 @@ impl OrderBuilder {
 
     // 2. Basic Order checks
     if self.order.quantity <= 0.0 && self.order.cash_qty.is_none() {
-      return Err(IBKRError::InvalidOrder("Order quantity or cash quantity must be positive.".to_string()));
+      return Err(IBKRError::InvalidOrder(
+        std::format!("Order quantity or cash quantity must be positive, got: {}.", self.order.quantity)));
     }
     if self.order.quantity > 0.0 && self.order.cash_qty.is_some() {
       log::warn!("Both quantity ({}) and cash_qty ({:?}) are set. Typically only one should be used. Quantity will likely be ignored by TWS if cash_qty is present.", self.order.quantity, self.order.cash_qty);
