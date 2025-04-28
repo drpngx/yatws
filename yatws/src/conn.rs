@@ -7,8 +7,7 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-// Import the logger
-use crate::conn_log::{ConnectionLogger, LogDirection}; // Assuming conn_log is in crate::
+use crate::conn_log::{ConnectionLogger, LogDirection, bytes_to_center_dot_string};
 
 #[derive(Clone)]
 pub struct MessageBroker {
@@ -44,6 +43,7 @@ impl MessageBroker {
     }
 
     log::debug!("MessageBroker sending message ({} bytes)", message_body.len());
+    log::trace!("  Message: {}", bytes_to_center_dot_string(message_body));
     let mut conn_guard = self.connection.lock();
     conn_guard.send_message_body(message_body) // Send after logging
   }

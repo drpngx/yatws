@@ -336,6 +336,37 @@ mod test_cases {
     Ok(())
   }
 
+  pub(super) fn current_price_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Get Current Price (Quote) ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("SPY"); // Test with SPY stock
+    let timeout = Duration::from_secs(10); // Set a reasonable timeout
+
+    info!("Requesting quote for {} with timeout {:?}", contract.symbol, timeout);
+
+    match data_mgr.get_quote(&contract, timeout) {
+        Ok((bid, ask, last)) => {
+            info!("Successfully received quote for {}:", contract.symbol);
+            info!("  Bid:  {:?}", bid);
+            info!("  Ask:  {:?}", ask);
+            info!("  Last: {:?}", last);
+            // Basic validation: Check if at least one price is received.
+            // In replay mode, we might get None if the log doesn't contain the ticks.
+            // In live mode, we expect some prices unless the market is closed/illiquid.
+            if bid.is_none() && ask.is_none() && last.is_none() {
+                warn!("Received quote, but all prices were None.");
+                // Decide if this should be an error or just a warning.
+                // For now, let's treat it as success as long as the call didn't error out.
+            }
+            Ok(())
+        }
+        Err(e) => {
+            error!("Failed to get quote for {}: {:?}", contract.symbol, e);
+            Err(e.into())
+        }
+    }
+  }
+
   // --- Helper for Order Test ---
   fn attempt_cleanup(client: &IBKRClient, contract: &Contract) -> Result<()> {
     warn!("Attempting emergency cleanup for SPY position...");
@@ -389,6 +420,7 @@ inventory::submit! { TestDefinition { name: "account-details", func: test_cases:
 inventory::submit! { TestDefinition { name: "order-market", func: test_cases::order_market_impl } }
 inventory::submit! { TestDefinition { name: "order-limit", func: test_cases::order_limit_impl } }
 inventory::submit! { TestDefinition { name: "order-many", func: test_cases::order_many_impl } }
+inventory::submit! { TestDefinition { name: "current-price", func: test_cases::current_price_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 
 

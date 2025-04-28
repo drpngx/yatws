@@ -107,7 +107,7 @@ static INCOMING_TYPE_MAP: Lazy<HashMap<i32, &'static str>> = Lazy::new(|| {
 
 // --- Helper Functions ---
 // (Keep bytes_to_center_dot_string and parse_message_type_id as is)
-fn bytes_to_center_dot_string(bytes: &[u8]) -> String {
+pub(crate) fn bytes_to_center_dot_string(bytes: &[u8]) -> String {
   let mut modified_bytes = Vec::with_capacity(bytes.len());
   for &byte in bytes {
     if byte == 0 {

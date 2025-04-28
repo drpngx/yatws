@@ -121,33 +121,50 @@ impl DataMarketManager {
     let mut guard = self.subscriptions.lock();
 
     loop {
-      // 1. Check if complete *before* waiting
+      // 1. Check state *before* waiting
       let maybe_result = if let Some(MarketSubscription::TickData(state)) = guard.get(&req_id) {
-        if state.quote_received {
-          // Quote marked as complete (snapshot end or error)
-          if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
-            Some(Err(IBKRError::ApiError(code, msg.clone())))
-          } else {
-            // Success, return whatever data we have
-            Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+          // Prioritize checking for an explicit completion signal (snapshot_end or error)
+          if state.quote_received {
+              debug!("Quote request {} marked complete (quote_received=true).", req_id);
+              if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+                  // Completed due to error
+                  Some(Err(IBKRError::ApiError(code, msg.clone())))
+              } else {
+                  // Completed successfully (snapshot_end), return whatever data we have
+                  Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+              }
           }
-        } else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
-          // Alternative success condition: all required prices received (might happen before snapshot_end)
-          Some(Ok((state.bid_price, state.ask_price, state.last_price)))
-        } else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
-          // Error occurred before completion signal
-          Some(Err(IBKRError::ApiError(code, msg.clone())))
-        } else {
-          None // Not complete, no error yet
-        }
+          // If not explicitly complete, check if we received an error anyway
+          else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+              debug!("Error found for quote request {} before completion signal.", req_id);
+              Some(Err(IBKRError::ApiError(code, msg.clone())))
+          }
+          // If not complete and no error, check if we have all required prices (alternative success)
+          // This can happen if ticks arrive before snapshot_end
+          else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
+              debug!("All required prices received for quote request {} before completion signal.", req_id);
+              Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+          }
+          // Otherwise, still waiting
+          else {
+              None
+          }
       } else {
-        // State missing or wrong type - internal error
-        Some(Err(IBKRError::InternalError(format!("Quote request state for {} missing or invalid during wait", req_id))))
+          // State missing or wrong type - internal error
+          Some(Err(IBKRError::InternalError(format!("Quote request state for {} missing or invalid during wait", req_id))))
       };
 
       match maybe_result {
-        Some(Ok(result)) => { guard.remove(&req_id); return Ok(result); },
-        Some(Err(e)) => { guard.remove(&req_id); return Err(e); },
+        Some(Ok(result)) => {
+            debug!("Quote request {} successful, removing state.", req_id);
+            guard.remove(&req_id);
+            return Ok(result);
+        },
+        Some(Err(e)) => {
+            debug!("Quote request {} failed, removing state. Error: {:?}", req_id, e);
+            guard.remove(&req_id);
+            return Err(e);
+        },
         None => {} // Not complete, continue
       }
 
@@ -162,904 +179,916 @@ impl DataMarketManager {
       // 3. Wait
       let wait_result = self.request_cond.wait_for(&mut guard, remaining_timeout);
 
-      // 4. Handle timeout after wait (re-check state)
+      // 4. Handle timeout after wait (re-check state one last time)
       if wait_result.timed_out() {
-        let final_check = if let Some(MarketSubscription::TickData(state)) = guard.get(&req_id) {
-          if state.quote_received { // Check completion flag first
-            if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
-              Some(Err(IBKRError::ApiError(code, msg.clone())))
-            } else {
-              Some(Ok((state.bid_price, state.ask_price, state.last_price)))
-            }
-          } else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
-            Some(Ok((state.bid_price, state.ask_price, state.last_price)))
-          } else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
-            Some(Err(IBKRError::ApiError(code, msg.clone())))
-          } else { None } // Still not complete
-        } else { None }; // State gone
+          debug!("Wait timed out for quote request {}. Performing final state check.", req_id);
+          let final_check = if let Some(MarketSubscription::TickData(state)) = guard.get(&req_id) {
+              // Check completion flag first
+              if state.quote_received {
+                  if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+                      Some(Err(IBKRError::ApiError(code, msg.clone())))
+                  } else {
+                      Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+                  }
+              }
+              // Check error flag
+              else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+                  Some(Err(IBKRError::ApiError(code, msg.clone())))
+              }
+              // Check if all prices arrived just before timeout
+              else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
+                  Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+              }
+              // Otherwise, it's a genuine timeout
+              else { None }
+          } else { None }; // State gone
 
-        guard.remove(&req_id); // Clean up state regardless
-        match final_check {
-          Some(Ok(result)) => return Ok(result),
-          Some(Err(e)) => return Err(e),
-          None => return Err(Timeout(format!("Quote request {} timed out after wait", req_id))),
-        }
+          guard.remove(&req_id); // Clean up state regardless
+          return match final_check {
+              Some(Ok(result)) => {
+                  warn!("Quote request {} completed successfully just before timeout.", req_id);
+                  Ok(result)
+              },
+              Some(Err(e)) => {
+                  warn!("Quote request {} failed with error just before timeout: {:?}", req_id, e);
+                  Err(e)
+              },
+              None => Err(Timeout(format!("Quote request {} timed out after wait", req_id))),
+          };
       }
-      // If not timed out, loop continues
+      // If not timed out, loop continues to re-check state
     }
   }
-
 
   // --- Public API Methods ---
 
   /// Requests streaming market data (ticks). Non-blocking. Returns req_id.
   pub fn request_market_data(
+    &self,
+    contract: &Contract,
+    generic_tick_list: &str, // e.g., "100,101,104,106,165,233,236,258"
+    snapshot: bool,
+    regulatory_snapshot: bool, // Requires TWS 963+
+    mkt_data_options: &[(String, String)], // TagValue list
+  ) -> Result<i32, IBKRError> {
+    info!("Requesting market data: Contract={}, Snapshot={}, RegSnapshot={}", contract.symbol, snapshot, regulatory_snapshot);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
 
-    /// Requests streaming market data (ticks). Non-blocking. Returns req_id.
-    pub fn request_market_data(
-      &self,
-      contract: &Contract,
-      generic_tick_list: &str, // e.g., "100,101,104,106,165,233,236,258"
-      snapshot: bool,
-      regulatory_snapshot: bool, // Requires TWS 963+
-      mkt_data_options: &[(String, String)], // TagValue list
-    ) -> Result<i32, IBKRError> {
-      info!("Requesting market data: Contract={}, Snapshot={}, RegSnapshot={}", contract.symbol, snapshot, regulatory_snapshot);
-      let req_id = self.message_broker.next_request_id();
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_request_market_data(
+      req_id, contract, generic_tick_list, snapshot, regulatory_snapshot, mkt_data_options,
+    )?;
 
-      let request_msg = encoder.encode_request_market_data(
-        req_id, contract, generic_tick_list, snapshot, regulatory_snapshot, // mkt_data_options,
-      )?;
-
-      // Initialize and store state
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.contains_key(&req_id) {
-          return Err(IBKRError::DuplicateRequestId(req_id));
-        }
-        let state = MarketDataSubscription::new(
-          req_id,
-          contract.clone(),
-          generic_tick_list.to_string(),
-          snapshot,
-          regulatory_snapshot,
-          mkt_data_options.to_vec(),
-        );
-        subs.insert(req_id, MarketSubscription::TickData(state));
-        debug!("Market data subscription added for ReqID: {}", req_id);
+    // Initialize and store state
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) {
+        return Err(IBKRError::DuplicateRequestId(req_id));
       }
-
-      self.message_broker.send_message(&request_msg)?;
-      Ok(req_id)
+      let state = MarketDataSubscription::new(
+        req_id,
+        contract.clone(),
+        generic_tick_list.to_string(),
+        snapshot,
+        regulatory_snapshot,
+        mkt_data_options.to_vec(),
+      );
+      subs.insert(req_id, MarketSubscription::TickData(state));
+      debug!("Market data subscription added for ReqID: {}", req_id);
     }
 
-    /// Cancels a streaming market data request.
-    pub fn cancel_market_data(&self, req_id: i32) -> Result<(), IBKRError> {
-      info!("Cancelling market data request: ReqID={}", req_id);
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
-      let request_msg = encoder.encode_cancel_market_data(req_id)?;
+    self.message_broker.send_message(&request_msg)?;
+    Ok(req_id)
+  }
 
-      // Remove state *before* sending cancel, or after? Let's remove after success.
-      self.message_broker.send_message(&request_msg)?;
+  /// Cancels a streaming market data request.
+  pub fn cancel_market_data(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling market data request: ReqID={}", req_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_market_data(req_id)?;
 
-      // Remove state
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.remove(&req_id).is_some() {
-          debug!("Removed market data subscription state for ReqID: {}", req_id);
-        } else {
-          warn!("Attempted to cancel market data for unknown or already removed ReqID: {}", req_id);
-        }
+    // Remove state *before* sending cancel, or after? Let's remove after success.
+    self.message_broker.send_message(&request_msg)?;
+
+    // Remove state
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed market data subscription state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel market data for unknown or already removed ReqID: {}", req_id);
       }
-      Ok(())
+    }
+    Ok(())
+  }
+
+  /// Gets a single quote (Bid, Ask, Last) for a contract using a snapshot request. Blocks until data is received or timeout.
+  pub fn get_quote(&self, contract: &Contract, timeout: Duration) -> Result<Quote, IBKRError> {
+    info!("Requesting quote snapshot for: Contract={}", contract.symbol);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    // Use an empty generic tick list for snapshot requests.
+    // This often requests all available generic ticks for the snapshot.
+    let generic_tick_list = "";
+    let snapshot = true; // Request snapshot
+    let regulatory_snapshot = false; // Typically false for simple quotes
+    let mkt_data_options: Vec<(String, String)> = Vec::new(); // No options needed usually
+
+    let request_msg = encoder.encode_request_market_data(
+      req_id, contract, generic_tick_list, snapshot, regulatory_snapshot, &mkt_data_options,
+    )?;
+
+    // Initialize and store state, marking as a blocking quote request
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) {
+        return Err(IBKRError::DuplicateRequestId(req_id));
+      }
+      let mut state = MarketDataSubscription::new(
+        req_id,
+        contract.clone(),
+        generic_tick_list.to_string(),
+        snapshot,
+        regulatory_snapshot,
+        mkt_data_options,
+      );
+      state.is_blocking_quote_request = true; // Mark this specifically
+      subs.insert(req_id, MarketSubscription::TickData(state));
+      debug!("Blocking quote request added for ReqID: {}", req_id);
     }
 
-    /// Gets a single quote (Bid, Ask, Last) for a contract using a snapshot request. Blocks until data is received or timeout.
-    pub fn get_quote(&self, contract: &Contract, timeout: Duration) -> Result<Quote, IBKRError> {
-      info!("Requesting quote snapshot for: Contract={}", contract.symbol);
-      let req_id = self.message_broker.next_request_id();
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
+    // Send the request
+    self.message_broker.send_message(&request_msg)?;
 
-      // Use generic tick list for Bid, Ask, Last
-      // TickType.BID = 1, TickType.ASK = 2, TickType.LAST = 4
-      let generic_tick_list = "1,2,4";
-      let snapshot = true;
-      let regulatory_snapshot = false; // Typically false for simple quotes
-      let mkt_data_options: Vec<(String, String)> = Vec::new(); // No options needed usually
+    // Block and wait for completion
+    let result = self.wait_for_quote_completion(req_id, timeout);
 
-      let request_msg = encoder.encode_request_market_data(
-        req_id, contract, generic_tick_list, snapshot, regulatory_snapshot, // mkt_data_options,
-      )?;
+    // Best effort cancel after completion/timeout/error
+    // Ignore error here as the state might already be removed by the wait function
+    let _ = self.cancel_market_data(req_id);
 
-      // Initialize and store state, marking as a blocking quote request
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.contains_key(&req_id) {
-          return Err(IBKRError::DuplicateRequestId(req_id));
-        }
-        let mut state = MarketDataSubscription::new(
-          req_id,
-          contract.clone(),
-          generic_tick_list.to_string(),
-          snapshot,
-          regulatory_snapshot,
-          mkt_data_options,
-        );
-        state.is_blocking_quote_request = true; // Mark this specifically
-        subs.insert(req_id, MarketSubscription::TickData(state));
-        debug!("Blocking quote request added for ReqID: {}", req_id);
-      }
+    result
+  }
 
-      // Send the request
-      self.message_broker.send_message(&request_msg)?;
 
-      // Block and wait for completion
-      let result = self.wait_for_quote_completion(req_id, timeout);
+  /// Requests streaming 5-second real-time bars. Non-blocking. Returns req_id.
+  pub fn request_real_time_bars(
+    &self,
+    contract: &Contract,
+    // bar_size: i32, // API currently only supports 5
+    what_to_show: &str, // "TRADES", "MIDPOINT", "BID", "ASK"
+    use_rth: bool,
+    real_time_bars_options: &[(String, String)],
+  ) -> Result<i32, IBKRError> {
+    let bar_size = 5; // Hardcoded as per API limitation
+    info!("Requesting real time bars: Contract={}, What={}, RTH={}", contract.symbol, what_to_show, use_rth);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
 
-      // Best effort cancel after completion/timeout/error
-      // Ignore error here as the state might already be removed by the wait function
-      let _ = self.cancel_market_data(req_id);
+    let request_msg = encoder.encode_request_real_time_bars(
+      req_id, contract, bar_size, what_to_show, use_rth, real_time_bars_options,
+    )?;
 
-      result
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
+      let state = RealTimeBarSubscription {
+        req_id,
+        contract: contract.clone(),
+        bar_size,
+        what_to_show: what_to_show.to_string(),
+        use_rth,
+        rt_bar_options: real_time_bars_options.to_vec(),
+        latest_bar: None,
+        error_code: None,
+        error_message: None,
+      };
+      subs.insert(req_id, MarketSubscription::RealTimeBars(state));
+      debug!("Real time bar subscription added for ReqID: {}", req_id);
     }
 
+    self.message_broker.send_message(&request_msg)?;
+    Ok(req_id)
+  }
 
-    /// Requests streaming 5-second real-time bars. Non-blocking. Returns req_id.
-    pub fn request_real_time_bars(
-      &self,
-      contract: &Contract,
-      // bar_size: i32, // API currently only supports 5
-      what_to_show: &str, // "TRADES", "MIDPOINT", "BID", "ASK"
-      use_rth: bool,
-      real_time_bars_options: &[(String, String)],
-    ) -> Result<i32, IBKRError> {
-      let bar_size = 5; // Hardcoded as per API limitation
-      info!("Requesting real time bars: Contract={}, What={}, RTH={}", contract.symbol, what_to_show, use_rth);
-      let req_id = self.message_broker.next_request_id();
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
+  /// Cancels streaming real-time bars.
+  pub fn cancel_real_time_bars(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling real time bars request: ReqID={}", req_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_real_time_bars(req_id)?;
 
-      let request_msg = encoder.encode_request_real_time_bars(
-        req_id, contract, bar_size, what_to_show, use_rth, real_time_bars_options,
-      )?;
+    self.message_broker.send_message(&request_msg)?;
 
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
-        let state = RealTimeBarSubscription {
-          req_id,
-          contract: contract.clone(),
-          bar_size,
-          what_to_show: what_to_show.to_string(),
-          use_rth,
-          rt_bar_options: real_time_bars_options.to_vec(),
-          latest_bar: None,
-          error_code: None,
-          error_message: None,
-        };
-        subs.insert(req_id, MarketSubscription::RealTimeBars(state));
-        debug!("Real time bar subscription added for ReqID: {}", req_id);
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed real time bar subscription state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel real time bars for unknown or already removed ReqID: {}", req_id);
       }
+    }
+    Ok(())
+  }
 
-      self.message_broker.send_message(&request_msg)?;
-      Ok(req_id)
+
+  /// Requests streaming tick-by-tick data. Non-blocking. Returns req_id.
+  pub fn request_tick_by_tick_data(
+    &self,
+    contract: &Contract,
+    tick_type: &str, // "Last", "AllLast", "BidAsk", "MidPoint"
+    number_of_ticks: i32, // 0 for streaming, >0 for historical snapshot
+    ignore_size: bool, // Usually false for streaming
+  ) -> Result<i32, IBKRError> {
+    info!("Requesting tick-by-tick data: Contract={}, Type={}, NumTicks={}, IgnoreSize={}",
+          contract.symbol, tick_type, number_of_ticks, ignore_size);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_tick_by_tick_data(
+      req_id, contract, tick_type, number_of_ticks, ignore_size,
+    )?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
+      let state = TickByTickSubscription {
+        req_id,
+        contract: contract.clone(),
+        tick_type: tick_type.to_string(),
+        number_of_ticks,
+        ignore_size,
+        latest_tick: None,
+        error_code: None,
+        error_message: None,
+      };
+      subs.insert(req_id, MarketSubscription::TickByTick(state));
+      debug!("Tick-by-tick subscription added for ReqID: {}", req_id);
     }
 
-    /// Cancels streaming real-time bars.
-    pub fn cancel_real_time_bars(&self, req_id: i32) -> Result<(), IBKRError> {
-      info!("Cancelling real time bars request: ReqID={}", req_id);
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
-      let request_msg = encoder.encode_cancel_real_time_bars(req_id)?;
+    self.message_broker.send_message(&request_msg)?;
+    Ok(req_id)
+  }
 
-      self.message_broker.send_message(&request_msg)?;
+  /// Cancels streaming tick-by-tick data.
+  pub fn cancel_tick_by_tick_data(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling tick-by-tick data request: ReqID={}", req_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_tick_by_tick_data(req_id)?;
 
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.remove(&req_id).is_some() {
-          debug!("Removed real time bar subscription state for ReqID: {}", req_id);
-        } else {
-          warn!("Attempted to cancel real time bars for unknown or already removed ReqID: {}", req_id);
-        }
+    self.message_broker.send_message(&request_msg)?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed tick-by-tick subscription state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel tick-by-tick for unknown or already removed ReqID: {}", req_id);
       }
-      Ok(())
+    }
+    Ok(())
+  }
+
+  /// Requests streaming market depth. Non-blocking. Returns req_id.
+  pub fn request_market_depth(
+    &self,
+    contract: &Contract,
+    num_rows: i32,
+    is_smart_depth: bool,
+    mkt_depth_options: &[(String, String)],
+  ) -> Result<i32, IBKRError> {
+    info!("Requesting market depth: Contract={}, Rows={}, Smart={}", contract.symbol, num_rows, is_smart_depth);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_market_depth(
+      req_id, contract, num_rows, is_smart_depth, mkt_depth_options,
+    )?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
+      let state = MarketDepthSubscription {
+        req_id,
+        contract: contract.clone(),
+        num_rows,
+        is_smart_depth,
+        mkt_depth_options: mkt_depth_options.to_vec(),
+        bid_price: None, ask_price: None, bid_size: None, ask_size: None,
+        depth_bids: Vec::new(), depth_asks: Vec::new(),
+        error_code: None, error_message: None,
+      };
+      subs.insert(req_id, MarketSubscription::MarketDepth(state));
+      debug!("Market depth subscription added for ReqID: {}", req_id);
     }
 
+    self.message_broker.send_message(&request_msg)?;
+    Ok(req_id)
+  }
 
-    /// Requests streaming tick-by-tick data. Non-blocking. Returns req_id.
-    pub fn request_tick_by_tick_data(
-      &self,
-      contract: &Contract,
-      tick_type: &str, // "Last", "AllLast", "BidAsk", "MidPoint"
-      number_of_ticks: i32, // 0 for streaming, >0 for historical snapshot
-      ignore_size: bool, // Usually false for streaming
-    ) -> Result<i32, IBKRError> {
-      info!("Requesting tick-by-tick data: Contract={}, Type={}, NumTicks={}, IgnoreSize={}",
-            contract.symbol, tick_type, number_of_ticks, ignore_size);
-      let req_id = self.message_broker.next_request_id();
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
-
-      let request_msg = encoder.encode_request_tick_by_tick_data(
-        req_id, contract, tick_type, number_of_ticks, ignore_size,
-      )?;
-
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
-        let state = TickByTickSubscription {
-          req_id,
-          contract: contract.clone(),
-          tick_type: tick_type.to_string(),
-          number_of_ticks,
-          ignore_size,
-          latest_tick: None,
-          error_code: None,
-          error_message: None,
-        };
-        subs.insert(req_id, MarketSubscription::TickByTick(state));
-        debug!("Tick-by-tick subscription added for ReqID: {}", req_id);
+  /// Cancels streaming market depth.
+  pub fn cancel_market_depth(&self, req_id: i32) -> Result<(), IBKRError> {
+    let is_smart_depth = { // Need to check the state for is_smart_depth flag
+      let subs = self.subscriptions.lock();
+      if let Some(MarketSubscription::MarketDepth(state)) = subs.get(&req_id) {
+        state.is_smart_depth
+      } else {
+        // If state not found, assume false or return error? Let's assume false.
+        warn!("Cannot determine is_smart_depth for cancel_market_depth ReqID: {}. Assuming false.", req_id);
+        false
       }
+    };
 
-      self.message_broker.send_message(&request_msg)?;
-      Ok(req_id)
+    info!("Cancelling market depth request: ReqID={}, Smart={}", req_id, is_smart_depth);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_market_depth(req_id, is_smart_depth)?;
+
+    self.message_broker.send_message(&request_msg)?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed market depth subscription state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel market depth for unknown or already removed ReqID: {}", req_id);
+      }
+    }
+    Ok(())
+  }
+
+  /// Requests historical bar data. Blocks until data is received or timeout.
+  pub fn get_historical_data(
+    &self,
+    contract: &Contract,
+    end_date_time: Option<chrono::DateTime<chrono::Utc>>, // Use chrono DateTime
+    duration_str: &str, // e.g., "1 Y", "3 M", "60 D", "3600 S"
+    bar_size_setting: &str, // e.g., "1 day", "30 mins", "1 secs"
+    what_to_show: &str, // e.g., "TRADES", "MIDPOINT", "BID_ASK"
+    use_rth: bool,
+    format_date: i32, // 1 for yyyyMMdd HH:mm:ss, 2 for system time (seconds)
+    keep_up_to_date: bool, // Subscribe to updates after initial load
+    _chart_options: &[(String, String)], // TagValue list
+  ) -> Result<Vec<Bar>, IBKRError> {
+    info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}",
+          contract.symbol, duration_str, bar_size_setting, what_to_show);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_historical_data(
+      req_id, contract, end_date_time, duration_str, bar_size_setting,
+      what_to_show, use_rth, format_date, keep_up_to_date, // chart_options,
+    )?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
+      let state = HistoricalDataRequestState {
+        req_id,
+        contract: contract.clone(),
+        ..Default::default()
+      };
+      subs.insert(req_id, MarketSubscription::HistoricalData(state));
+      debug!("Historical data request added for ReqID: {}", req_id);
     }
 
-    /// Cancels streaming tick-by-tick data.
-    pub fn cancel_tick_by_tick_data(&self, req_id: i32) -> Result<(), IBKRError> {
-      info!("Cancelling tick-by-tick data request: ReqID={}", req_id);
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
-      let request_msg = encoder.encode_cancel_tick_by_tick_data(req_id)?;
+    self.message_broker.send_message(&request_msg)?;
 
-      self.message_broker.send_message(&request_msg)?;
+    // Block and wait for completion
+    let timeout = Duration::from_secs(60); // Historical can take time
+    self.wait_for_historical_completion(req_id, timeout)
+  }
 
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.remove(&req_id).is_some() {
-          debug!("Removed tick-by-tick subscription state for ReqID: {}", req_id);
-        } else {
-          warn!("Attempted to cancel tick-by-tick for unknown or already removed ReqID: {}", req_id);
-        }
+  /// Cancels a historical data request.
+  pub fn cancel_historical_data(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling historical data request: ReqID={}", req_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_historical_data(req_id)?;
+
+    self.message_broker.send_message(&request_msg)?;
+
+    // Signal the waiting thread (if any) that it was cancelled?
+    // The wait loop will eventually time out or see an error.
+    // Removing the state might be enough.
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
+        // Optionally set an error state to indicate cancellation
+        state.error_code = Some(-1); // Use a custom code for cancellation
+        state.error_message = Some("Request cancelled by user".to_string());
+        state.end_received = true; // Mark as ended to unblock waiter
+        self.request_cond.notify_all(); // Notify waiter immediately
+        // Keep state briefly so waiter sees error, waiter cleans up.
+        debug!("Marked historical data request {} as cancelled.", req_id);
+      } else if subs.remove(&req_id).is_some() {
+        debug!("Removed other historical data subscription state for ReqID: {}", req_id);
       }
-      Ok(())
-    }
-
-    /// Requests streaming market depth. Non-blocking. Returns req_id.
-    pub fn request_market_depth(
-      &self,
-      contract: &Contract,
-      num_rows: i32,
-      is_smart_depth: bool,
-      mkt_depth_options: &[(String, String)],
-    ) -> Result<i32, IBKRError> {
-      info!("Requesting market depth: Contract={}, Rows={}, Smart={}", contract.symbol, num_rows, is_smart_depth);
-      let req_id = self.message_broker.next_request_id();
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
-
-      let request_msg = encoder.encode_request_market_depth(
-        req_id, contract, num_rows, is_smart_depth, mkt_depth_options,
-      )?;
-
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
-        let state = MarketDepthSubscription {
-          req_id,
-          contract: contract.clone(),
-          num_rows,
-          is_smart_depth,
-          mkt_depth_options: mkt_depth_options.to_vec(),
-          bid_price: None, ask_price: None, bid_size: None, ask_size: None,
-          depth_bids: Vec::new(), depth_asks: Vec::new(),
-          error_code: None, error_message: None,
-        };
-        subs.insert(req_id, MarketSubscription::MarketDepth(state));
-        debug!("Market depth subscription added for ReqID: {}", req_id);
+      else {
+        warn!("Attempted to cancel historical data for unknown or already removed ReqID: {}", req_id);
       }
-
-      self.message_broker.send_message(&request_msg)?;
-      Ok(req_id)
     }
+    Ok(())
+  }
 
-    /// Cancels streaming market depth.
-    pub fn cancel_market_depth(&self, req_id: i32) -> Result<(), IBKRError> {
-      let is_smart_depth = { // Need to check the state for is_smart_depth flag
-        let subs = self.subscriptions.lock();
-        if let Some(MarketSubscription::MarketDepth(state)) = subs.get(&req_id) {
-          state.is_smart_depth
-        } else {
-          // If state not found, assume false or return error? Let's assume false.
-          warn!("Cannot determine is_smart_depth for cancel_market_depth ReqID: {}. Assuming false.", req_id);
-          false
-        }
+  // --- Internal error handling ---
+  pub(crate) fn handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
+    if req_id <= 0 { return; } // Ignore general errors not tied to a request
+
+    let mut subs = self.subscriptions.lock();
+    if let Some(sub_state) = subs.get_mut(&req_id) {
+      warn!("API Error received for market data request {}: Code={}, Msg={}", req_id, error_code, error_msg);
+
+      // Determine if it's a blocking quote request *before* the main match
+      let is_blocking_quote = matches!(sub_state, MarketSubscription::TickData(s) if s.is_blocking_quote_request);
+
+      // Extract error fields and determine if it's historical
+      let (err_code_field, err_msg_field, is_historical) = match sub_state {
+          MarketSubscription::TickData(s) => (&mut s.error_code, &mut s.error_message, false), // Not historical
+          MarketSubscription::RealTimeBars(s) => (&mut s.error_code, &mut s.error_message, false),
+          MarketSubscription::TickByTick(s) => (&mut s.error_code, &mut s.error_message, false),
+          MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message, false),
+          MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, true), // Is historical
       };
 
-      info!("Cancelling market depth request: ReqID={}, Smart={}", req_id, is_smart_depth);
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
-      let request_msg = encoder.encode_cancel_market_depth(req_id, is_smart_depth)?;
+      *err_code_field = Some(error_code);
+      *err_msg_field = Some(error_msg.clone()); // Clone error message
 
-      self.message_broker.send_message(&request_msg)?;
-
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.remove(&req_id).is_some() {
-          debug!("Removed market depth subscription state for ReqID: {}", req_id);
-        } else {
-          warn!("Attempted to cancel market depth for unknown or already removed ReqID: {}", req_id);
+      // If it's a blocking request (historical or quote), mark end and notify waiter
+      if is_blocking_quote || is_historical {
+        match sub_state {
+          MarketSubscription::HistoricalData(s) => s.end_received = true,
+          MarketSubscription::TickData(s) if s.is_blocking_quote_request => s.quote_received = true, // Mark quote as 'done' due to error
+          MarketSubscription::TickData(_) => {} // Non-blocking tick data error, do nothing special here
+          _ => {} // Should not happen based on is_blocking/is_historical flags
         }
+        debug!("Error received for blocking request {}, notifying waiter.", req_id);
+        self.request_cond.notify_all();
       }
-      Ok(())
+      // For non-blocking streaming requests, the error is stored, but doesn't stop the subscription state yet.
+      // User needs to decide whether to cancel based on the error.
+    } else {
+      // Might be an error for a request that already completed/cancelled/timed out.
+      trace!("Received error for unknown or completed market data request ID: {}", req_id);
     }
-
-    /// Requests historical bar data. Blocks until data is received or timeout.
-    pub fn get_historical_data(
-      &self,
-      contract: &Contract,
-      end_date_time: Option<chrono::DateTime<chrono::Utc>>, // Use chrono DateTime
-      duration_str: &str, // e.g., "1 Y", "3 M", "60 D", "3600 S"
-      bar_size_setting: &str, // e.g., "1 day", "30 mins", "1 secs"
-      what_to_show: &str, // e.g., "TRADES", "MIDPOINT", "BID_ASK"
-      use_rth: bool,
-      format_date: i32, // 1 for yyyyMMdd HH:mm:ss, 2 for system time (seconds)
-      keep_up_to_date: bool, // Subscribe to updates after initial load
-      _chart_options: &[(String, String)], // TagValue list
-    ) -> Result<Vec<Bar>, IBKRError> {
-      info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}",
-            contract.symbol, duration_str, bar_size_setting, what_to_show);
-      let req_id = self.message_broker.next_request_id();
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
-
-      let request_msg = encoder.encode_request_historical_data(
-        req_id, contract, end_date_time, duration_str, bar_size_setting,
-        what_to_show, use_rth, format_date, keep_up_to_date, // chart_options,
-      )?;
-
-      {
-        let mut subs = self.subscriptions.lock();
-        if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
-        let state = HistoricalDataRequestState {
-          req_id,
-          contract: contract.clone(),
-          ..Default::default()
-        };
-        subs.insert(req_id, MarketSubscription::HistoricalData(state));
-        debug!("Historical data request added for ReqID: {}", req_id);
-      }
-
-      self.message_broker.send_message(&request_msg)?;
-
-      // Block and wait for completion
-      let timeout = Duration::from_secs(60); // Historical can take time
-      self.wait_for_historical_completion(req_id, timeout)
-    }
-
-    /// Cancels a historical data request.
-    pub fn cancel_historical_data(&self, req_id: i32) -> Result<(), IBKRError> {
-      info!("Cancelling historical data request: ReqID={}", req_id);
-      let server_version = self.message_broker.get_server_version()?;
-      let encoder = Encoder::new(server_version);
-      let request_msg = encoder.encode_cancel_historical_data(req_id)?;
-
-      self.message_broker.send_message(&request_msg)?;
-
-      // Signal the waiting thread (if any) that it was cancelled?
-      // The wait loop will eventually time out or see an error.
-      // Removing the state might be enough.
-
-      {
-        let mut subs = self.subscriptions.lock();
-        if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
-          // Optionally set an error state to indicate cancellation
-          state.error_code = Some(-1); // Use a custom code for cancellation
-          state.error_message = Some("Request cancelled by user".to_string());
-          state.end_received = true; // Mark as ended to unblock waiter
-          self.request_cond.notify_all(); // Notify waiter immediately
-          // Keep state briefly so waiter sees error, waiter cleans up.
-          debug!("Marked historical data request {} as cancelled.", req_id);
-        } else if subs.remove(&req_id).is_some() {
-          debug!("Removed other historical data subscription state for ReqID: {}", req_id);
-        }
-        else {
-          warn!("Attempted to cancel historical data for unknown or already removed ReqID: {}", req_id);
-        }
-      }
-      Ok(())
-    }
-
-    // --- Internal error handling ---
-    pub(crate) fn handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
-      if req_id <= 0 { return; } // Ignore general errors not tied to a request
-
-      let mut subs = self.subscriptions.lock();
-      if let Some(sub_state) = subs.get_mut(&req_id) {
-        warn!("API Error received for market data request {}: Code={}, Msg={}", req_id, error_code, error_msg);
-        let (err_code_field, err_msg_field, is_historical) = match sub_state {
-          MarketSubscription::TickData(s) => (&mut s.error_code, &mut s.error_message, false),
-          MarketSubscription::TickData(s) => {
-            let is_blocking = s.is_blocking_quote_request;
-            (&mut s.error_code, &mut s.error_message, is_blocking, false) // is_blocking, is_historical
-          },
-          MarketSubscription::RealTimeBars(s) => (&mut s.error_code, &mut s.error_message, false, false),
-          MarketSubscription::TickByTick(s) => (&mut s.error_code, &mut s.error_message, false, false),
-          MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message, false, false),
-          MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, true, true), // is_blocking (implicitly), is_historical
-        };
-
-        *err_code_field = Some(error_code);
-        *err_msg_field = Some(error_msg.clone()); // Clone error message
-
-        // If it's a blocking request (historical or quote), mark end and notify waiter
-        if is_blocking || is_historical {
-          match sub_state {
-            MarketSubscription::HistoricalData(s) => s.end_received = true,
-            MarketSubscription::TickData(s) => s.quote_received = true, // Mark quote as 'done' due to error
-            _ => {} // Should not happen based on is_blocking/is_historical flags
-          }
-          debug!("Error received for blocking request {}, notifying waiter.", req_id);
-          self.request_cond.notify_all();
-        }
-        // For non-blocking streaming requests, the error is stored, but doesn't stop the subscription state yet.
-        // User needs to decide whether to cancel based on the error.
-      } else {
-        // Might be an error for a request that already completed/cancelled/timed out.
-        trace!("Received error for unknown or completed market data request ID: {}", req_id);
-      }
-    }
-
-    // --- Optional: Add observer management ---
-    // pub fn add_observer(&self, observer: Weak<dyn MarketDataObserver>) { ... }
-    // pub fn remove_observer(&self, observer: Weak<dyn MarketDataObserver>) { ... }
-    // fn notify_observers(&self, req_id: i32) { ... }
   }
 
+  // --- Optional: Add observer management ---
+  // pub fn add_observer(&self, observer: Weak<dyn MarketDataObserver>) { ... }
+  // pub fn remove_observer(&self, observer: Weak<dyn MarketDataObserver>) { ... }
+  // fn notify_observers(&self, req_id: i32) { ... }
+}
 
-  // --- Implement MarketDataHandler Trait for DataMarketManager ---
-  impl MarketDataHandler for DataMarketManager {
 
-    // --- Tick Data ---
-    fn tick_price(&self, req_id: i32, tick_type: i32, price: f64, attrib: TickAttrib) {
-      trace!("Handler: Tick Price: ID={}, Type={}, Price={}, Attrib={:?}", req_id, tick_type, price, attrib);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-        // Map tick_type to fields in MarketDataSubscriptionState
-        match tick_type {
-          1 => state.bid_price = Some(price),  // BID
-          2 => state.ask_price = Some(price),  // ASK
-          4 => state.last_price = Some(price), // LAST
-          6 => state.high_price = Some(price), // HIGH
-          7 => state.low_price = Some(price),  // LOW
-          9 => state.close_price = Some(price),// CLOSE
-          14 => state.open_price = Some(price), // OPEN_TICK
-          // ... map other tick types (DELAYED_BID, DELAYED_ASK, etc.) if needed
-          _ => trace!("Unhandled tick_type {} in tick_price for ReqID {}", tick_type, req_id),
-        }
-        // TODO: Store attrib if needed
+// --- Implement MarketDataHandler Trait for DataMarketManager ---
+impl MarketDataHandler for DataMarketManager {
 
-        // If this is for a blocking quote request, check if we have all needed data
-        if state.is_blocking_quote_request && !state.quote_received {
-          if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
-            debug!("All required ticks received for blocking quote ReqID {}. Notifying waiter.", req_id);
-            // We don't set quote_received here, let snapshot_end do that,
-            // but we notify in case snapshot_end is delayed or missed.
-            self.request_cond.notify_all();
-          }
-        }
-        // self.notify_observers(req_id); // If using observer pattern
-      } else {
-        // warn!("Received tick_price for unknown or non-tick subscription ID: {}", req_id);
+  // --- Tick Data ---
+  fn tick_price(&self, req_id: i32, tick_type: i32, price: f64, attrib: TickAttrib) {
+    trace!("Handler: Tick Price: ID={}, Type={}, Price={}, Attrib={:?}", req_id, tick_type, price, attrib);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      // Map tick_type to fields in MarketDataSubscriptionState
+      match tick_type {
+        1 => state.bid_price = Some(price),  // BID
+        2 => state.ask_price = Some(price),  // ASK
+        4 => state.last_price = Some(price), // LAST
+        6 => state.high_price = Some(price), // HIGH
+        7 => state.low_price = Some(price),  // LOW
+        9 => state.close_price = Some(price),// CLOSE
+        14 => state.open_price = Some(price), // OPEN_TICK
+        // ... map other tick types (DELAYED_BID, DELAYED_ASK, etc.) if needed
+        _ => trace!("Unhandled tick_type {} in tick_price for ReqID {}", tick_type, req_id),
       }
-    }
+      // TODO: Store attrib if needed
 
-    fn tick_size(&self, req_id: i32, tick_type: i32, size: f64) {
-      trace!("Handler: Tick Size: ID={}, Type={}, Size={}", req_id, tick_type, size);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-        match tick_type {
-          0 => state.bid_size = Some(size),  // BID_SIZE
-          3 => state.ask_size = Some(size),  // ASK_SIZE
-          5 => state.last_size = Some(size), // LAST_SIZE
-          8 => state.volume = Some(size),    // VOLUME
-          27 => state.call_open_interest = Some(size),
-          28 => state.put_open_interest = Some(size),
-          29 => state.call_volume = Some(size),
-          30 => state.put_volume = Some(size),
-          21 => state.avg_volume = Some(size), // Map AVG_VOLUME to this? Check TWS docs
-          37 => state.shortable_shares = Some(size), // SHORTABLE -> SHORTABLE_SHARES
-          48 => state.futures_open_interest = Some(size), // RT_VOLUME -> FUTURES_OPEN_INTEREST? Check TWS docs
-          // ... map other size types (DELAYED_BID_SIZE, RT_TRD_VOLUME etc.)
-          _ => trace!("Unhandled tick_type {} in tick_size", tick_type),
-        }
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received tick_size for unknown or non-tick subscription ID: {}", req_id);
-      }
-    }
-
-    fn tick_string(&self, req_id: i32, tick_type: i32, value: &str) {
-      trace!("Handler: Tick String: ID={}, Type={}, Value='{}'", req_id, tick_type, value);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-        match tick_type {
-          45 => { // LAST_TIMESTAMP
-            if let Ok(ts) = value.parse::<i64>() {
-              state.last_timestamp = Some(ts);
-            } else {
-              warn!("Failed to parse LAST_TIMESTAMP '{}' for ReqID {}", value, req_id);
-            }
-          },
-          59 => state.last_reg_time = Some(value.to_string()), // IB_DIVIDENDS -> last_reg_time? Check TWS. Placeholder.
-          // ... map RT_TRADE_VOLUME tick types if they send string data ...
-          _ => trace!("Unhandled tick_type {} in tick_string", tick_type),
-        }
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received tick_string for unknown or non-tick subscription ID: {}", req_id);
-      }
-    }
-
-    fn tick_generic(&self, req_id: i32, tick_type: i32, value: f64) {
-      trace!("Handler: Tick Generic: ID={}, Type={}, Value={}", req_id, tick_type, value);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-        match tick_type {
-          10 => state.bid_price = Some(value), // OPTION_IMPLIED_VOL -> bid_price? Unlikely. Needs mapping.
-          11 => state.ask_price = Some(value), // OPTION_IMPLIED_VOL -> ask_price? Unlikely. Needs mapping.
-          31 => state.trade_count = Some(value as i64), // AUCTION_IMBALANCE -> trade_count? Unlikely. Needs mapping.
-          // ... map other generic types ...
-          _ => trace!("Unhandled tick_type {} in tick_generic", tick_type),
-        }
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received tick_generic for unknown or non-tick subscription ID: {}", req_id);
-      }
-    }
-
-    fn tick_efp(&self, req_id: i32, tick_type: i32, basis_points: f64, _formatted_basis_points: &str,
-                _implied_futures_price: f64, _hold_days: i32, _future_last_trade_date: &str,
-                _dividend_impact: f64, _dividends_to_last_trade_date: f64) {
-      trace!("Handler: Tick EFP: ID={}, Type={}, BasisPts={}", req_id, tick_type, basis_points);
-      // EFP data doesn't typically fit into the standard MarketDataSubscription fields.
-      // An observer pattern or dedicated callback might be better here.
-      // For now, just log it.
-    }
-
-    fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData) {
-      trace!("Handler: Tick Option Computation: ID={}, Type={}", req_id, data.tick_type);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-        state.option_computation = Some(data);
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received tick_option_computation for unknown or non-tick subscription ID: {}", req_id);
-      }
-    }
-
-    fn tick_snapshot_end(&self, req_id: i32) {
-      debug!("Handler: Tick Snapshot End: ID={}", req_id);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-        state.snapshot_end_received = true;
-        // If this was a blocking quote snapshot request, mark as complete and notify waiter.
-        if state.is_blocking_quote_request {
-          state.quote_received = true;
-          debug!("Snapshot end received for blocking quote ReqID {}. Notifying waiter.", req_id);
+      // If this is for a blocking quote request, check if we have all needed data
+      if state.is_blocking_quote_request && !state.quote_received {
+        if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
+          debug!("All required ticks received for blocking quote ReqID {}. Notifying waiter.", req_id);
+          // We don't set quote_received here, let snapshot_end do that,
+          // but we notify in case snapshot_end is delayed or missed.
           self.request_cond.notify_all();
         }
-      } else {
-        // warn!("Received tick_snapshot_end for unknown or non-tick subscription ID: {}", req_id);
       }
+      // self.notify_observers(req_id); // If using observer pattern
+    } else {
+      // warn!("Received tick_price for unknown or non-tick subscription ID: {}", req_id);
     }
+  }
 
-    fn market_data_type(&self, req_id: i32, market_data_type: MarketDataTypeEnum) {
-      debug!("Handler: Market Data Type: ID={}, Type={:?}", req_id, market_data_type);
-      let mut subs = self.subscriptions.lock();
-      // Store the type in all relevant subscription types?
-      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-        state.market_data_type = Some(market_data_type);
-      } else if let Some(MarketSubscription::MarketDepth(_state)) = subs.get_mut(&req_id) {
-        // Market depth might also care about frozen status
-        // state.market_data_type = Some(market_data_type); // Add field if needed
+  fn tick_size(&self, req_id: i32, tick_type: i32, size: f64) {
+    trace!("Handler: Tick Size: ID={}, Type={}, Size={}", req_id, tick_type, size);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      match tick_type {
+        0 => state.bid_size = Some(size),  // BID_SIZE
+        3 => state.ask_size = Some(size),  // ASK_SIZE
+        5 => state.last_size = Some(size), // LAST_SIZE
+        8 => state.volume = Some(size),    // VOLUME
+        27 => state.call_open_interest = Some(size),
+        28 => state.put_open_interest = Some(size),
+        29 => state.call_volume = Some(size),
+        30 => state.put_volume = Some(size),
+        21 => state.avg_volume = Some(size), // Map AVG_VOLUME to this? Check TWS docs
+        37 => state.shortable_shares = Some(size), // SHORTABLE -> SHORTABLE_SHARES
+        48 => state.futures_open_interest = Some(size), // RT_VOLUME -> FUTURES_OPEN_INTEREST? Check TWS docs
+        // ... map other size types (DELAYED_BID_SIZE, RT_TRD_VOLUME etc.)
+        _ => trace!("Unhandled tick_type {} in tick_size", tick_type),
       }
-      // No need to notify observers for this meta-information usually.
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received tick_size for unknown or non-tick subscription ID: {}", req_id);
     }
+  }
 
-    fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32) {
-      debug!("Handler: Tick Req Params: ID={}, MinTick={}, BBOExch={}, Permissions={}", req_id, min_tick, bbo_exchange, snapshot_permissions);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-        // Store snapshot permissions if this was a snapshot request
-        if state.snapshot {
-          state.snapshot_permissions = Some(snapshot_permissions);
-        }
-        // min_tick and bbo_exchange might be useful context but aren't typically stored as live data.
-      } else {
-        // warn!("Received tick_req_params for unknown or non-tick subscription ID: {}", req_id);
-      }
-    }
-
-    // --- Real Time Bars ---
-    fn real_time_bar(&self, req_id: i32, time: i64, open: f64, high: f64, low: f64, close: f64,
-                     volume: f64, wap: f64, count: i32) {
-      trace!("Handler: Real Time Bar: ID={}, Time={}, O={}, H={}, L={}, C={}", req_id, time, open, high, low, close);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::RealTimeBars(state)) = subs.get_mut(&req_id) {
-        let bar = Bar {
-          time: Utc.timestamp_opt(time, 0).single().unwrap_or(Utc::now()), // Convert Unix timestamp
-          open, high, low, close,
-          volume: volume as i64, // Convert f64 back to i64
-          wap,
-          count,
-        };
-        state.latest_bar = Some(bar);
-        // self.notify_observers(req_id); // Or specific bar observer
-      } else {
-        // warn!("Received real_time_bar for unknown or non-RTBar subscription ID: {}", req_id);
-      }
-    }
-
-    // --- Historical Data ---
-    fn historical_data(&self, req_id: i32, bar: &Bar) {
-      trace!("Handler: Historical Data Bar: ID={}, Time={}", req_id, bar.time);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
-        state.bars.push(bar.clone());
-        // Don't notify yet, wait for end.
-      } else {
-        // warn!("Received historical_data for unknown or non-historical subscription ID: {}", req_id);
-      }
-    }
-
-    fn historical_data_update(&self, req_id: i32, bar: &Bar) {
-      debug!("Handler: Historical Data Update Bar: ID={}, Time={}", req_id, bar.time);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
-        // Handle update - e.g., replace last bar or append if time is newer
-        if let Some(last_bar) = state.bars.last_mut() {
-          if bar.time == last_bar.time {
-            *last_bar = bar.clone();
-          } else if bar.time > last_bar.time {
-            state.bars.push(bar.clone());
+  fn tick_string(&self, req_id: i32, tick_type: i32, value: &str) {
+    trace!("Handler: Tick String: ID={}, Type={}, Value='{}'", req_id, tick_type, value);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      match tick_type {
+        45 => { // LAST_TIMESTAMP
+          if let Ok(ts) = value.parse::<i64>() {
+            state.last_timestamp = Some(ts);
           } else {
-            warn!("Received out-of-order historical update for ReqID {}: UpdateTime={}, LastBarTime={}", req_id, bar.time, last_bar.time);
+            warn!("Failed to parse LAST_TIMESTAMP '{}' for ReqID {}", value, req_id);
           }
-        } else {
-          state.bars.push(bar.clone()); // First update
-        }
-        state.update_received = true;
-        // self.notify_observers(req_id); // Notify observer about update
-      } else {
-        // warn!("Received historical_data_update for unknown or non-historical subscription ID: {}", req_id);
+        },
+        59 => state.last_reg_time = Some(value.to_string()), // IB_DIVIDENDS -> last_reg_time? Check TWS. Placeholder.
+        // ... map RT_TRADE_VOLUME tick types if they send string data ...
+        _ => trace!("Unhandled tick_type {} in tick_string", tick_type),
       }
-    }
-
-    fn historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) {
-      debug!("Handler: Historical Data End: ID={}, Start={}, End={}", req_id, start_date, end_date);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
-        state.start_date = start_date.to_string();
-        state.end_date = end_date.to_string();
-        state.end_received = true;
-        info!("Historical data end received for request {}. Notifying waiter.", req_id);
-        self.request_cond.notify_all(); // Signal waiting thread
-      } else {
-        // warn!("Received historical_data_end for unknown or non-historical subscription ID: {}", req_id);
-      }
-    }
-
-    fn historical_ticks(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool) {
-      debug!("Handler: Historical Ticks: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
-      // Store or process historical ticks. Similar logic to historical bars.
-      // Needs state in DataMarketManager if blocking is required.
-      if done {
-        info!("Historical ticks end received for request {}. Notifying waiter.", req_id);
-        // self.request_cond.notify_all();
-      }
-    }
-
-    fn historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
-      debug!("Handler: Historical Ticks BidAsk: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
-      if done {
-        info!("Historical ticks bidask end received for request {}. Notifying waiter.", req_id);
-        // self.request_cond.notify_all();
-      }
-    }
-
-    fn historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
-      debug!("Handler: Historical Ticks Last: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
-      if done {
-        info!("Historical ticks last end received for request {}. Notifying waiter.", req_id);
-        // self.request_cond.notify_all();
-      }
-    }
-
-    // --- Tick By Tick ---
-    fn tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: i64, price: f64, size: f64,
-                             tick_attrib_last: TickAttribLast, exchange: &str, special_conditions: &str) {
-      trace!("Handler: TickByTick AllLast: ID={}, Time={}, Px={}, Sz={}", req_id, time, price, size);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
-        let data = if tick_type == 1 {
-          TickByTickData::Last { time, price, size, tick_attrib_last, exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
-        } else {
-          TickByTickData::AllLast { time, price, size, tick_attrib_last, exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
-        };
-        state.latest_tick = Some(data);
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received tick_by_tick_all_last for unknown or non-TBT subscription ID: {}", req_id);
-      }
-    }
-
-    fn tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64, bid_size: f64,
-                            ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk) {
-      trace!("Handler: TickByTick BidAsk: ID={}, Time={}, BidPx={}, AskPx={}", req_id, time, bid_price, ask_price);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
-        state.latest_tick = Some(TickByTickData::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask });
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received tick_by_tick_bid_ask for unknown or non-TBT subscription ID: {}", req_id);
-      }
-    }
-
-    fn tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) {
-      trace!("Handler: TickByTick MidPoint: ID={}, Time={}, MidPt={}", req_id, time, mid_point);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
-        state.latest_tick = Some(TickByTickData::MidPoint { time, mid_point });
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received tick_by_tick_mid_point for unknown or non-TBT subscription ID: {}", req_id);
-      }
-    }
-
-    // --- Market Depth ---
-    fn update_mkt_depth(&self, req_id: i32, position: i32, operation: i32, side: i32, price: f64, size: f64) {
-      trace!("Handler: MktDepth L1 Update: ID={}, Pos={}, Op={}, Side={}, Px={}, Sz={}", req_id, position, operation, side, price, size);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::MarketDepth(state)) = subs.get_mut(&req_id) {
-        // Update L1 fields directly (simple approach, assumes position 0)
-        if position == 0 {
-          match side {
-            1 => { // Bid
-              state.bid_price = Some(price);
-              state.bid_size = Some(size);
-            },
-            0 => { // Ask
-              state.ask_price = Some(price);
-              state.ask_size = Some(size);
-            },
-            _ => {}
-          }
-        }
-        // Update L2 depth book (more complex logic needed here for insert/update/delete)
-        let depth_list = if side == 1 { &mut state.depth_bids } else { &mut state.depth_asks };
-        let row = MarketDepthRow { position, operation, side, price, size, market_maker: String::new(), is_smart_depth: None };
-
-        match operation {
-          0 => { // Insert
-            if let Some(idx) = depth_list.iter().position(|r| r.position >= position) {
-              depth_list.insert(idx, row);
-              // Shift positions of subsequent rows? TWS usually sends updates or deletes for shifts.
-            } else {
-              depth_list.push(row);
-            }
-          },
-          1 => { // Update
-            if let Some(existing_row) = depth_list.iter_mut().find(|r| r.position == position) {
-              existing_row.price = price;
-              existing_row.size = size;
-              // Keep other fields
-            } else {
-              warn!("Market Depth Update for non-existent position {} on ReqID {}", position, req_id);
-              // Optionally insert if update is for missing row?
-              depth_list.push(row); // Insert as fallback
-              depth_list.sort_by_key(|r| r.position); // Keep sorted
-            }
-          },
-          2 => { // Delete
-            depth_list.retain(|r| r.position != position);
-          },
-          _ => warn!("Unknown market depth operation: {}", operation),
-        }
-        // Trim list if it exceeds num_rows? TWS usually manages this.
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received update_mkt_depth for unknown or non-Depth subscription ID: {}", req_id);
-      }
-    }
-
-    fn update_mkt_depth_l2(&self, req_id: i32, position: i32, market_maker: &str, operation: i32,
-                           side: i32, price: f64, size: f64, is_smart_depth: bool) {
-      trace!("Handler: MktDepth L2 Update: ID={}, Pos={}, MM={}, Op={}, Side={}, Px={}, Sz={}, Smart={}",
-             req_id, position, market_maker, operation, side, price, size, is_smart_depth);
-      let mut subs = self.subscriptions.lock();
-      if let Some(MarketSubscription::MarketDepth(state)) = subs.get_mut(&req_id) {
-        // Update L2 depth book
-        let depth_list = if side == 1 { &mut state.depth_bids } else { &mut state.depth_asks };
-        let row = MarketDepthRow { position, operation, side, price, size, market_maker: market_maker.to_string(), is_smart_depth: Some(is_smart_depth) };
-
-        match operation {
-          0 => { // Insert
-            // Find insert position, handle duplicates? TWS usually sends unique rows
-            if let Some(idx) = depth_list.iter().position(|r| r.position >= position) {
-              depth_list.insert(idx, row);
-            } else {
-              depth_list.push(row);
-            }
-          },
-          1 => { // Update
-            if let Some(existing_row) = depth_list.iter_mut().find(|r| r.position == position && r.market_maker == market_maker) {
-              existing_row.price = price;
-              existing_row.size = size;
-              existing_row.is_smart_depth = Some(is_smart_depth);
-            } else {
-              warn!("Market Depth L2 Update for non-existent pos/mm {}/{} on ReqID {}", position, market_maker, req_id);
-              depth_list.push(row); // Insert as fallback
-              depth_list.sort_by_key(|r| r.position); // Keep sorted
-            }
-          },
-          2 => { // Delete
-            depth_list.retain(|r| !(r.position == position && r.market_maker == market_maker));
-          },
-          _ => warn!("Unknown market depth L2 operation: {}", operation),
-        }
-        // self.notify_observers(req_id);
-      } else {
-        // warn!("Received update_mkt_depth_l2 for unknown or non-Depth subscription ID: {}", req_id);
-      }
-    }
-
-    // --- Other Market Data ---
-    fn delta_neutral_validation(&self, req_id: i32) {
-      debug!("Handler: Delta Neutral Validation: ID={}", req_id);
-      // Usually just logged, doesn't update typical subscription state.
-    }
-
-    fn histogram_data(&self, req_id: i32) {
-      debug!("Handler: Histogram Data Received: ID={}", req_id);
-      // Placeholder, needs HistogramEntry struct and state handling if blocking needed.
-    }
-
-    fn scanner_parameters(&self, xml: &str) {
-      debug!("Handler: Scanner Parameters received ({} bytes)", xml.len());
-      // Usually handled by a one-off request, not stored in subscription state.
-    }
-
-    fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, _distance: &str,
-                    _benchmark: &str, _projection: &str, _legs_str: Option<&str>) {
-      trace!("Handler: Scanner Data Row: ID={}, Rank={}, Symbol={}", req_id, rank, contract_details.contract.symbol);
-      // Needs state management if scanner results are tracked.
-    }
-
-    fn scanner_data_end(&self, req_id: i32) {
-      debug!("Handler: Scanner Data End: ID={}", req_id);
-      // Signal completion if scanner request state is managed.
-    }
-
-    // --- Errors ---
-    fn market_data_error(&self, req_id: i32, error_code: i32, error_msg: &str) {
-      // This is called from the central error processor now
-      // We delegate the actual state update to the manager's internal handle_error
-      self.handle_error(req_id, error_code, error_msg.to_string());
-    }
-
-    // --- Rerouting ---
-    fn reroute_mkt_data_req(&self, req_id: i32, con_id: i32, exchange: &str) {
-      info!("Handler: Reroute Mkt Data Req: ID={}, ConID={}, Exch={}", req_id, con_id, exchange);
-      // Notification, usually just logged.
-    }
-
-    fn reroute_mkt_depth_req(&self, req_id: i32, con_id: i32, exchange: &str) {
-      info!("Handler: Reroute Mkt Depth Req: ID={}, ConID={}, Exch={}", req_id, con_id, exchange);
-      // Notification, usually just logged.
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received tick_string for unknown or non-tick subscription ID: {}", req_id);
     }
   }
+
+  fn tick_generic(&self, req_id: i32, tick_type: i32, value: f64) {
+    trace!("Handler: Tick Generic: ID={}, Type={}, Value={}", req_id, tick_type, value);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      match tick_type {
+        10 => state.bid_price = Some(value), // OPTION_IMPLIED_VOL -> bid_price? Unlikely. Needs mapping.
+        11 => state.ask_price = Some(value), // OPTION_IMPLIED_VOL -> ask_price? Unlikely. Needs mapping.
+        31 => state.trade_count = Some(value as i64), // AUCTION_IMBALANCE -> trade_count? Unlikely. Needs mapping.
+        // ... map other generic types ...
+        _ => trace!("Unhandled tick_type {} in tick_generic", tick_type),
+      }
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received tick_generic for unknown or non-tick subscription ID: {}", req_id);
+    }
+  }
+
+  fn tick_efp(&self, req_id: i32, tick_type: i32, basis_points: f64, _formatted_basis_points: &str,
+              _implied_futures_price: f64, _hold_days: i32, _future_last_trade_date: &str,
+              _dividend_impact: f64, _dividends_to_last_trade_date: f64) {
+    trace!("Handler: Tick EFP: ID={}, Type={}, BasisPts={}", req_id, tick_type, basis_points);
+    // EFP data doesn't typically fit into the standard MarketDataSubscription fields.
+    // An observer pattern or dedicated callback might be better here.
+    // For now, just log it.
+  }
+
+  fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData) {
+    trace!("Handler: Tick Option Computation: ID={}, Type={}", req_id, data.tick_type);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      state.option_computation = Some(data);
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received tick_option_computation for unknown or non-tick subscription ID: {}", req_id);
+    }
+  }
+
+  fn tick_snapshot_end(&self, req_id: i32) {
+    debug!("Handler: Tick Snapshot End: ID={}", req_id);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      state.snapshot_end_received = true;
+      // If this was a blocking quote snapshot request, mark as complete and notify waiter.
+      if state.is_blocking_quote_request {
+        state.quote_received = true;
+        debug!("Snapshot end received for blocking quote ReqID {}. Notifying waiter.", req_id);
+        self.request_cond.notify_all();
+      }
+    } else {
+      // warn!("Received tick_snapshot_end for unknown or non-tick subscription ID: {}", req_id);
+    }
+  }
+
+  fn market_data_type(&self, req_id: i32, market_data_type: MarketDataTypeEnum) {
+    debug!("Handler: Market Data Type: ID={}, Type={:?}", req_id, market_data_type);
+    let mut subs = self.subscriptions.lock();
+    // Store the type in all relevant subscription types?
+    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      state.market_data_type = Some(market_data_type);
+    } else if let Some(MarketSubscription::MarketDepth(_state)) = subs.get_mut(&req_id) {
+      // Market depth might also care about frozen status
+      // state.market_data_type = Some(market_data_type); // Add field if needed
+    }
+    // No need to notify observers for this meta-information usually.
+  }
+
+  fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32) {
+    debug!("Handler: Tick Req Params: ID={}, MinTick={}, BBOExch={}, Permissions={}", req_id, min_tick, bbo_exchange, snapshot_permissions);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      // Store snapshot permissions if this was a snapshot request
+      if state.snapshot {
+        state.snapshot_permissions = Some(snapshot_permissions);
+      }
+      // min_tick and bbo_exchange might be useful context but aren't typically stored as live data.
+    } else {
+      // warn!("Received tick_req_params for unknown or non-tick subscription ID: {}", req_id);
+    }
+  }
+
+  // --- Real Time Bars ---
+  fn real_time_bar(&self, req_id: i32, time: i64, open: f64, high: f64, low: f64, close: f64,
+                   volume: f64, wap: f64, count: i32) {
+    trace!("Handler: Real Time Bar: ID={}, Time={}, O={}, H={}, L={}, C={}", req_id, time, open, high, low, close);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::RealTimeBars(state)) = subs.get_mut(&req_id) {
+      let bar = Bar {
+        time: Utc.timestamp_opt(time, 0).single().unwrap_or(Utc::now()), // Convert Unix timestamp
+        open, high, low, close,
+        volume: volume as i64, // Convert f64 back to i64
+        wap,
+        count,
+      };
+      state.latest_bar = Some(bar);
+      // self.notify_observers(req_id); // Or specific bar observer
+    } else {
+      // warn!("Received real_time_bar for unknown or non-RTBar subscription ID: {}", req_id);
+    }
+  }
+
+  // --- Historical Data ---
+  fn historical_data(&self, req_id: i32, bar: &Bar) {
+    trace!("Handler: Historical Data Bar: ID={}, Time={}", req_id, bar.time);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
+      state.bars.push(bar.clone());
+      // Don't notify yet, wait for end.
+    } else {
+      // warn!("Received historical_data for unknown or non-historical subscription ID: {}", req_id);
+    }
+  }
+
+  fn historical_data_update(&self, req_id: i32, bar: &Bar) {
+    debug!("Handler: Historical Data Update Bar: ID={}, Time={}", req_id, bar.time);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
+      // Handle update - e.g., replace last bar or append if time is newer
+      if let Some(last_bar) = state.bars.last_mut() {
+        if bar.time == last_bar.time {
+          *last_bar = bar.clone();
+        } else if bar.time > last_bar.time {
+          state.bars.push(bar.clone());
+        } else {
+          warn!("Received out-of-order historical update for ReqID {}: UpdateTime={}, LastBarTime={}", req_id, bar.time, last_bar.time);
+        }
+      } else {
+        state.bars.push(bar.clone()); // First update
+      }
+      state.update_received = true;
+      // self.notify_observers(req_id); // Notify observer about update
+    } else {
+      // warn!("Received historical_data_update for unknown or non-historical subscription ID: {}", req_id);
+    }
+  }
+
+  fn historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) {
+    debug!("Handler: Historical Data End: ID={}, Start={}, End={}", req_id, start_date, end_date);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
+      state.start_date = start_date.to_string();
+      state.end_date = end_date.to_string();
+      state.end_received = true;
+      info!("Historical data end received for request {}. Notifying waiter.", req_id);
+      self.request_cond.notify_all(); // Signal waiting thread
+    } else {
+      // warn!("Received historical_data_end for unknown or non-historical subscription ID: {}", req_id);
+    }
+  }
+
+  fn historical_ticks(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool) {
+    debug!("Handler: Historical Ticks: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
+    // Store or process historical ticks. Similar logic to historical bars.
+    // Needs state in DataMarketManager if blocking is required.
+    if done {
+      info!("Historical ticks end received for request {}. Notifying waiter.", req_id);
+      // self.request_cond.notify_all();
+    }
+  }
+
+  fn historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
+    debug!("Handler: Historical Ticks BidAsk: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
+    if done {
+      info!("Historical ticks bidask end received for request {}. Notifying waiter.", req_id);
+      // self.request_cond.notify_all();
+    }
+  }
+
+  fn historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
+    debug!("Handler: Historical Ticks Last: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
+    if done {
+      info!("Historical ticks last end received for request {}. Notifying waiter.", req_id);
+      // self.request_cond.notify_all();
+    }
+  }
+
+  // --- Tick By Tick ---
+  fn tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: i64, price: f64, size: f64,
+                           tick_attrib_last: TickAttribLast, exchange: &str, special_conditions: &str) {
+    trace!("Handler: TickByTick AllLast: ID={}, Time={}, Px={}, Sz={}", req_id, time, price, size);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
+      let data = if tick_type == 1 {
+        TickByTickData::Last { time, price, size, tick_attrib_last, exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
+      } else {
+        TickByTickData::AllLast { time, price, size, tick_attrib_last, exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
+      };
+      state.latest_tick = Some(data);
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received tick_by_tick_all_last for unknown or non-TBT subscription ID: {}", req_id);
+    }
+  }
+
+  fn tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64, bid_size: f64,
+                          ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk) {
+    trace!("Handler: TickByTick BidAsk: ID={}, Time={}, BidPx={}, AskPx={}", req_id, time, bid_price, ask_price);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
+      state.latest_tick = Some(TickByTickData::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask });
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received tick_by_tick_bid_ask for unknown or non-TBT subscription ID: {}", req_id);
+    }
+  }
+
+  fn tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) {
+    trace!("Handler: TickByTick MidPoint: ID={}, Time={}, MidPt={}", req_id, time, mid_point);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
+      state.latest_tick = Some(TickByTickData::MidPoint { time, mid_point });
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received tick_by_tick_mid_point for unknown or non-TBT subscription ID: {}", req_id);
+    }
+  }
+
+  // --- Market Depth ---
+  fn update_mkt_depth(&self, req_id: i32, position: i32, operation: i32, side: i32, price: f64, size: f64) {
+    trace!("Handler: MktDepth L1 Update: ID={}, Pos={}, Op={}, Side={}, Px={}, Sz={}", req_id, position, operation, side, price, size);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::MarketDepth(state)) = subs.get_mut(&req_id) {
+      // Update L1 fields directly (simple approach, assumes position 0)
+      if position == 0 {
+        match side {
+          1 => { // Bid
+            state.bid_price = Some(price);
+            state.bid_size = Some(size);
+          },
+          0 => { // Ask
+            state.ask_price = Some(price);
+            state.ask_size = Some(size);
+          },
+          _ => {}
+        }
+      }
+      // Update L2 depth book (more complex logic needed here for insert/update/delete)
+      let depth_list = if side == 1 { &mut state.depth_bids } else { &mut state.depth_asks };
+      let row = MarketDepthRow { position, operation, side, price, size, market_maker: String::new(), is_smart_depth: None };
+
+      match operation {
+        0 => { // Insert
+          if let Some(idx) = depth_list.iter().position(|r| r.position >= position) {
+            depth_list.insert(idx, row);
+            // Shift positions of subsequent rows? TWS usually sends updates or deletes for shifts.
+          } else {
+            depth_list.push(row);
+          }
+        },
+        1 => { // Update
+          if let Some(existing_row) = depth_list.iter_mut().find(|r| r.position == position) {
+            existing_row.price = price;
+            existing_row.size = size;
+            // Keep other fields
+          } else {
+            warn!("Market Depth Update for non-existent position {} on ReqID {}", position, req_id);
+            // Optionally insert if update is for missing row?
+            depth_list.push(row); // Insert as fallback
+            depth_list.sort_by_key(|r| r.position); // Keep sorted
+          }
+        },
+        2 => { // Delete
+          depth_list.retain(|r| r.position != position);
+        },
+        _ => warn!("Unknown market depth operation: {}", operation),
+      }
+      // Trim list if it exceeds num_rows? TWS usually manages this.
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received update_mkt_depth for unknown or non-Depth subscription ID: {}", req_id);
+    }
+  }
+
+  fn update_mkt_depth_l2(&self, req_id: i32, position: i32, market_maker: &str, operation: i32,
+                         side: i32, price: f64, size: f64, is_smart_depth: bool) {
+    trace!("Handler: MktDepth L2 Update: ID={}, Pos={}, MM={}, Op={}, Side={}, Px={}, Sz={}, Smart={}",
+           req_id, position, market_maker, operation, side, price, size, is_smart_depth);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::MarketDepth(state)) = subs.get_mut(&req_id) {
+      // Update L2 depth book
+      let depth_list = if side == 1 { &mut state.depth_bids } else { &mut state.depth_asks };
+      let row = MarketDepthRow { position, operation, side, price, size, market_maker: market_maker.to_string(), is_smart_depth: Some(is_smart_depth) };
+
+      match operation {
+        0 => { // Insert
+          // Find insert position, handle duplicates? TWS usually sends unique rows
+          if let Some(idx) = depth_list.iter().position(|r| r.position >= position) {
+            depth_list.insert(idx, row);
+          } else {
+            depth_list.push(row);
+          }
+        },
+        1 => { // Update
+          if let Some(existing_row) = depth_list.iter_mut().find(|r| r.position == position && r.market_maker == market_maker) {
+            existing_row.price = price;
+            existing_row.size = size;
+            existing_row.is_smart_depth = Some(is_smart_depth);
+          } else {
+            warn!("Market Depth L2 Update for non-existent pos/mm {}/{} on ReqID {}", position, market_maker, req_id);
+            depth_list.push(row); // Insert as fallback
+            depth_list.sort_by_key(|r| r.position); // Keep sorted
+          }
+        },
+        2 => { // Delete
+          depth_list.retain(|r| !(r.position == position && r.market_maker == market_maker));
+        },
+        _ => warn!("Unknown market depth L2 operation: {}", operation),
+      }
+      // self.notify_observers(req_id);
+    } else {
+      // warn!("Received update_mkt_depth_l2 for unknown or non-Depth subscription ID: {}", req_id);
+    }
+  }
+
+  // --- Other Market Data ---
+  fn delta_neutral_validation(&self, req_id: i32) {
+    debug!("Handler: Delta Neutral Validation: ID={}", req_id);
+    // Usually just logged, doesn't update typical subscription state.
+  }
+
+  fn histogram_data(&self, req_id: i32) {
+    debug!("Handler: Histogram Data Received: ID={}", req_id);
+    // Placeholder, needs HistogramEntry struct and state handling if blocking needed.
+  }
+
+  fn scanner_parameters(&self, xml: &str) {
+    debug!("Handler: Scanner Parameters received ({} bytes)", xml.len());
+    // Usually handled by a one-off request, not stored in subscription state.
+  }
+
+  fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, _distance: &str,
+                  _benchmark: &str, _projection: &str, _legs_str: Option<&str>) {
+    trace!("Handler: Scanner Data Row: ID={}, Rank={}, Symbol={}", req_id, rank, contract_details.contract.symbol);
+    // Needs state management if scanner results are tracked.
+  }
+
+  fn scanner_data_end(&self, req_id: i32) {
+    debug!("Handler: Scanner Data End: ID={}", req_id);
+    // Signal completion if scanner request state is managed.
+  }
+
+  // --- Errors ---
+  fn market_data_error(&self, req_id: i32, error_code: i32, error_msg: &str) {
+    // This is called from the central error processor now
+    // We delegate the actual state update to the manager's internal handle_error
+    self.handle_error(req_id, error_code, error_msg.to_string());
+  }
+
+  // --- Rerouting ---
+  fn reroute_mkt_data_req(&self, req_id: i32, con_id: i32, exchange: &str) {
+    info!("Handler: Reroute Mkt Data Req: ID={}, ConID={}, Exch={}", req_id, con_id, exchange);
+    // Notification, usually just logged.
+  }
+
+  fn reroute_mkt_depth_req(&self, req_id: i32, con_id: i32, exchange: &str) {
+    info!("Handler: Reroute Mkt Depth Req: ID={}, ConID={}, Exch={}", req_id, con_id, exchange);
+    // Notification, usually just logged.
+  }
+}

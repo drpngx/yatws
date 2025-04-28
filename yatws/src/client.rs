@@ -274,8 +274,9 @@ mod mgr {
       // Specific error codes might indicate disconnection
       match error_code {
         // See https://interactivebrokers.github.io/tws-api/message_codes.html
-        501 | 502 | 503 | 504 | 507 | 509 | 1100 | 1101 | 1102 | 1300 | 2109 | 2110 | 2158 => {
-          warn!("Error code {} suggests potential disconnection.", error_code);
+        // Codes indicating connectivity issues or fatal errors.
+        501 | 502 | 503 | 504 | 507 | 509 | 1100 | 1101 | 1102 | 1300 | 2109 | 2110 => {
+          warn!("Error code {} indicates potential disconnection.", error_code);
           self.set_connected_status(false);
         }
         _ => {}

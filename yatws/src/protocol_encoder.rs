@@ -1114,13 +1114,19 @@ impl Encoder {
 
     // --- Order Misc Options ---
     if self.server_version >= min_server_ver::LINKING {
-      let misc_options_str = request.order_misc_options
-        .iter()
-        .map(|(key, value)| format!("{key}={value}")) // Format each pair
-        .collect::<Vec<String>>() // Collect into a vector of strings
-        .join(";"); // Join them with semicolons
+      let misc_options_str = if request.order_misc_options.is_empty() {
+          // If the vector is empty, send an empty string (which results in just '\0')
+          String::new()
+      } else {
+          // If not empty, format as Key=Value pairs joined by semicolons
+          request.order_misc_options
+              .iter()
+              .map(|(key, value)| format!("{key}={value}"))
+              .collect::<Vec<String>>()
+              .join(";") // Use semicolon separator
+      };
 
-      // Write the single resulting string (will add null terminator)
+      // Write the resulting string (empty or joined) followed by null terminator
       self.write_str_to_cursor(&mut cursor, &misc_options_str)?;
     }
 
@@ -1372,59 +1378,108 @@ impl Encoder {
     Ok(())
   }
 
-  pub fn encode_request_market_data(&self, req_id: i32, contract: &Contract, generic_tick_list: &str, snapshot: bool, regulatory_snapshot: bool /* Add mkt data options */) -> Result<Vec<u8>, IBKRError> {
+  pub fn encode_request_market_data(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    generic_tick_list: &str,
+    snapshot: bool,
+    regulatory_snapshot: bool,
+    mkt_data_options: &[(String, String)], // Added parameter
+  ) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request market data message for contract {}: ReqID={}", contract.symbol, req_id);
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketData as i32)?;
 
-    // Determine version based on server capabilities and features used
-    let mut version = 9; // Base version supporting essential fields
-    if self.server_version >= min_server_ver::DELTA_NEUTRAL_CONID { version = 10; }
-    if self.server_version >= min_server_ver::REQ_MKT_DATA_CONID && !generic_tick_list.is_empty() { version = 10; } // Generic ticks require v10+
-    if self.server_version >= min_server_ver::REQ_SMART_COMPONENTS { version = 10; } // Reg snapshot needs v10+
-    if self.server_version >= min_server_ver::LINKING { version = 11; } // Market data options need v11+
-    // Add more checks...
+    // --- Pre-Checks (Matching Java Implementation) ---
+    if self.server_version < min_server_ver::SNAPSHOT_MKT_DATA && snapshot {
+      return Err(IBKRError::UpdateTws(
+        "Server version does not support snapshot market data requests.".to_string(),
+      ));
+    }
+    if self.server_version < min_server_ver::DELTA_NEUTRAL {
+      if contract.delta_neutral_contract.is_some() {
+        return Err(IBKRError::UpdateTws(
+          "Server version does not support delta-neutral orders/contracts.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::REQ_MKT_DATA_CONID {
+      if contract.con_id > 0 {
+        return Err(IBKRError::UpdateTws(
+          "Server version does not support conId parameter in reqMarketData.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::TRADING_CLASS {
+      if !contract.trading_class.is_none() {
+        return Err(IBKRError::UpdateTws(
+          "Server version does not support tradingClass parameter in reqMarketData.".to_string(),
+        ));
+      }
+    }
+    if self.server_version < min_server_ver::REQ_SMART_COMPONENTS && regulatory_snapshot {
+        return Err(IBKRError::UpdateTws(
+            "Server version does not support regulatory snapshot requests.".to_string(),
+        ));
+    }
+    if self.server_version < min_server_ver::LINKING && !mkt_data_options.is_empty() {
+        return Err(IBKRError::UpdateTws(
+            "Server version does not support market data options.".to_string(),
+        ));
+    }
+
+    // --- Start Encoding ---
+    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketData as i32)?;
+    let version = 11; // Hardcoded version from Java reference for this message
 
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
-    // Encode contract fields (use helper or specific fields)
-    // Version checks are crucial here based on the *RequestMarketData* message structure evolution
-    if version >= 3 {
-      self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+    // --- Encode Contract Fields (Order matches Java) ---
+    if self.server_version >= min_server_ver::REQ_MKT_DATA_CONID {
+      self.write_int_to_cursor(&mut cursor, contract.con_id)?;
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    if version >= 2 {
-      self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
-      self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
-      self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
-    }
-    if version >= 8 {
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    if self.server_version >= 15 {
       self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
     }
     self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
-    if version >= 2 {
+    if self.server_version >= 14 {
       self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
     }
     self.write_str_to_cursor(&mut cursor, &contract.currency)?;
-    if version >= 2 {
+    if self.server_version >= 2 {
       self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
     }
-    if version >= 8 {
+    if self.server_version >= min_server_ver::TRADING_CLASS {
       self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
     }
-    if version >= 9 {
-      if contract.sec_type == SecType::Combo {
-        self.encode_combo_legs(&mut cursor, &contract.combo_legs)?;
+
+    // --- Encode Combo Legs (Inline, matches Java) ---
+    if self.server_version >= 8 && contract.sec_type == SecType::Combo { // Java uses BAG, Rust uses Combo
+      self.write_int_to_cursor(&mut cursor, contract.combo_legs.len() as i32)?;
+      for leg in &contract.combo_legs {
+        self.write_int_to_cursor(&mut cursor, leg.con_id)?;
+        self.write_int_to_cursor(&mut cursor, leg.ratio)?;
+        self.write_str_to_cursor(&mut cursor, &leg.action)?; // BUY/SELL/SSHORT
+        self.write_str_to_cursor(&mut cursor, &leg.exchange)?;
+        // Note: ComboLeg fields like openClose, shortSaleSlot, designatedLocation, exemptCode
+        // are NOT sent in reqMktData according to Java reference, only in placeOrder.
       }
     }
+    // NOTE: Unlike the Rust code's previous interpretation, the Java reference
+    // does NOT send a 0 count here if the contract is not a combo, even if server_version >= 8.
+    // The absence of the field implies 0 legs for non-combo contracts in this message.
 
-    // Encode delta neutral if applicable (version check applied inside helper based on `version` variable)
-    if version >= 10 {
+
+    // --- Encode Delta Neutral Contract (matches Java) ---
+    if self.server_version >= min_server_ver::DELTA_NEUTRAL {
       if let Some(dn) = &contract.delta_neutral_contract {
         self.write_bool_to_cursor(&mut cursor, true)?;
         self.write_int_to_cursor(&mut cursor, dn.con_id)?;
-        // Delta/price for DN contract are sent here in reqMktData unlike PlaceOrder
         self.write_double_to_cursor(&mut cursor, dn.delta)?;
         self.write_double_to_cursor(&mut cursor, dn.price)?;
       } else {
@@ -1432,25 +1487,31 @@ impl Encoder {
       }
     }
 
-    // Generic tick list (comma-separated IDs)
-    if version >= 6 { // Check version for generic tick list field
+    // --- Generic Tick List (matches Java) ---
+    if self.server_version >= 31 {
       self.write_str_to_cursor(&mut cursor, generic_tick_list)?;
     }
 
-    // Snapshot
-    if version >= 3 { // Check version for snapshot field
+    // --- Snapshot (matches Java) ---
+    if self.server_version >= min_server_ver::SNAPSHOT_MKT_DATA {
       self.write_bool_to_cursor(&mut cursor, snapshot)?;
     }
 
-    // Regulatory snapshot
-    if version >= 10 { // Check version for regulatory snapshot
+    // --- Regulatory Snapshot (matches Java) ---
+    if self.server_version >= min_server_ver::REQ_SMART_COMPONENTS {
       self.write_bool_to_cursor(&mut cursor, regulatory_snapshot)?;
     }
 
-    // Market data options (TagValue list)
-    if version >= 11 { // Check version for market data options
-      // Placeholder for actual options - assumed empty for now
-      self.write_tag_value_list(&mut cursor, &[])?; // Pass actual options Vec here
+    // --- Market Data Options (matches Java) ---
+    if self.server_version >= min_server_ver::LINKING {
+      // Speculative Fix: Only send the field if the list is NOT empty.
+      // This deviates from the Java client but might avoid a TWS parsing issue
+      // with an empty TagValue list field in reqMktData.
+      if !mkt_data_options.is_empty() {
+        self.write_tag_value_list(&mut cursor, mkt_data_options)?;
+      } else {
+        trace!("Omitting empty mktDataOptions field for reqMktData even though server version supports it.");
+      }
     }
 
     Ok(self.finish_encoding(cursor))
