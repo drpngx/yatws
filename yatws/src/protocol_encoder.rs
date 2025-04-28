@@ -440,7 +440,7 @@ impl Encoder {
   }
 
   // --- encode_request_ids, etc. ---
-  pub fn encode_request_ids(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn _encode_request_ids(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request IDs message");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestIds as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
@@ -1330,7 +1330,7 @@ impl Encoder {
 
 
   // --- Helper to encode contract for placing orders ---
-  fn encode_contract_for_order(&self, cursor: &mut Cursor<Vec<u8>>, contract: &Contract) -> Result<(), IBKRError> {
+  fn _encode_contract_for_order(&self, cursor: &mut Cursor<Vec<u8>>, contract: &Contract) -> Result<(), IBKRError> {
     // Fields included depend on server version and message context (PlaceOrder)
     self.write_optional_int_to_cursor(cursor, Some(contract.con_id))?; // Always send conId if available (usually 0 for new orders unless specified)
     self.write_str_to_cursor(cursor, &contract.symbol)?;
@@ -1465,14 +1465,14 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn encode_request_all_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn _encode_request_all_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request all open orders");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestAllOpenOrders as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn _encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request open orders");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestOpenOrders as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
@@ -1583,7 +1583,7 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn _encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request managed accounts");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestManagedAccts as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version

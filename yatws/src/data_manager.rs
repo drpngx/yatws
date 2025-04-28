@@ -70,6 +70,7 @@ struct DataRefRequestState {
 }
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
 pub struct SecDefOptParamsResult {
   exchange: String,
   underlying_con_id: i32,
@@ -80,6 +81,7 @@ pub struct SecDefOptParamsResult {
 }
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
 struct HistoricalScheduleResult {
   start_date_time: String,
   end_date_time: String,
@@ -412,7 +414,7 @@ impl DataRefManager {
 
 
   // --- Internal error handling ---
-  pub(crate) fn handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
+  pub(crate) fn _handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
     if req_id <= 0 { return; } // Ignore general errors
 
     let mut states = self.request_states.lock();
@@ -1766,7 +1768,7 @@ impl DataNewsManager {
   }
 
   // --- Internal error handling ---
-  pub(crate) fn handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
+  pub(crate) fn _handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
     if req_id <= 0 { return; } // Ignore general errors
 
     let mut states = self.request_states.lock();
@@ -2125,7 +2127,7 @@ impl DataFundamentalsManager {
   }
 
   // --- Internal error handling ---
-  pub(crate) fn handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
+  pub(crate) fn _handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
     if req_id <= 0 { return; } // Ignore general errors not tied to a request
 
     let mut states = self.request_states.lock();

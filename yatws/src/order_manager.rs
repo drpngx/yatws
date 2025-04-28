@@ -208,7 +208,7 @@ impl OrderManager {
 
   /// Modify an order.
   /// This sends a *new* placeOrder command with the *same ID* but updated parameters.
-  /// Returns the Arc<RwLock<Order>> for the existing order.
+  /// Returns the `Arc<RwLock<Order>>` for the existing order.
   pub fn modify_order(&self, order_id: &str, updates: OrderUpdates) -> Result<Arc<RwLock<Order>>, IBKRError> {
     info!("Modifying order ID: {} with updates: {:?}", order_id, updates);
     let order_id_int = order_id.parse::<i32>()

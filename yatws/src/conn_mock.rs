@@ -47,6 +47,7 @@ impl FromStr for LogDirection {
 // --- Data Structures ---
 #[derive(Debug, Clone)]
 struct LoggedMessage {
+  #[allow(dead_code)]
   session_id: i64,
   direction: LogDirection,
   message_type_id: Option<i32>,
