@@ -1,0 +1,27 @@
+# Aider config file.
+# https://aider.chat/docs/config/aider_conf.html
+architect: true
+gitignore: false
+
+# Models:
+# Default aliases: https://aider.chat/docs/config/model-aliases.html#built-in-aliases
+alias:
+  - "gemini:gemini/gemini-2.5-pro-exp-03-25"
+  - "gemini-pay:gemini/gemini-2.5-pro-preview-03-25"
+# thinking-tokens, reasoning-effort
+# Default models: https://aider.chat/docs/config/adv-model-settings.html
+# Note it already has suitable weak-model configs subordinated to the main model.
+model: gemini
+# editor-model: gemini
+# Only available in sonnet: thinking-tokens.
+
+llm-history-file: .aider.llm-history.log
+stream: false
+# Just build:
+test-cmd: cd ~/yatws; bazel build -c opt //yatws/...
+auto-lint: false
+analytics-disable: true
+# Watch the AI comments:
+watch-files: false
+# Debugging
+verbose: false
