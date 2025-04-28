@@ -27,6 +27,9 @@ pub struct OrderManager {
   // Condvars for waiting on specific order state changes (client_order_id -> Condvar)
   // Arc<(Mutex for Condvar, Condvar)>
   order_update_condvars: RwLock<HashMap<String, Arc<(Mutex<()>, Condvar)>>>,
+  // Flag and Condvar for waiting on openOrderEnd after a refresh request
+  open_order_end_flag: Mutex<bool>,
+  open_order_end_condvar: Condvar,
 }
 
 impl OrderManager {
@@ -41,6 +44,8 @@ impl OrderManager {
       next_order_id_state: Mutex::new(None), // Start as None
       order_id_condvar: Condvar::new(),
       order_update_condvars: RwLock::new(HashMap::new()),
+      open_order_end_flag: Mutex::new(false), // Initialize flag
+      open_order_end_condvar: Condvar::new(), // Initialize condvar
     });
 
     let manager_clone = manager.clone();
@@ -295,6 +300,60 @@ impl OrderManager {
     // We don't update the local OrderRequest immediately. We wait for OrderStatus updates.
     Ok(order_arc)
   }
+
+  /// Refreshes the order book by requesting all open orders from TWS and waiting for completion.
+  ///
+  /// This is a blocking call. It sends `reqAllOpenOrders` and waits for the `openOrderEnd`
+  /// message from TWS, or until the specified timeout is reached.
+  ///
+  /// # Arguments
+  /// * `timeout` - The maximum duration to wait for the `openOrderEnd` signal.
+  ///
+  /// # Returns
+  /// * `Ok(())` if the refresh completed successfully within the timeout.
+  /// * `Err(IBKRError::Timeout)` if the timeout was reached before `openOrderEnd` was received.
+  /// * `Err(IBKRError::...)` for other potential errors during message encoding or sending.
+  pub fn refresh_orderbook(&self, timeout: Duration) -> Result<(), IBKRError> {
+    info!("Requesting order book refresh (reqAllOpenOrders)...");
+
+    // 1. Reset the openOrderEnd flag *before* sending the request.
+    {
+      let mut flag_guard = self.open_order_end_flag.lock();
+      *flag_guard = false;
+      debug!("Reset openOrderEnd flag for refresh.");
+    } // Release lock
+
+    // 2. Send the reqAllOpenOrders message.
+    let encoder = Encoder::new(self.message_broker.get_server_version()?);
+    let refresh_msg = encoder.encode_request_all_open_orders()?;
+    self.message_broker.send_message(&refresh_msg)?;
+    info!("Sent reqAllOpenOrders message.");
+
+    // 3. Wait for the openOrderEnd signal.
+    let mut flag_guard = self.open_order_end_flag.lock();
+    let start_time = std::time::Instant::now();
+
+    while !*flag_guard { // Check the flag *before* waiting
+      let elapsed = start_time.elapsed();
+      if elapsed >= timeout {
+        warn!("Timeout waiting for openOrderEnd during order book refresh.");
+        return Err(IBKRError::Timeout("Timeout waiting for openOrderEnd".to_string()));
+      }
+      let remaining_wait = timeout - elapsed;
+      // Wait on the condvar, releasing the lock temporarily
+      let result = self.open_order_end_condvar.wait_for(&mut flag_guard, remaining_wait);
+      if result.timed_out() && !*flag_guard { // Re-check flag after timeout
+        warn!("Timeout waiting for openOrderEnd during order book refresh (after wait).");
+        return Err(IBKRError::Timeout("Timeout waiting for openOrderEnd".to_string()));
+      }
+      // If woken up, the loop condition (!*flag_guard) will be checked again.
+      debug!("refresh_orderbook wait notified, checking flag...");
+    }
+
+    info!("Order book refresh completed (received openOrderEnd).");
+    Ok(())
+  }
+
 
   // --- Wait Functions ---
 
@@ -724,7 +783,14 @@ impl OrderHandler for OrderManager {
     info!("Handler: Received openOrderEnd");
     // This signals the end of the initial burst of open orders after connection
     // or after reqOpenOrders / reqAllOpenOrders.
-    // Can be used to signal that the initial state is loaded.
+    // Set the flag and notify any waiters (e.g., refresh_orderbook).
+    {
+        let mut flag_guard = self.open_order_end_flag.lock();
+        *flag_guard = true;
+        debug!("Set openOrderEnd flag to true.");
+    } // Release lock
+    self.open_order_end_condvar.notify_all();
+    debug!("Notified openOrderEnd condvar.");
   }
 
   // This is called for ERR_MSG containing an order ID (code > 0)

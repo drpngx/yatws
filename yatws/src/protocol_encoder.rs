@@ -440,7 +440,7 @@ impl Encoder {
   }
 
   // --- encode_request_ids, etc. ---
-  pub fn _encode_request_ids(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn encode_request_ids(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request IDs message");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestIds as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
@@ -1334,50 +1334,6 @@ impl Encoder {
     Ok(())
   }
 
-
-  // --- Helper to encode contract for placing orders ---
-  fn _encode_contract_for_order(&self, cursor: &mut Cursor<Vec<u8>>, contract: &Contract) -> Result<(), IBKRError> {
-    // Fields included depend on server version and message context (PlaceOrder)
-    self.write_optional_int_to_cursor(cursor, Some(contract.con_id))?; // Always send conId if available (usually 0 for new orders unless specified)
-    self.write_str_to_cursor(cursor, &contract.symbol)?;
-    self.write_str_to_cursor(cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(cursor, contract.last_trade_date_or_contract_month.as_deref())?;
-    self.write_optional_double_to_cursor(cursor, contract.strike)?; // 0.0 if None
-    self.write_optional_str_to_cursor(cursor, contract.right.map(|r| r.to_string()).as_deref())?; // "" if None
-    self.write_optional_str_to_cursor(cursor, contract.multiplier.as_deref())?; // Often needed for options/futures
-    self.write_str_to_cursor(cursor, &contract.exchange)?;
-    self.write_optional_str_to_cursor(cursor, contract.primary_exchange.as_deref())?; // Important for SMART routing ambiguity
-    self.write_str_to_cursor(cursor, &contract.currency)?;
-    self.write_optional_str_to_cursor(cursor, contract.local_symbol.as_deref())?;
-    if self.server_version >= min_server_ver::TRADING_CLASS {
-      self.write_optional_str_to_cursor(cursor, contract.trading_class.as_deref())?;
-    }
-    if self.server_version >= min_server_ver::SEC_ID_TYPE {
-      self.write_optional_str_to_cursor(cursor, contract.sec_id_type.as_ref().map(|t| t.to_string()).as_deref())?;
-      self.write_optional_str_to_cursor(cursor, contract.sec_id.as_deref())?;
-    }
-
-    // Encode combo legs if it's a combo contract
-    if contract.sec_type == SecType::Combo {
-      self.encode_combo_legs(cursor, &contract.combo_legs)?;
-    }
-
-    // Encode delta neutral underlying if present (part of the contract for placing orders)
-    // Note: The delta/price fields are sent later in the Order part based on version
-    // This part just sends the DN contract identification fields.
-    if self.server_version >= min_server_ver::DELTA_NEUTRAL_CONID {
-      if let Some(_dn) = &contract.delta_neutral_contract {
-        if self.server_version >= min_server_ver::PLACE_ORDER_CONID { // Check if DN fields belong here
-          // DN conId, delta, price might be sent later in the order part
-        } else {
-          // Older versions might expect DN info here? Check docs.
-        }
-      }
-    }
-
-    Ok(())
-  }
-
   pub fn encode_request_market_data(
     &self,
     req_id: i32,
@@ -1526,14 +1482,14 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn _encode_request_all_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn encode_request_all_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request all open orders");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestAllOpenOrders as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn _encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request open orders");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestOpenOrders as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
@@ -1644,7 +1600,7 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn _encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request managed accounts");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestManagedAccts as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
