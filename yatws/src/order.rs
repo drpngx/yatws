@@ -528,6 +528,7 @@ impl FromStr for OrderSide {
       "BUY" => Ok(OrderSide::Buy),
       "BOT" => Ok(OrderSide::Buy),
       "SELL" => Ok(OrderSide::Sell),
+      "SLD" => Ok(OrderSide::Sell),
       "SSHOR" => Ok(OrderSide::SellShort),
       _ => Err(IBKRError::ParseError(format!("Unknown OrderSide string: {}", s))),
     }
