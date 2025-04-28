@@ -5,6 +5,7 @@ use crate::base::IBKRError;
 use crate::contract::Contract;
 use crate::handler::AccountHandler;
 use crate::conn::MessageBroker;
+use crate::protocol_decoder::ClientErrorCode; // Added import
 use parking_lot::{RwLock, Mutex, Condvar};
 use crate::protocol_encoder::Encoder;
 
@@ -909,4 +910,45 @@ impl AccountHandler for AccountManager {
   // fn position_multi_end(...) { ... }
   // fn account_update_multi(...) { ... }
   // fn account_update_multi_end(...) { ... }
+
+  /// Handles errors related to account data requests.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
+    warn!("AccountHandler received error: ReqID={}, Code={:?}, Msg={}", req_id, code, msg);
+
+    // Handle errors related to specific requests (e.g., summary, executions)
+    if req_id > 0 {
+      // Check if it's for an execution request
+      {
+        let mut exec_state = self.executions_state.lock();
+        if let Some(state) = exec_state.get_mut(&req_id) {
+          error!("API Error for execution request {}: Code={:?}, Msg={}", req_id, code, msg);
+          // Mark the request as failed and notify waiter
+          state.waiting = false; // Stop waiting
+          state.end_received = true; // Consider it ended due to error
+          // Store error? Maybe not needed if waiter gets IBKRError::ApiError
+          self.executions_cond.notify_all();
+          // Don't remove state here, let the waiter handle cleanup
+          return; // Handled as execution error
+        }
+      } // Release exec_state lock
+
+      // Check if it's for an account summary request
+      {
+        let mut r_state = self.refresh_state.lock();
+        if r_state.summary_request_id == Some(req_id) {
+          error!("API Error for account summary request {}: Code={:?}, Msg={}", req_id, code, msg);
+          // Mark the summary part of the refresh as failed
+          r_state.waiting_for_summary_end = false; // Stop waiting for summary
+          r_state.summary_request_id = None; // Clear the ID
+          // Notify the refresh waiter
+          self.refresh_cond.notify_all();
+          return; // Handled as summary error
+        }
+      } // Release r_state lock
+    }
+
+    // If not matched to a specific request, log as a general account error
+    error!("Unhandled Account error: ReqID={}, Code={:?}, Msg={}", req_id, code, msg);
+    // TODO: Notify observers of general account errors?
+  }
 }

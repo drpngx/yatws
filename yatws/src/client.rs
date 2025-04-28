@@ -254,32 +254,50 @@ mod mgr {
     }
   }
 
+use crate::protocol_decoder::ClientErrorCode; // Added import
+
   impl ClientHandler for ClientManager {
-    /// Handles error messages from TWS.
-    fn error(&self, id: i32, error_code: i32, error_msg: &str) {
+    /// Handles error messages from TWS or the client library.
+    /// `id` can be a request ID, order ID, or -1 for general errors.
+    fn handle_error(&self, id: i32, code: ClientErrorCode, msg: &str) {
+      let error_code_int = code as i32; // Get integer code for logging/matching
+
       // Log differently based on severity (codes >= 2000 are usually info/warnings)
-      if error_code >= 2000 && error_code < 3000 {
-        info!("TWS Info/Warning (ID: {}, Code: {}): {}", id, error_code, error_msg);
+      if error_code_int >= 2000 && error_code_int < 3000 {
+        info!("TWS Info/Warning (ID: {}, Code: {:?}={}): {}", id, code, error_code_int, msg);
       } else {
-        error!("TWS Error (ID: {}, Code: {}): {}", id, error_code, error_msg);
+        error!("TWS Error (ID: {}, Code: {:?}={}): {}", id, code, error_code_int, msg);
       }
 
       // Store the last error
       let mut last_error_guard = self.last_error.lock();
-      *last_error_guard = Some((id, error_code, error_msg.to_string()));
+      *last_error_guard = Some((id, error_code_int, msg.to_string()));
 
       // TODO: Add observer notification if observers are implemented
-      // self.notify_observers_error(id, error_code, error_msg);
+      // self.notify_observers_error(id, code, msg);
 
       // Specific error codes might indicate disconnection
-      match error_code {
+      match code { // Match on the enum now
         // See https://interactivebrokers.github.io/tws-api/message_codes.html
         // Codes indicating connectivity issues or fatal errors.
-        501 | 502 | 503 | 504 | 507 | 509 | 1100 | 1101 | 1102 | 1300 | 2109 | 2110 => {
-          warn!("Error code {} indicates potential disconnection.", error_code);
-          self.set_connected_status(false);
-        }
-        _ => {}
+        ClientErrorCode::AlreadyConnected |
+        ClientErrorCode::ConnectFail |
+        ClientErrorCode::UpdateTws |
+        ClientErrorCode::NotConnected |
+        ClientErrorCode::BadLength |
+        ClientErrorCode::FailSend |
+        // Add TWS specific codes if needed, e.g., 1100, 1101, 1102, 1300, 2109, 2110
+        // ClientErrorCode::ConnectivityBetweenTwsAndIb | ...
+         _ => {
+            // Check integer code for TWS specific disconnects not in enum yet
+            match error_code_int {
+                1100 | 1101 | 1102 | 1300 | 2109 | 2110 => {
+                    warn!("Error code {} ({:?}) indicates potential disconnection.", error_code_int, code);
+                    self.set_connected_status(false);
+                }
+                _ => {} // Other errors don't automatically set disconnected status
+            }
+         }
       }
     }
 

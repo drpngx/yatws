@@ -1,6 +1,7 @@
 // yatws/src/data_fin_manager.rs
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
+use crate::protocol_decoder::ClientErrorCode; // Added import
 use crate::contract::Contract;
 use crate::data_wsh::WshEventDataRequest;
 use crate::handler::{FinancialDataHandler};
@@ -239,19 +240,21 @@ impl DataFundamentalsManager {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
     let request_msg = encoder.encode_cancel_wsh_event_data(req_id)?;
-    self.message_broker.send_message(&request_msg)
+    self.message_broker.send_message(&request_msg)?; // Added semicolon
     // No state to clean up in the manager
+    Ok(()) // Added Ok(())
   }
 
-  // --- Internal error handling ---
-  pub(crate) fn _handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
+
+// --- Internal error handling (called by the trait method) ---
+  fn _internal_handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
     if req_id <= 0 { return; } // Ignore general errors not tied to a request
 
     let mut states = self.request_states.lock();
     if let Some(state) = states.get_mut(&req_id) {
-      warn!("API Error received for fundamental data request {}: Code={}, Msg={}", req_id, error_code, error_msg);
-      state.error_code = Some(error_code);
-      state.error_message = Some(error_msg);
+      warn!("API Error received for fundamental data request {}: Code={:?}, Msg={}", req_id, code, msg);
+      state.error_code = Some(code as i32); // Store integer code
+      state.error_message = Some(msg.to_string()); // Store owned string
       state.request_complete = true; // Mark as complete on error
       // Signal potentially waiting thread
       self.request_cond.notify_all();
@@ -286,5 +289,12 @@ impl FinancialDataHandler for DataFundamentalsManager {
 
   fn wsh_event_data(&self, req_id: i32, data_json: &str) {
     info!("Handler: Received WSH Event Data: ReqID={}, Len={}. Handler implementation should parse JSON.", req_id, data_json.len());
+  }
+
+  /// Handles errors related to financial data requests.
+  /// This is the implementation of the trait method.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
+    // Delegate to the internal helper
+    self._internal_handle_error(req_id, code, msg);
   }
 }

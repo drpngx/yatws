@@ -11,6 +11,7 @@ use crate::conn::MessageBroker;
 use crate::base::IBKRError;
 use crate::handler::OrderHandler;
 use crate::protocol_encoder::Encoder;
+use crate::protocol_decoder::ClientErrorCode; // Added import
 // Removed unused import: crate::parser_order;
 
 
@@ -757,7 +758,7 @@ impl OrderHandler for OrderManager {
 
       // Ensure condvar exists for this new order
       {
-       let mut condvars_write = self.order_update_condvars.write();
+        let mut condvars_write = self.order_update_condvars.write();
         condvars_write.entry(order_id_str.clone())
           .or_insert_with(|| Arc::new((Mutex::new(()), Condvar::new())));
       }
@@ -785,28 +786,31 @@ impl OrderHandler for OrderManager {
     // or after reqOpenOrders / reqAllOpenOrders.
     // Set the flag and notify any waiters (e.g., refresh_orderbook).
     {
-        let mut flag_guard = self.open_order_end_flag.lock();
-        *flag_guard = true;
-        debug!("Set openOrderEnd flag to true.");
+      let mut flag_guard = self.open_order_end_flag.lock();
+      *flag_guard = true;
+      debug!("Set openOrderEnd flag to true.");
     } // Release lock
     self.open_order_end_condvar.notify_all();
     debug!("Notified openOrderEnd condvar.");
   }
 
-  // This is called for ERR_MSG containing an order ID (code > 0)
-  fn order_error(&self, order_id_int: i32, error_code: i32, error_msg: &str) {
-    let order_id_str = if order_id_int > 0 {
-      order_id_int.to_string()
+  /// Handles errors specific to an order ID (e.g., placing invalid order).
+  /// This is called by the central error processor.
+  fn handle_error(&self, order_id: i32, code: ClientErrorCode, msg: &str) {
+    let order_id_str = if order_id > 0 {
+      order_id.to_string()
     } else {
       // Error not associated with a specific order ID (-1)
-      error!("Handler: Received general API error: Code={}, Msg={}", error_code, error_msg);
+      // These should ideally be handled by ClientHandler, but if routed here, log it.
+      error!("Handler (Order): Received general API error: Code={:?}, Msg={}", code, msg);
       // Notify general error observers?
-      // self.notify_observers_error("-1", &IBKRError::ApiError(error_code, error_msg.to_string()));
+      // self.notify_observers_error("-1", &IBKRError::ApiError(code as i32, msg.to_string()));
       return; // Don't process further as order-specific logic
     };
 
-    error!("Handler: Received error for Order ID {}: Code={}, Msg={}", order_id_str, error_code, error_msg);
-    let ibkr_error = IBKRError::ApiError(error_code, error_msg.to_string());
+    error!("Handler: Received error for Order ID {}: Code={:?}, Msg={}", order_id_str, code, msg);
+    // Create the IBKRError using the enum's code and the message string
+    let ibkr_error = IBKRError::ApiError(code as i32, msg.to_string());
 
     let order_arc = {
       let book = self.order_book.read();

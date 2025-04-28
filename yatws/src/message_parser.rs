@@ -35,7 +35,7 @@ pub fn process_message(handler: &mut MessageHandler, data: &[u8]) -> Result<(), 
   log::debug!("parse message: {} [{}]", msg_type, msg_to_string(data));
   let sver = handler.get_server_version();
   match msg_type {
-    4 => process_error_message(&handler.client, &mut parser)?,
+    4 => process_error_message(handler, &mut parser)?,
     9 => process_next_valid_id(&handler.order, &mut parser)?,
     1 => process_tick_price(&handler.data_market, &mut parser, sver)?,
     2 => process_tick_size(&handler.data_market, &mut parser)?,

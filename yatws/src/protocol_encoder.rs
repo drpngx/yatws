@@ -440,7 +440,7 @@ impl Encoder {
   }
 
   // --- encode_request_ids, etc. ---
-  pub fn encode_request_ids(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn _encode_request_ids(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request IDs message");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestIds as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
@@ -1489,7 +1489,7 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn _encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request open orders");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestOpenOrders as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
@@ -1600,7 +1600,7 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn _encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request managed accounts");
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestManagedAccts as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version

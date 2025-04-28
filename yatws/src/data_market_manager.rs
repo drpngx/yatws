@@ -9,6 +9,7 @@ use crate::data::{
 };
 use crate::handler::MarketDataHandler;
 use crate::protocol_encoder::Encoder;
+use crate::protocol_decoder::ClientErrorCode; // Added import
 use crate::base::IBKRError::Timeout; // Import Timeout variant directly
 use parking_lot::{Condvar, Mutex};
 use chrono::{Utc, TimeZone};
@@ -601,16 +602,20 @@ impl DataMarketManager {
     Ok(())
   }
 
-  // --- Internal error handling ---
-  pub(crate) fn handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
+  // --- Internal error handling (called by the trait method) ---
+  // Renamed to avoid conflict with the trait method name.
+  fn _internal_handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
     if req_id <= 0 { return; } // Ignore general errors not tied to a request
 
     let mut subs = self.subscriptions.lock();
     if let Some(sub_state) = subs.get_mut(&req_id) {
-      warn!("API Error received for market data request {}: Code={}, Msg={}", req_id, error_code, error_msg);
+      warn!("API Error received for market data request {}: Code={:?}, Msg={}", req_id, code, msg);
 
       // Determine if it's a blocking quote request *before* the main match
       let is_blocking_quote = matches!(sub_state, MarketSubscription::TickData(s) if s.is_blocking_quote_request);
+
+      // Convert code to i32 for storage
+      let error_code_int = code as i32;
 
       // Extract error fields and determine if it's historical
       let (err_code_field, err_msg_field, is_historical) = match sub_state {
@@ -621,8 +626,8 @@ impl DataMarketManager {
           MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, true), // Is historical
       };
 
-      *err_code_field = Some(error_code);
-      *err_msg_field = Some(error_msg.clone()); // Clone error message
+      *err_code_field = Some(error_code_int); // Store the integer code
+      *err_msg_field = Some(msg.to_string()); // Store the cloned message string
 
       // If it's a blocking request (historical or quote), mark end and notify waiter
       if is_blocking_quote || is_historical {
@@ -1074,11 +1079,11 @@ impl MarketDataHandler for DataMarketManager {
     // Signal completion if scanner request state is managed.
   }
 
-  // --- Errors ---
-  fn market_data_error(&self, req_id: i32, error_code: i32, error_msg: &str) {
-    // This is called from the central error processor now
-    // We delegate the actual state update to the manager's internal handle_error
-    self.handle_error(req_id, error_code, error_msg.to_string());
+  /// Handles errors related to market data requests.
+  /// This is the implementation of the trait method.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
+    // Delegate the actual state update to the manager's internal helper method
+    self._internal_handle_error(req_id, code, msg);
   }
 
   // --- Rerouting ---

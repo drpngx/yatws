@@ -8,6 +8,7 @@ use crate::contract::{
   Bar, Contract, ContractDetails, SoftDollarTier, FamilyCode, ContractDescription,
   DepthMktDataDescription, HistoricalSession, PriceIncrement
 };
+use crate::protocol_decoder::ClientErrorCode;
 use crate::data::{
   TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
   MarketDataTypeEnum,
@@ -16,7 +17,9 @@ use crate::news::NewsProvider;
 
 /// Meta messages such as errors and time.
 pub trait ClientHandler: Send + Sync {
-  fn error(&self, id: i32, error_code: i32, error_msg: &str);
+  /// Handles error messages from TWS or the client library.
+  /// `id` can be a request ID, order ID, or -1 for general errors.
+  fn handle_error(&self, id: i32, code: ClientErrorCode, msg: &str);
   fn connection_closed(&self);
   fn current_time(&self, time_unix: i64);
   fn verify_message_api(&self, _api_data: &str);
@@ -68,8 +71,8 @@ pub trait OrderHandler: Send + Sync {
   fn open_order_end(&self);
 
   /// Callback for errors specific to an order ID (e.g., placing invalid order).
-  /// Should be called from ClientHandler::error when id > 0.
-  fn order_error(&self, order_id: i32, error_code: i32, error_msg: &str);
+  /// Handles errors specific to an order ID (e.g., placing invalid order).
+  fn handle_error(&self, order_id: i32, code: ClientErrorCode, msg: &str);
 
   /// Message sent when TWS binds an API order ID to a TWS order ID.
   /// Primarily useful for tracking orders submitted through other means or sessions.
@@ -126,6 +129,9 @@ pub trait AccountHandler: Send + Sync {
   // fn position_multi_end(&self, req_id: i32);
   // fn account_update_multi(&self, req_id: i32, account: &str, model_code: &str, key: &str, value: &str, currency: &str);
   // fn account_update_multi_end(&self, req_id: i32);
+
+  /// Handles errors related to account data requests.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
 }
 
 pub trait ReferenceDataHandler: Send + Sync {
@@ -181,6 +187,9 @@ pub trait ReferenceDataHandler: Send + Sync {
     sessions: &[HistoricalSession],
   );
 
+  /// Handles errors related to reference data requests.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
+
   // Add other reference data methods as needed (e.g., scanner parameters)
 }
 
@@ -231,8 +240,8 @@ pub trait MarketDataHandler: Send + Sync {
                   benchmark: &str, projection: &str, legs_str: Option<&str>);
   fn scanner_data_end(&self, req_id: i32);
 
-  // --- Errors ---
-  fn market_data_error(&self, req_id: i32, error_code: i32, error_msg: &str); // Specific error callback
+  /// Handles errors related to market data requests.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
 
   // --- Rerouting ---
   fn reroute_mkt_data_req(&self, req_id: i32, con_id: i32, exchange: &str);
@@ -252,6 +261,9 @@ pub trait FinancialDataHandler: Send + Sync {
   /// Provides a Wall Street Horizon event data update requested via `reqWshEventData`.
   /// The `data_json` is expected to be a JSON string representing one event.
   fn wsh_event_data(&self, req_id: i32, data_json: &str);
+
+  /// Handles errors related to financial data requests.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
 }
 
 pub trait NewsDataHandler: Send + Sync {
@@ -278,13 +290,24 @@ pub trait NewsDataHandler: Send + Sync {
 
   /// Receives a news tick indicating a new headline.
   fn tick_news(&self, req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str, headline: &str, extra_data: &str);
+
+  /// Handles errors related to news data requests.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
 }
 
 pub trait FinancialAdvisorHandler: Send + Sync {
+  /// Handles errors related to Financial Advisor features.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
 }
 
+/// A dummy implementation for FinancialAdvisorHandler, used when no specific handler is provided.
 struct Dummy {}
-impl FinancialAdvisorHandler for Dummy {}
+impl FinancialAdvisorHandler for Dummy {
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
+    // Default implementation logs the error but takes no further action.
+    log::warn!("Unhandled FinancialAdvisor error (ReqID: {}): Code {:?} - {}", req_id, code, msg);
+  }
+}
 
 pub struct MessageHandler {
   server_version: i32,

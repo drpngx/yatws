@@ -1,6 +1,7 @@
 // yatws/src/data_ref_manager.rs
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
+use crate::protocol_decoder::ClientErrorCode;
 use crate::contract::{
   Contract, ContractDetails, SecType, SoftDollarTier, FamilyCode, ContractDescription,
   DepthMktDataDescription, MarketRule, PriceIncrement, HistoricalSession,
@@ -401,18 +402,18 @@ impl DataRefManager {
     })
   }
 
-  // --- Add get_historical_schedule if needed ---
+// --- Add get_historical_schedule if needed ---
 
 
-  // --- Internal error handling ---
-  pub(crate) fn _handle_error(&self, req_id: i32, error_code: i32, error_msg: String) {
+// --- Internal error handling (called by the trait method) ---
+  fn _internal_handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
     if req_id <= 0 { return; } // Ignore general errors
 
     let mut states = self.request_states.lock();
     if let Some(state) = states.get_mut(&req_id) {
-      warn!("API Error received for reference data request {}: Code={}, Msg={}", req_id, error_code, error_msg);
-      state.error_code = Some(error_code);
-      state.error_message = Some(error_msg);
+      warn!("API Error received for reference data request {}: Code={:?}, Msg={}", req_id, code, msg);
+      state.error_code = Some(code as i32); // Store integer code
+      state.error_message = Some(msg.to_string()); // Store owned string
       // Signal potentially waiting thread
       self.request_cond.notify_all();
     }
@@ -629,5 +630,12 @@ impl ReferenceDataHandler for DataRefManager {
     } else {
       warn!("Received historical schedule for unknown or completed request ID: {}", req_id);
     }
+  }
+
+  /// Handles errors related to reference data requests.
+  /// This is the implementation of the trait method.
+  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
+    // Delegate to the internal helper
+    self._internal_handle_error(req_id, code, msg);
   }
 }
