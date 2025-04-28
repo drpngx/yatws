@@ -1,6 +1,9 @@
 use crate::order_manager::OrderManager;
 use crate::account_manager::AccountManager;
-use crate::data_manager::{DataRefManager, DataMarketManager, DataNewsManager, DataFundamentalsManager};
+use crate::data_ref_manager::DataRefManager;
+use crate::data_market_manager::DataMarketManager;
+use crate::data_news_manager::DataNewsManager;
+use crate::data_fin_manager::DataFundamentalsManager;
 use crate::conn::{Connection, SocketConnection, MessageBroker};
 use crate::conn_log::ConnectionLogger;
 use crate::conn_mock::MockConnection;

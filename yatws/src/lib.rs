@@ -13,7 +13,7 @@
 
 mod base;
 mod account;
-mod data;
+mod data; // Keep data.rs for shared structs
 mod news;
 mod protocol_encoder;
 mod protocol_decoder;
@@ -34,7 +34,10 @@ mod conn_mock;
 pub mod contract;
 pub mod order_manager;
 pub mod account_manager;
-pub mod data_manager;
+pub mod data_ref_manager;
+pub mod data_market_manager;
+pub mod data_news_manager;
+pub mod data_fin_manager;
 pub mod client;
 pub mod handler;
 pub mod conn;
