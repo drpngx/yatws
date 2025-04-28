@@ -50,6 +50,9 @@ pub struct MarketDataSubscription {
   // Snapshot specific
   pub snapshot_permissions: Option<i32>,
   pub snapshot_end_received: bool, // Flag for snapshot completion
+  // Internal flags for blocking requests
+  pub is_blocking_quote_request: bool, // Is this a request from get_quote?
+  pub quote_received: bool, // Flag set by tick_snapshot_end or when all required ticks arrive
   // General
   pub market_data_type: Option<MarketDataTypeEnum>, // From message 58
   pub error_code: Option<i32>,
@@ -104,6 +107,8 @@ impl MarketDataSubscription {
       latest_news_time: None,
       snapshot_permissions: None,
       snapshot_end_received: false,
+      is_blocking_quote_request: false, // Default to false
+      quote_received: false, // Default to false
       market_data_type: None,
       error_code: None,
       error_message: None,
