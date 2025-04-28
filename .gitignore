@@ -6,3 +6,4 @@ IBJts
 .aider.chat*
 .aider.*cache*
 .aider.input*
+.aider.llm-history.log

@@ -1,6 +1,7 @@
 # Aider config file.
 # https://aider.chat/docs/config/aider_conf.html
-architect: true
+# Architect generates chatter that is more expensive. Instead, we generate carefully crafted queries.
+architect: false
 gitignore: false
 
 # Models:
@@ -14,7 +15,10 @@ alias:
 model: gemini
 # editor-model: gemini
 # Only available in sonnet: thinking-tokens.
-
+auto-commits: false
+auto-accept-architect: false
+# Not sure: default is true.
+# auto-lint: true
 llm-history-file: .aider.llm-history.log
 stream: false
 # Just build:
