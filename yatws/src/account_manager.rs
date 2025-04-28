@@ -155,7 +155,7 @@ impl AccountManager {
   pub fn list_open_positions(&self) -> Result<Vec<Position>, IBKRError> {
     // read() returns guard directly
     let state = self.account_state.read();
-    Ok(state.portfolio.values().cloned().collect())
+    Ok(state.portfolio.values().filter(|p| p.quantity != 0.0).cloned().collect())
   }
 
   pub fn get_daily_pnl(&self) -> Result<f64, IBKRError> {
