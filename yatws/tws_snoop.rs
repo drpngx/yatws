@@ -195,7 +195,7 @@ fn log_message_body(direction: &str, body: &[u8], show_hex: bool) {
 
 
 fn handle_connection(
-  mut client_stream: TcpStream,
+  client_stream: TcpStream,
   server_addr: &str,
   show_hex: bool,
   read_timeout: Duration,
@@ -206,7 +206,7 @@ fn handle_connection(
 
   // --- 1. Connect to TWS Server ---
   info!("{} Connecting to TWS server at {}", log_prefix, server_addr);
-  let mut server_stream = match TcpStream::connect_timeout(&server_addr.parse().map_err(|e| ProxyError::Other(format!("Invalid server address: {}",e)))?, read_timeout) {
+  let server_stream = match TcpStream::connect_timeout(&server_addr.parse().map_err(|e| ProxyError::Other(format!("Invalid server address: {}",e)))?, read_timeout) {
     Ok(stream) => { info!("{} Connected to TWS server", log_prefix); stream }
     Err(e) => { error!("{} Failed to connect to TWS server {}: {}", log_prefix, server_addr, e); let _ = client_stream.shutdown(Shutdown::Both); return Err(ProxyError::Io(e)); }
   };

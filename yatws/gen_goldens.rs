@@ -7,7 +7,6 @@ use log::{debug, error, info, warn};
 use once_cell::sync::Lazy; // For static registry initialization
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 use yatws::{
   IBKRError,
@@ -264,7 +263,7 @@ mod test_cases {
     Ok(())
   }
 
-  pub(super) fn order_many_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+  pub(super) fn order_many_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Sending Orders In Rapid Successiuon ---");
     let order_mgr = client.orders();
     let limit_price = 546.0;  // Slightly lower than ask.
@@ -292,7 +291,7 @@ mod test_cases {
     }
     log::info!("Cancel orders");
     for o in &oid {
-      order_mgr.cancel_order(o);
+      order_mgr.cancel_order(o).unwrap_or_else(|e| { log::warn!("Failed to cancel order: {:?}", e); false });
       match order_mgr.try_wait_order_canceled(o, Duration::from_secs(3)) {
         Ok(status) => {
           info!("BUY order {} status: {:?}", o, status);
@@ -306,7 +305,7 @@ mod test_cases {
     Ok(())
   }
 
-  pub(super) fn order_limit_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+  pub(super) fn order_limit_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Limit Order ---");
     let order_mgr = client.orders();
     let limit_price = 548.0;  // Slightly lower than ask.
@@ -324,7 +323,7 @@ mod test_cases {
       }
     }
     log::info!("Cancel order");
-    order_mgr.cancel_order(&buy_order_id);
+    order_mgr.cancel_order(&buy_order_id)?;
     match order_mgr.try_wait_order_canceled(&buy_order_id, Duration::from_secs(3)) {
       Ok(status) => {
         info!("BUY order {} status: {:?}", buy_order_id, status);
