@@ -15,3 +15,11 @@ py_binary(
         requirement("google-genai"),
     ],
 )
+
+# For testing purposes only.
+# You have to download the toolkit from IBKR.
+py_library(
+    name = "ibapi",
+    srcs = glob(["IBJts/source/pythonclient/ibapi/*.py"], allow_empty=True),
+    visibility = ["//visibility:public"]
+)

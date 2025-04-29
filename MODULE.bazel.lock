@@ -246,7 +246,7 @@
     },
     "@@rules_python+//python/extensions:pip.bzl%pip": {
       "general": {
-        "bzlTransitiveDigest": "ve9TRglmtbjqwDOdVTR6pK+6LuiTorbFeQLsMrhHRgU=",
+        "bzlTransitiveDigest": "tN+MvKwBv7PL4U8AbmltcE5aeaxmSAdGHNHtLvBC/2E=",
         "usagesDigest": "sqaVxf08pbmZYTC7tQFGDSIvxjn49WUmZScK/ekBSuI=",
         "recordedFileInputs": {
           "@@//requirements_lock.txt": "a973955298b6acb679710b65ad53dde6cbad2422c5be9392e53bdc760fafbd22",
