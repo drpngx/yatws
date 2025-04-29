@@ -314,6 +314,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::SnapshotNotApplicableToGenericTicks |
     ClientErrorCode::InvalidRealTimeQuery |
     // TWS Market Data Errors (10000+)
+    ClientErrorCode::NotSubscribedMarketData | // Error
     ClientErrorCode::PartiallySubscribedMarketData | // Warning
     ClientErrorCode::MarketDataNotSubscribedDelayedDisabled | // Warning/Info
     ClientErrorCode::NoMarketDataDuringCompetingSession | // Warning/Info

@@ -18,13 +18,15 @@ pub struct MessageBroker {
   logger: Option<ConnectionLogger>, // Use the concrete type from conn_log
 }
 
+const START_REQUEST_ID: usize = 1;
+
 impl MessageBroker {
   // Modify new to accept optional logger
   pub fn new(connection: Box<dyn Connection>, logger: Option<ConnectionLogger>) -> Self {
     log::info!("Creating new MessageBroker.");
     Self {
       connection: Arc::new(Mutex::new(connection)),
-      next_req_id: Arc::new(AtomicUsize::new(9000)),
+      next_req_id: Arc::new(AtomicUsize::new(START_REQUEST_ID)),
       logger, // Store the logger
     }
   }

@@ -342,7 +342,7 @@ mod test_cases {
   pub(super) fn current_quote_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Get Current Quote ---");
     let data_mgr = client.data_market();
-    let contract = Contract::stock("SPY"); // Test with SPY stock
+    let contract = Contract::stock("AAPL"); // Test with SPY stock
     let timeout = Duration::from_secs(10); // Set a reasonable timeout
 
     info!("Requesting quote for {} with timeout {:?}", contract.symbol, timeout);

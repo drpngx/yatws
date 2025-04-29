@@ -415,6 +415,10 @@ impl Encoder {
 
   // Helper for TagValue lists
   fn write_tag_value_list(&self, cursor: &mut Cursor<Vec<u8>>, list: &[(String, String)]) -> Result<(), IBKRError> {
+    if list.is_empty() {
+      self.write_str_to_cursor(cursor, "")?;
+      return Ok(());
+    }
     self.write_int_to_cursor(cursor, list.len() as i32)?;
     for (tag, value) in list {
       self.write_str_to_cursor(cursor, tag)?;
@@ -1460,14 +1464,7 @@ impl Encoder {
 
     // --- Market Data Options (matches Java) ---
     if self.server_version >= min_server_ver::LINKING {
-      // Speculative Fix: Only send the field if the list is NOT empty.
-      // This deviates from the Java client but might avoid a TWS parsing issue
-      // with an empty TagValue list field in reqMktData.
-      if !mkt_data_options.is_empty() {
-        self.write_tag_value_list(&mut cursor, mkt_data_options)?;
-      } else {
-        trace!("Omitting empty mktDataOptions field for reqMktData even though server version supports it.");
-      }
+      self.write_tag_value_list(&mut cursor, mkt_data_options)?;
     }
 
     Ok(self.finish_encoding(cursor))

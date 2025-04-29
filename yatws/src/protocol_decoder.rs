@@ -806,6 +806,8 @@ pub enum ClientErrorCode {
   /// Invalid combo routing tag API. (Deprecated)
   InvalidComboRoutingTagApi = 10027,
   /// Part of requested market data is not subscribed.
+  NotSubscribedMarketData = 10089,
+  /// Part of requested market data is not subscribed.
   PartiallySubscribedMarketData = 10090,
   /// OrderId <OrderId> that needs to be cancelled can not be cancelled, state: <State>
   CannotCancelFilledOrder = 10148, // Placeholder
@@ -1247,6 +1249,7 @@ impl fmt::Display for ClientErrorCode {
       ClientErrorCode::InvalidLeg2ToMktTime1Api => "Invalid leg2 to Mkt time1 API.",
       ClientErrorCode::InvalidLeg2ToMktTime2Api => "Invalid leg2 to Mkt time2 API.",
       ClientErrorCode::InvalidComboRoutingTagApi => "Invalid combo routing tag API.",
+      ClientErrorCode::NotSubscribedMarketData => "Not subscribed for requested market data.",
       ClientErrorCode::PartiallySubscribedMarketData => "Part of requested market data is not subscribed.",
       ClientErrorCode::CannotCancelFilledOrder => "OrderId <OrderId> that needs to be cancelled can not be cancelled, state: <State>",
       ClientErrorCode::MarketDataNotSubscribedDelayedDisabled => "Requested market data is not subscribed. Delayed market data is not enabled",
@@ -1655,6 +1658,7 @@ impl TryFrom<i32> for ClientErrorCode {
       10025 => Ok(ClientErrorCode::InvalidLeg2ToMktTime1Api),
       10026 => Ok(ClientErrorCode::InvalidLeg2ToMktTime2Api),
       10027 => Ok(ClientErrorCode::InvalidComboRoutingTagApi),
+      10089 => Ok(ClientErrorCode::NotSubscribedToMarketData),
       10090 => Ok(ClientErrorCode::PartiallySubscribedMarketData),
       10148 => Ok(ClientErrorCode::CannotCancelFilledOrder),
       10186 => Ok(ClientErrorCode::MarketDataNotSubscribedDelayedDisabled),
