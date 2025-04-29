@@ -295,7 +295,7 @@ impl DataMarketManager {
     // Use an empty generic tick list for snapshot requests.
     // This often requests all available generic ticks for the snapshot.
     let generic_tick_list = "";
-    let snapshot = true; // Request snapshot
+    let snapshot = false; // Request snapshot
     let regulatory_snapshot = false; // Typically false for simple quotes
     let mkt_data_options: Vec<(String, String)> = Vec::new(); // No options needed usually
 

@@ -68,15 +68,207 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
   // Note: This routing is based on the error code's likely origin.
   // A more robust system would track request IDs and their associated handler types.
   match error_code {
-    // Order Handling Errors
+    // Order Handling Errors (Client-side send failures + TWS order-related errors)
     ClientErrorCode::FailSendOrder |
     ClientErrorCode::FailSendCOrder |
     ClientErrorCode::FailSendOOrder |
-    ClientErrorCode::FailSendReqCompletedOrders => {
+    ClientErrorCode::FailSendReqCompletedOrders |
+    // TWS Order Errors
+    ClientErrorCode::DuplicateOrderId |
+    ClientErrorCode::CannotModifyFilledOrder |
+    ClientErrorCode::OrderModificationMismatch |
+    ClientErrorCode::CannotTransmitOrderId | // Placeholder
+    ClientErrorCode::CannotTransmitIncompleteOrder |
+    ClientErrorCode::PriceOutOfPercentageRange |
+    ClientErrorCode::PriceIncrementViolation |
+    ClientErrorCode::TifOrderTypeIncompatible |
+    ClientErrorCode::TifRequiresDayForMocLoc |
+    ClientErrorCode::RelativeOrdersStocksOnly | // Deprecated
+    ClientErrorCode::RelativeOrdersUsStocksRouting | // Deprecated
+    ClientErrorCode::CannotTransmitToDeadExchange |
+    ClientErrorCode::BlockOrderSizeTooSmall |
+    ClientErrorCode::VwapOrdersRequireVwapExchange |
+    ClientErrorCode::OnlyVwapOrdersOnVwapExchange |
+    ClientErrorCode::TooLateForVwapOrder |
+    ClientErrorCode::InvalidBdFlag | // Deprecated
+    ClientErrorCode::NoRequestTagForOrder | // Placeholder
+    ClientErrorCode::BuyPriceMustMatchBestAsk |
+    ClientErrorCode::SellPriceMustMatchBestBid |
+    ClientErrorCode::VwapOrderSubmitTimeViolation |
+    ClientErrorCode::SweepToFillDisplaySizeIgnored |
+    ClientErrorCode::MissingClearingAccount | // Could be Account, but often order-related
+    ClientErrorCode::SubmitNewOrderFailed |
+    ClientErrorCode::ModifyOrderFailed |
+    ClientErrorCode::CannotFindOrderToCancel | // Placeholder
+    ClientErrorCode::OrderCannotBeCancelled |
+    ClientErrorCode::VwapOrderCancelTimeViolation |
+    ClientErrorCode::SizeValueShouldBeInteger | // Placeholder
+    ClientErrorCode::PriceValueShouldBeDouble | // Placeholder
+    ClientErrorCode::OrderSizeAllocationMismatch |
+    ClientErrorCode::ValidationErrorInEntryFields | // Placeholder, could be general
+    ClientErrorCode::InvalidTriggerMethod |
+    ClientErrorCode::ConditionalContractInfoIncomplete | // Could be Contract
+    ClientErrorCode::ConditionalOrderRequiresLimitMarket | // Deprecated
+    ClientErrorCode::MissingUserNameDDE | // DDE specific
+    ClientErrorCode::HiddenAttributeNotAllowed |
+    ClientErrorCode::EfpRequiresLimitOrder | // Deprecated
+    ClientErrorCode::CannotTransmitOrderForHaltedSecurity |
+    ClientErrorCode::SizeOpOrderRequiresUserAccount | // Deprecated
+    ClientErrorCode::SizeOpOrderRequiresIBSX | // Deprecated
+    ClientErrorCode::IcebergDiscretionaryConflict |
+    ClientErrorCode::MissingTrailOffset |
+    ClientErrorCode::PercentOffsetOutOfRange |
+    ClientErrorCode::SizeValueCannotBeZero | // Also 434
+    ClientErrorCode::CancelAttemptNotInCancellableState | // Placeholder
+    ClientErrorCode::PriceViolatesPercentageConstraint |
+    ClientErrorCode::NoMarketDataForPricePercentCheck | // Could be Market Data
+    ClientErrorCode::VwapOrderTimeNotInFuture |
+    ClientErrorCode::DiscretionaryAmountIncrementViolation |
+    ClientErrorCode::OrderRejected | // Placeholder
+    ClientErrorCode::OrderCancelled | // Placeholder
+    ClientErrorCode::InvalidAction | // Placeholder, could be general
+    ClientErrorCode::InvalidOrigin |
+    ClientErrorCode::InvalidComboDetails | // Could be Contract
+    ClientErrorCode::InvalidComboLegDetails | // Placeholder, Could be Contract
+    ClientErrorCode::BagSecurityTypeRequiresComboLegs | // Could be Contract
+    ClientErrorCode::StockComboLegsRequireSmartRouting | // Could be Contract
+    ClientErrorCode::DiscretionaryOrdersNotSupported |
+    ClientErrorCode::TrailStopAttachViolation |
+    ClientErrorCode::OrderModifyFailedCannotChangeType |
+    ClientErrorCode::InvalidShareAllocationSyntax | // Could be FA
+    ClientErrorCode::InvalidGoodTillDateOrder |
+    ClientErrorCode::InvalidDeltaRange |
+    ClientErrorCode::InvalidTimeOrTimeZoneFormat | // Could be general
+    ClientErrorCode::InvalidDateTimeOrTimeZoneFormat | // Could be general
+    ClientErrorCode::GoodAfterTimeDisabled |
+    ClientErrorCode::FuturesSpreadNotSupported | // Use Combos (Contract)
+    ClientErrorCode::InvalidImprovementAmountBoxAuction |
+    ClientErrorCode::InvalidDeltaValue1To100 |
+    ClientErrorCode::PeggedOrderNotSupported |
+    ClientErrorCode::InvalidDateTimeOrTimeZoneFormatYmdHms | // Could be general
+    ClientErrorCode::GenericComboNotSupportedForFA | // Could be FA/Contract
+    ClientErrorCode::InvalidShortSaleSlotValue |
+    ClientErrorCode::ShortSaleSlotRequiresSshortAction |
+    ClientErrorCode::GenericComboDoesNotSupportGoodAfter | // Could be Contract
+    ClientErrorCode::MinQuantityNotSupportedForBestCombo | // Could be Contract
+    ClientErrorCode::RthOnlyFlagNotValid |
+    ClientErrorCode::ShortSaleSlot2RequiresLocation |
+    ClientErrorCode::ShortSaleSlot1RequiresNoLocation |
+    ClientErrorCode::OrderSizeMarketRuleViolation | // Could be Contract/Market Data
+    ClientErrorCode::SmartComboDoesNotSupportOca | // Could be Contract
+    ClientErrorCode::SmartComboChildOrderNotSupported | // Could be Contract
+    ClientErrorCode::ComboOrderReduceOnFillOcaViolation | // Could be Contract
+    ClientErrorCode::NoWhatifSupportForSmartCombo | // Could be Contract
+    ClientErrorCode::InvalidTriggerPrice |
+    ClientErrorCode::InvalidAdjustedStopPrice |
+    ClientErrorCode::InvalidAdjustedStopLimitPrice |
+    ClientErrorCode::InvalidAdjustedTrailingAmount |
+    ClientErrorCode::InvalidVolatilityTypeForVolOrder |
+    ClientErrorCode::InvalidReferencePriceTypeForVolOrder |
+    ClientErrorCode::VolatilityOrdersOnlyForUsOptions | // Could be Contract
+    ClientErrorCode::DynamicVolatilityRoutingViolation |
+    ClientErrorCode::VolOrderRequiresPositiveVolatility |
+    ClientErrorCode::CannotSetDynamicVolOnNonVolOrder |
+    ClientErrorCode::StockRangeAttributeRequiresVolOrRel |
+    ClientErrorCode::InvalidStockRangeAttributesOrder |
+    ClientErrorCode::StockRangeAttributesCannotBeNegative |
+    ClientErrorCode::NotEligibleForContinuousUpdate | // Could be Contract/Market Data
+    ClientErrorCode::MustSpecifyValidDeltaHedgeAuxPrice |
+    ClientErrorCode::DeltaHedgeOrderRequiresAuxPrice |
+    ClientErrorCode::DeltaHedgeOrderRequiresNoAuxPrice |
+    ClientErrorCode::OrderTypeNotAllowedForDeltaHedge |
+    ClientErrorCode::PriceViolatesTicksConstraint | // Could be Contract/Market Data
+    ClientErrorCode::SizeViolatesSizeConstraint | // Could be Contract/Market Data
+    ClientErrorCode::UnsupportedOrderTypeForExchangeSecType | // Could be Contract
+    ClientErrorCode::OrderSizeSmallerThanMinimum | // Could be Contract
+    ClientErrorCode::RoutedOrderIdNotUnique |
+    ClientErrorCode::RoutedOrderIdInvalid |
+    ClientErrorCode::InvalidTimeOrTimeZoneFormatHms | // Could be general
+    ClientErrorCode::InvalidOrderContractExpired | // Could be Contract
+    ClientErrorCode::ShortSaleSlotOnlyForDeltaHedge |
+    ClientErrorCode::InvalidProcessTime | // Placeholder
+    ClientErrorCode::OcaOrdersNotAcceptedSystemProblem | // System/Client
+    ClientErrorCode::OnlyMarketLimitOrdersAcceptedSystemProblem | // System/Client
+    ClientErrorCode::InvalidConditionTrigger | // Placeholder
+    ClientErrorCode::OrderMessageError | // Placeholder
+    ClientErrorCode::AlgoOrderError | // Placeholder
+    ClientErrorCode::LengthRestriction | // Placeholder, could be general
+    ClientErrorCode::ConditionsNotAllowedForContract | // Could be Contract
+    ClientErrorCode::InvalidStopPrice |
+    ClientErrorCode::ShortSaleSharesNotAvailable | // Could be Account
+    ClientErrorCode::ChildQuantityShouldMatchParentSize | // Deprecated
+    ClientErrorCode::CurrencyNotAllowed | // Placeholder, Could be Contract
+    ClientErrorCode::SymbolRequiresNonUnicode | // Could be Contract
+    ClientErrorCode::InvalidScaleOrderIncrement |
+    ClientErrorCode::InvalidScaleOrderMissingComponentSize |
+    ClientErrorCode::InvalidScaleOrderSubsequentComponentSize |
+    ClientErrorCode::OutsideRthFlagNotValidForOrder | // Also 2109 (Warning)
+    ClientErrorCode::WhatIfOrderRequiresTransmitTrue |
+    ClientErrorCode::WaitPreviousRfqFinish |
+    ClientErrorCode::RfqNotApplicableForContract | // Placeholder, Could be Contract
+    ClientErrorCode::InvalidScaleOrderInitialComponentSize |
+    ClientErrorCode::InvalidScaleOrderProfitOffset |
+    ClientErrorCode::MissingScaleOrderInitialComponentSize |
+    ClientErrorCode::CannotChangeAccountClearingAttributes | // Could be Account
+    ClientErrorCode::CrossOrderRfqExpired |
+    ClientErrorCode::MutualFundOrderRequiresMonetaryValue | // Deprecated
+    ClientErrorCode::MutualFundSellOrderRequiresShares | // Deprecated
+    ClientErrorCode::DeltaNeutralOnlyForCombos | // Could be Contract
+    ClientErrorCode::CommissionMustNotBeNegative | // Deprecated
+    ClientErrorCode::InvalidRestoreSizeAfterProfit | // Could be FA/Account
+    ClientErrorCode::OrderSizeCannotBeZero | // Also 160
+    ClientErrorCode::MustSpecifyAllocation | // Could be FA
+    ClientErrorCode::OnlyOneOutsideRthOrAllowPreOpen | // Deprecated
+    ClientErrorCode::AlgoDefinitionNotFound |
+    ClientErrorCode::AlgoCannotBeModified |
+    ClientErrorCode::AlgoAttributesValidationFailed | // Placeholder
+    ClientErrorCode::AlgoNotAllowedForOrder |
+    ClientErrorCode::UnknownAlgoAttribute |
+    ClientErrorCode::VolComboOrderNotAcknowledged | // Could be Contract
+    ClientErrorCode::RfqNoLongerValid |
+    ClientErrorCode::MissingScaleOrderProfitOffset | // Also 418
+    ClientErrorCode::MissingScalePriceAdjustment |
+    ClientErrorCode::InvalidScalePriceAdjustmentInterval |
+    ClientErrorCode::UnexpectedScalePriceAdjustment |
+    // TWS Order Errors (10000+)
+    ClientErrorCode::MissingParentOrder |
+    ClientErrorCode::InvalidDeltaHedgeOrder |
+    ClientErrorCode::OrdersUseEvWarning | // Warning
+    ClientErrorCode::TradesUseEvWarning | // Warning
+    ClientErrorCode::DisplaySizeShouldBeSmaller |
+    ClientErrorCode::InvalidLeg2ToMktOffsetApi | // Deprecated
+    ClientErrorCode::InvalidLegPrioApi | // Deprecated
+    ClientErrorCode::InvalidComboDisplaySizeApi | // Deprecated
+    ClientErrorCode::InvalidDontStartNextLeginApi | // Deprecated
+    ClientErrorCode::InvalidLeg2ToMktTime1Api | // Deprecated
+    ClientErrorCode::InvalidLeg2ToMktTime2Api | // Deprecated
+    ClientErrorCode::InvalidComboRoutingTagApi | // Deprecated
+    ClientErrorCode::CannotCancelFilledOrder | // Placeholder
+    ClientErrorCode::DefaultsInheritedFromCashPreset | // Info/Warning
+    ClientErrorCode::DecisionMakerRequiredNonDesktop |
+    ClientErrorCode::DecisionMakerRequiredIbbot |
+    ClientErrorCode::ChildMustBeAonIfParentAon |
+    ClientErrorCode::AonTicketCanRouteEntireUnfilledOnly |
+    ClientErrorCode::OrderAffectsFlaggedAccountsRiskScore | // Warning/FA
+    ClientErrorCode::MustEnterValidPriceCap |
+    ClientErrorCode::MonetaryQuantityModificationNotSupported |
+    ClientErrorCode::FractionalOrderModificationNotSupported |
+    ClientErrorCode::FractionalOrderPlacementNotSupported |
+    ClientErrorCode::CashQuantityNotAllowedForOrder |
+    ClientErrorCode::OrderDoesNotSupportFractional |
+    ClientErrorCode::OrderTypeDoesNotSupportFractional | // Placeholder
+    ClientErrorCode::SizeDoesNotConformToMinVariation | // Could be Contract
+    ClientErrorCode::FractionalNotSupportedForAllocationOrders | // Could be FA
+    ClientErrorCode::NonClosePositionOrderDoesNotSupportFractional |
+    ClientErrorCode::ClearAwayNotSupportedForMultiLegHedge | // Could be Contract
+    ClientErrorCode::InvalidOrderBondExpired | // Could be Contract
+    ClientErrorCode::EtradeOnlyAttributeNotSupported |
+    ClientErrorCode::FirmQuoteOnlyAttributeNotSupported |
+    ClientErrorCode::NbboPriceCapAttributeNotSupported => {
       handler.order.handle_error(id, error_code, &error_msg);
     }
 
-    // Market Data Errors
+    // Market Data Errors (Client-side send failures + TWS market data errors)
     ClientErrorCode::FailSendReqMkt |
     ClientErrorCode::FailSendCanMkt |
     ClientErrorCode::FailSendReqMktDepth |
@@ -99,11 +291,37 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::FailSendReqTickByTickData |
     ClientErrorCode::FailSendCancelTickByTickData |
     ClientErrorCode::FailSendReqHeadTimestamp |
-    ClientErrorCode::FailSendCancelHeadTimestamp => {
+    ClientErrorCode::FailSendCancelHeadTimestamp |
+    // TWS Market Data Errors
+    ClientErrorCode::MaxTickersReached |
+    ClientErrorCode::DuplicateTickerId |
+    ClientErrorCode::HistoricalDataServiceError | // Placeholder
+    ClientErrorCode::HistoricalDataServiceQueryMessage | // Placeholder
+    ClientErrorCode::HistoricalDataExpiredContractViolation | // Could be Contract
+    ClientErrorCode::CouldNotParseTickerRequest | // Placeholder
+    ClientErrorCode::CannotFindEidWithTickerId | // Placeholder, DDE specific
+    ClientErrorCode::InvalidTickerAction | // Placeholder, DDE specific
+    ClientErrorCode::ErrorParsingStopTickerString | // Placeholder, DDE specific
+    ClientErrorCode::MaxMarketDepthRequestsReached |
+    ClientErrorCode::CannotFindSubscribedMarketDepth | // Placeholder
+    ClientErrorCode::MarketDepthDataHalted |
+    ClientErrorCode::MarketDepthDataReset |
+    ClientErrorCode::NotSubscribedToMarketData |
+    ClientErrorCode::NoScannerSubscriptionFound | // Placeholder
+    ClientErrorCode::NoHistoricalDataQueryFound | // Placeholder
+    ClientErrorCode::DuplicateTickerIdApiScanner |
+    ClientErrorCode::DuplicateTickerIdApiHistorical |
+    ClientErrorCode::SnapshotNotApplicableToGenericTicks |
+    ClientErrorCode::InvalidRealTimeQuery |
+    // TWS Market Data Errors (10000+)
+    ClientErrorCode::PartiallySubscribedMarketData | // Warning
+    ClientErrorCode::MarketDataNotSubscribedDelayedDisabled | // Warning/Info
+    ClientErrorCode::NoMarketDataDuringCompetingSession | // Warning/Info
+    ClientErrorCode::BustEventDeactivatedSubscription => { // System/Warning
       handler.data_market.handle_error(id, error_code, &error_msg);
     }
 
-    // Account/Position Errors
+    // Account/Position Errors (Client-side send failures + TWS account/position errors)
     ClientErrorCode::FailSendAcct |
     ClientErrorCode::FailSendExec |
     ClientErrorCode::FailSendReqPositions |
@@ -117,11 +335,21 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::FailSendReqPnl |
     ClientErrorCode::FailSendCancelPnl |
     ClientErrorCode::FailSendReqPnlSingle |
-    ClientErrorCode::FailSendCancelPnlSingle => {
+    ClientErrorCode::FailSendCancelPnlSingle |
+    // TWS Account/Position Errors
+    ClientErrorCode::InstitutionalAccountMissingInfo |
+    ClientErrorCode::SecurityNotAvailableOrAllowed | // Could be Contract
+    ClientErrorCode::InvalidAccountValueAction | // Placeholder, DDE specific
+    ClientErrorCode::NotFinancialAdvisorAccount | // Could be FA
+    ClientErrorCode::NotInstitutionalOrAwayClearingAccount |
+    ClientErrorCode::NoAccountHasEnoughShares |
+    ClientErrorCode::MustSpecifyAccount | // Could be general
+    ClientErrorCode::AccountDoesNotHaveFractionalPermission | // Placeholder
+    ClientErrorCode::TradingNotAllowedInApi => { // Could be Client/System
       handler.account.handle_error(id, error_code, &error_msg);
     }
 
-    // Reference Data Errors
+    // Reference Data Errors (Client-side send failures + TWS contract/ref data errors)
     ClientErrorCode::UnknownContract |
     ClientErrorCode::FailSendReqContract |
     ClientErrorCode::FailSendReqSecDefOptParams |
@@ -130,35 +358,82 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::FailSendReqMatchingSymbols |
     ClientErrorCode::FailSendReqMktDepthExchanges |
     ClientErrorCode::FailSendReqSmartComponents |
-    ClientErrorCode::FailSendReqMarketRule => {
+    ClientErrorCode::FailSendReqMarketRule |
+    // TWS Reference Data Errors
+    ClientErrorCode::NoRecordForConid | // Placeholder, Deprecated
+    ClientErrorCode::NoMarketRuleForConid | // Placeholder
+    ClientErrorCode::NoSecurityDefinitionFound |
+    ClientErrorCode::AmbiguousContract | // Special code 2001
+    ClientErrorCode::InvalidRoute | // Deprecated
+    ClientErrorCode::ContractNotAvailableForTrading |
+    ClientErrorCode::WhatToShowMissingOrIncorrect | // Deprecated
+    // TWS Reference Data Errors (10000+)
+    ClientErrorCode::CrossCurrencyComboError |
+    ClientErrorCode::CrossCurrencyVolError |
+    ClientErrorCode::InvalidNonGuaranteedLegs |
+    ClientErrorCode::IbsxNotAllowed |
+    ClientErrorCode::ReadOnlyModels |
+    ClientErrorCode::InvalidHedgeType |
+    ClientErrorCode::InvalidBetaValue |
+    ClientErrorCode::InvalidHedgeRatio |
+    ClientErrorCode::CurrencyNotSupportedForSmartCombo |
+    ClientErrorCode::SmartRoutingApiErrorOptOutRequired |
+    ClientErrorCode::PctChangeLimits | // Deprecated
+    ClientErrorCode::ContractNotVisible | // Deprecated
+    ClientErrorCode::ContractsNotVisible | // Deprecated
+    ClientErrorCode::InstrumentDoesNotSupportFractional |
+    ClientErrorCode::OnlySmartRoutingSupportsFractional => {
       handler.data_ref.handle_error(id, error_code, &error_msg);
     }
 
-    // Financial Data Errors (Fundamental/WSH)
+    // Financial Data Errors (Fundamental/WSH) (Client-side send failures + TWS errors)
     ClientErrorCode::FailSendReqFundData |
     ClientErrorCode::FailSendCanFundData |
     ClientErrorCode::FailSendReqWshMetaData |
     ClientErrorCode::FailSendCanWshMetaData |
     ClientErrorCode::FailSendReqWshEventData |
-    ClientErrorCode::FailSendCanWshEventData => {
+    ClientErrorCode::FailSendCanWshEventData |
+    // TWS Financial Data Errors
+    ClientErrorCode::FundamentalsDataNotAvailable |
+    ClientErrorCode::DuplicateWshMetadataRequest |
+    ClientErrorCode::FailedRequestWshMetadata |
+    ClientErrorCode::FailedCancelWshMetadata |
+    ClientErrorCode::DuplicateWshEventDataRequest |
+    ClientErrorCode::WshMetadataNotRequested |
+    ClientErrorCode::FailRequestWshEventData |
+    ClientErrorCode::FailCancelWshEventData => {
       handler.data_fin.handle_error(id, error_code, &error_msg);
     }
 
-    // News Data Errors
+    // News Data Errors (Client-side send failures + TWS errors)
     ClientErrorCode::FailSendReqNewsProviders |
     ClientErrorCode::FailSendReqNewsArticle |
-    ClientErrorCode::FailSendReqHistoricalNews => {
+    ClientErrorCode::FailSendReqHistoricalNews |
+    // TWS News Errors
+    ClientErrorCode::NewsFeedNotAllowed |
+    ClientErrorCode::NewsFeedPermissionsRequired => {
       handler.data_news.handle_error(id, error_code, &error_msg);
     }
 
-    // Financial Advisor Errors
+    // Financial Advisor Errors (Client-side send failures + TWS FA errors)
     ClientErrorCode::FailSendFaRequest |
     ClientErrorCode::FailSendFaReplace |
-    ClientErrorCode::FaProfileNotSupported => {
+    ClientErrorCode::FaProfileNotSupported |
+    // TWS FA Errors
+    ClientErrorCode::ManagedAccountsListRequiresFaStl |
+    ClientErrorCode::FaStlHasNoManagedAccounts |
+    ClientErrorCode::InvalidAccountCodesForOrderProfile |
+    ClientErrorCode::FaOrderRequiresAllocation | // Deprecated
+    ClientErrorCode::FaOrderRequiresManualAllocation | // Deprecated
+    ClientErrorCode::InvalidAllocationPercentage |
+    ClientErrorCode::UnsavedFaChanges | // Warning
+    ClientErrorCode::FaGroupsProfilesContainInvalidAccounts | // Placeholder
+    ClientErrorCode::AdvisorSetupWebAppCommunicationError => { // Warning/Info
       handler.fin_adv.handle_error(id, error_code, &error_msg);
     }
 
-    // General Client/Connection/API Errors (Route to ClientHandler)
+    // General Client/Connection/API Errors & Warnings (Route to ClientHandler)
+    // Client Library Errors
     ClientErrorCode::NoValidId |
     ClientErrorCode::AlreadyConnected |
     ClientErrorCode::ConnectFail |
@@ -182,14 +457,56 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::FailSendVerifyAndAuthRequest |
     ClientErrorCode::FailSendVerifyAndAuthMessage |
     ClientErrorCode::InvalidSymbol | // Could be argued for others, but often general
-    ClientErrorCode::FailSendReqUserInfo => {
+    ClientErrorCode::FailSendReqUserInfo |
+    // System Messages
+    ClientErrorCode::ConnectivityLost |
+    ClientErrorCode::ConnectivityRestoredDataLost |
+    ClientErrorCode::ConnectivityRestoredDataMaintained |
+    ClientErrorCode::SocketPortReset |
+    // Warnings
+    ClientErrorCode::AccountUpdateSubscriptionOverridden | // Could be Account
+    ClientErrorCode::AccountUpdateSubscriptionRejected | // Could be Account
+    ClientErrorCode::OrderModificationRejectedProcessing | // Could be Order
+    ClientErrorCode::MarketDataFarmDisconnected | // Could be Market Data
+    ClientErrorCode::MarketDataFarmConnected | // Could be Market Data
+    ClientErrorCode::HistoricalDataFarmDisconnected | // Could be Market Data
+    ClientErrorCode::HistoricalDataFarmConnected | // Could be Market Data
+    ClientErrorCode::HistoricalDataFarmInactive | // Could be Market Data
+    ClientErrorCode::MarketDataFarmInactive | // Could be Market Data
+    ClientErrorCode::OutsideRthAttributeIgnored | // Could be Order
+    ClientErrorCode::TwsToServerConnectionBroken |
+    ClientErrorCode::CrossSideWarning | // Could be Order
+    ClientErrorCode::SecurityDefinitionDataFarmConnected | // Could be Ref Data
+    ClientErrorCode::EtradeOnlyNotSupportedWarning | // Could be Order
+    ClientErrorCode::FirmQuoteOnlyNotSupportedWarning | // Could be Order
+    // General TWS Errors
+    ClientErrorCode::MaxMessagesPerSecondExceeded |
+    ClientErrorCode::RequestIdNotInteger |
+    ClientErrorCode::ParsingError | // Placeholder, DDE specific
+    ClientErrorCode::RequestParsingErrorIgnored | // DDE specific
+    ClientErrorCode::ErrorProcessingDdeRequest | // Placeholder, DDE specific
+    ClientErrorCode::InvalidRequestTopic | // Placeholder, DDE specific
+    ClientErrorCode::MaxApiPagesReached |
+    ClientErrorCode::InvalidLogLevel | // Placeholder
+    ClientErrorCode::ServerErrorReadingApiClientRequest |
+    ClientErrorCode::ServerErrorValidatingApiClientRequest |
+    ClientErrorCode::ServerErrorProcessingApiClientRequest |
+    ClientErrorCode::ServerErrorCause | // Placeholder
+    ClientErrorCode::ServerErrorReadingDdeClientRequest | // DDE specific
+    ClientErrorCode::ClientIdInUse |
+    ClientErrorCode::AutoBindRequiresClientIdZero |
+    ClientErrorCode::ClientVersionOutOfDate |
+    ClientErrorCode::DdeDllNeedsUpgrade | // DDE specific
+    ClientErrorCode::InvalidDdeArrayRequest | // DDE specific
+    ClientErrorCode::ApplicationLocked | // Deprecated
+    ClientErrorCode::UnknownCode => { // Catch-all for explicitly unknown or default
       handler.client.handle_error(id, error_code, &error_msg);
     }
-    // Note: If new error codes are added without updating this match,
-    // they won't be routed. Consider adding a catch-all `_` case
-    // that defaults to `handler.client.handle_error` if desired.
+    // Catch-all for any codes missed in the above explicit routing.
+    // This prevents compile errors if new codes are added to the enum
+    // but not yet routed here. It defaults to the client handler.
     // _ => {
-    //     warn!("Error code {:?} not explicitly routed, defaulting to ClientHandler.", error_code);
+    //     warn!("Error code {:?} (ID: {}) not explicitly routed, defaulting to ClientHandler: {}", error_code, id, error_msg);
     //     handler.client.handle_error(id, error_code, &error_msg);
     // }
   }
