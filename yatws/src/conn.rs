@@ -93,6 +93,7 @@ mod socket {
   use log::{debug, error, info, warn};
   use std::io::{self, Cursor, ErrorKind, Read, Write};
   use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+  use socket2::{SockRef, TcpKeepalive};
   use std::thread;
   use std::time::Duration;
   use std::thread::sleep as thread_sleep;
@@ -269,7 +270,14 @@ mod socket {
       // Flush small packets.
       stream.set_nodelay(true).unwrap_or_else(|e| log::warn!("Failed to set nodelay: {:?}", e));
       // Only tokio::TcpStream has keepalive.
-      // stream.set_keepalive(Some(std::time::Duration::from_secs(60)));
+      {
+        let sock_ref = SockRef::from(&stream);
+        let keepalive = TcpKeepalive::new()
+          .with_time(Duration::from_secs(60))       // Time before sending first keepalive probe
+          .with_interval(Duration::from_secs(20))   // Interval between keepalive probes
+          .with_retries(32);                        // Number of failed probes before dropping the connection
+        sock_ref.set_tcp_keepalive(&keepalive).unwrap_or_else(|e| log::warn!("Failed to set keepalive: {:?}", e));
+      }
 
       // --- Handshake H1 ---
       info!("Sending Handshake H1...");
