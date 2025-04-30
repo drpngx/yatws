@@ -296,12 +296,13 @@ impl AccountManager {
 
     // Include PnL tags directly in the summary request
     // Request a comprehensive set of tags, including PnL
-    // --- RESTORE ORIGINAL TAGS ---
-    let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
+    // --- SEND EMPTY TAGS ---
+    // let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
     // let tags = "AccountType,NetLiquidation,TotalCashValue,BuyingPower,Currency".to_string(); // <-- Simplified tags commented out
-    info!("Requesting FULL account summary tags: {}", tags);
-    // --- END RESTORE ORIGINAL TAGS ---
-    let summary_msg = encoder.encode_request_account_summary(req_id, "All", &tags)?; // <-- RESTORED FOR TESTING
+    let tags = ""; // <-- SENDING EMPTY TAGS FOR TESTING
+    info!("Requesting account summary with EMPTY tags");
+    // --- END SEND EMPTY TAGS ---
+    let summary_msg = encoder.encode_request_account_summary(req_id, "All", tags)?; // Use empty tags
     // --- ADD RequestPositions ---
     // let position_msg = encoder.encode_request_positions()?; // <-- COMMENTED OUT FOR TESTING
 
