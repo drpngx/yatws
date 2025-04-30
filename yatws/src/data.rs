@@ -1,4 +1,5 @@
 use crate::contract::{Contract, Bar};
+use std::collections::HashMap;
 
 /// Market data subscription request details and live state.
 #[derive(Debug, Clone)]
@@ -53,6 +54,10 @@ pub struct MarketDataSubscription {
   // Internal flags for blocking requests
   pub is_blocking_quote_request: bool, // Is this a request from get_quote?
   pub quote_received: bool, // Flag set by tick_snapshot_end or when all required ticks arrive
+  pub completed: bool, // General completion flag for flexible blocking requests
+  // History for flexible blocking requests
+  pub ticks: HashMap<i32, Vec<(f64, TickAttrib)>>, // Stores price ticks: tick_type -> Vec<(price, attrib)>
+  pub sizes: HashMap<i32, Vec<f64>>, // Stores size ticks: tick_type -> Vec<size>
   // General
   pub market_data_type: Option<MarketDataTypeEnum>, // From message 58
   pub error_code: Option<i32>,
@@ -109,6 +114,9 @@ impl MarketDataSubscription {
       snapshot_end_received: false,
       is_blocking_quote_request: false, // Default to false
       quote_received: false, // Default to false
+      completed: false, // Default to false
+      ticks: HashMap::new(), // Initialize empty history
+      sizes: HashMap::new(), // Initialize empty history
       market_data_type: None,
       error_code: None,
       error_message: None,
@@ -146,6 +154,8 @@ pub struct TickByTickSubscription {
   pub ignore_size: bool,
   // --- Live Data ---
   pub latest_tick: Option<TickByTickData>,
+  pub ticks: Vec<TickByTickData>, // History for blocking requests
+  pub completed: bool, // Flag for completion
   pub error_code: Option<i32>,
   pub error_message: Option<String>,
 }
@@ -204,6 +214,7 @@ pub struct MarketDepthSubscription {
   // L2 (Depth - Vec to store rows, bool indicates bid/ask)
   pub depth_bids: Vec<MarketDepthRow>,
   pub depth_asks: Vec<MarketDepthRow>,
+  pub completed: bool, // Flag for completion
   pub error_code: Option<i32>,
   pub error_message: Option<String>,
 }

@@ -467,6 +467,165 @@ mod test_cases {
   }
 
 
+  pub(super) fn market_data_blocking_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Blocking Market Data Request (wait for Bid/Ask) ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("MSFT"); // Use MSFT stock
+    let generic_tick_list = ""; // Default ticks
+    let snapshot = false;
+    let regulatory_snapshot = false;
+    let mkt_data_options = &[];
+    let timeout = Duration::from_secs(20); // Generous timeout
+
+    info!(
+      "Requesting blocking market data for {} (Timeout={:?}). Waiting for first Bid and Ask price...",
+      contract.symbol, timeout
+    );
+
+    match data_mgr.get_market_data(
+      &contract,
+      generic_tick_list,
+      snapshot,
+      regulatory_snapshot,
+      mkt_data_options,
+      timeout,
+      // Completion condition: Wait until we have received at least one BID (1) and one ASK (2) price tick.
+      |state| {
+        let has_bid = state.ticks.contains_key(&1) && !state.ticks[&1].is_empty();
+        let has_ask = state.ticks.contains_key(&2) && !state.ticks[&2].is_empty();
+        has_bid && has_ask
+      },
+    ) {
+      Ok(final_state) => {
+        info!("Successfully received market data state after condition met:");
+        info!("  Bid Price: {:?}", final_state.bid_price);
+        info!("  Ask Price: {:?}", final_state.ask_price);
+        info!("  Last Price: {:?}", final_state.last_price);
+        info!("  Total Bid Ticks Received: {}", final_state.ticks.get(&1).map_or(0, |v| v.len()));
+        info!("  Total Ask Ticks Received: {}", final_state.ticks.get(&2).map_or(0, |v| v.len()));
+
+        if final_state.bid_price.is_some() && final_state.ask_price.is_some() {
+          info!("Received Bid and Ask price. Test successful.");
+          Ok(())
+        } else {
+          error!("Condition met, but final state missing Bid or Ask price. Bid: {:?}, Ask: {:?}",
+                 final_state.bid_price, final_state.ask_price);
+          Err(anyhow!("Final state missing expected prices"))
+        }
+      }
+      Err(e) => {
+        error!("Failed to get blocking market data: {:?}", e);
+        Err(e.into())
+      }
+    }
+  }
+
+  pub(super) fn tick_by_tick_blocking_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Blocking Tick-by-Tick Request (wait for 5 Last ticks) ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("GOOG"); // Use GOOG stock
+    let tick_type = "Last";
+    let number_of_ticks = 0; // Streaming
+    let ignore_size = false;
+    let timeout = Duration::from_secs(30); // Timeout for receiving 5 ticks
+
+    info!(
+      "Requesting blocking tick-by-tick data for {} (Type={}, Timeout={:?}). Waiting for 5 ticks...",
+      contract.symbol, tick_type, timeout
+    );
+
+    let target_ticks = 5;
+
+    match data_mgr.get_tick_by_tick_data(
+      &contract,
+      tick_type,
+      number_of_ticks,
+      ignore_size,
+      timeout,
+      // Completion condition: Wait until the history contains at least target_ticks.
+      |state| state.ticks.len() >= target_ticks,
+    ) {
+      Ok(final_state) => {
+        info!("Successfully received tick-by-tick state after condition met:");
+        info!("  Total Ticks Received: {}", final_state.ticks.len());
+        info!("  Latest Tick: {:?}", final_state.latest_tick);
+
+        if final_state.ticks.len() >= target_ticks {
+          info!("Received at least {} ticks. Test successful.", target_ticks);
+          // Optionally print the first few ticks
+          for (i, tick) in final_state.ticks.iter().take(target_ticks).enumerate() {
+            if let yatws::data::TickByTickData::Last { time, price, size, .. } = tick {
+              info!("    Tick {}: Time={}, Price={}, Size={}", i + 1, time, price, size);
+            }
+          }
+          Ok(())
+        } else {
+          error!("Condition met, but final state has fewer ticks ({}) than expected ({}).",
+                 final_state.ticks.len(), target_ticks);
+          Err(anyhow!("Incorrect number of ticks in final state"))
+        }
+      }
+      Err(e) => {
+        error!("Failed to get blocking tick-by-tick data: {:?}", e);
+        Err(e.into())
+      }
+    }
+  }
+
+  pub(super) fn market_depth_blocking_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Blocking Market Depth Request (wait for 1 Bid/1 Ask level) ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("IBM"); // Use IBM stock
+    let num_rows = 5; // Request 5 levels
+    let is_smart_depth = false; // Use regular depth
+    let mkt_depth_options = &[];
+    let timeout = Duration::from_secs(20);
+
+    info!(
+      "Requesting blocking market depth for {} (Rows={}, Smart={}, Timeout={:?}). Waiting for first Bid and Ask level...",
+      contract.symbol, num_rows, is_smart_depth, timeout
+    );
+
+    match data_mgr.get_market_depth(
+      &contract,
+      num_rows,
+      is_smart_depth,
+      mkt_depth_options,
+      timeout,
+      // Completion condition: Wait until both bid and ask books have at least one entry.
+      |state| !state.depth_bids.is_empty() && !state.depth_asks.is_empty(),
+    ) {
+      Ok(final_state) => {
+        info!("Successfully received market depth state after condition met:");
+        info!("  Top Bid: Price={:?}, Size={:?}", final_state.bid_price, final_state.bid_size);
+        info!("  Top Ask: Price={:?}, Size={:?}", final_state.ask_price, final_state.ask_size);
+        info!("  Bid Levels Received: {}", final_state.depth_bids.len());
+        info!("  Ask Levels Received: {}", final_state.depth_asks.len());
+
+        if !final_state.depth_bids.is_empty() && !final_state.depth_asks.is_empty() {
+          info!("Received at least one Bid and one Ask level. Test successful.");
+          // Optionally print top levels
+          if let Some(bid) = final_state.depth_bids.first() {
+            info!("    Top Bid Level: Pos={}, Px={}, Sz={}, MM='{}'", bid.position, bid.price, bid.size, bid.market_maker);
+          }
+          if let Some(ask) = final_state.depth_asks.first() {
+            info!("    Top Ask Level: Pos={}, Px={}, Sz={}, MM='{}'", ask.position, ask.price, ask.size, ask.market_maker);
+          }
+          Ok(())
+        } else {
+          error!("Condition met, but final state missing Bid ({}) or Ask ({}) levels.",
+                 final_state.depth_bids.len(), final_state.depth_asks.len());
+          Err(anyhow!("Final state missing expected depth levels"))
+        }
+      }
+      Err(e) => {
+        error!("Failed to get blocking market depth data: {:?}", e);
+        Err(e.into())
+      }
+    }
+  }
+
+
   // --- Helper for Order Test ---
   fn attempt_cleanup(client: &IBKRClient, contract: &Contract) -> Result<()> {
     warn!("Attempting emergency cleanup for SPY position...");
@@ -523,6 +682,9 @@ inventory::submit! { TestDefinition { name: "order-many", func: test_cases::orde
 inventory::submit! { TestDefinition { name: "current-quote", func: test_cases::current_quote_impl } }
 inventory::submit! { TestDefinition { name: "realtime-data", func: test_cases::realtime_data_impl } }
 inventory::submit! { TestDefinition { name: "realtime-bars-blocking", func: test_cases::realtime_bars_blocking_impl } }
+inventory::submit! { TestDefinition { name: "market-data-blocking", func: test_cases::market_data_blocking_impl } }
+inventory::submit! { TestDefinition { name: "tick-by-tick-blocking", func: test_cases::tick_by_tick_blocking_impl } }
+inventory::submit! { TestDefinition { name: "market-depth-blocking", func: test_cases::market_depth_blocking_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 
 

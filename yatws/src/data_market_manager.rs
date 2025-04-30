@@ -16,7 +16,104 @@ use chrono::{Utc, TimeZone};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use log::{debug, info, trace, warn};
+use log::{debug, info, trace, warn}; // Removed unused 'error'
+
+
+// --- Helper Trait for Generic Waiting ---
+// Allows the generic wait_for_completion function to access common state fields/methods.
+trait CompletableState: Clone + Send + 'static {
+  fn is_completed(&self) -> bool;
+  fn mark_completed(&mut self);
+  fn get_error(&self) -> Option<IBKRError>;
+}
+
+// Implement the trait for each subscription type that supports blocking waits
+impl CompletableState for MarketDataSubscription {
+  fn is_completed(&self) -> bool { self.completed || self.quote_received /* Also consider quote flag */ }
+  fn mark_completed(&mut self) { self.completed = true; }
+  fn get_error(&self) -> Option<IBKRError> {
+    match (self.error_code, self.error_message.as_ref()) {
+      (Some(code), Some(msg)) => Some(IBKRError::ApiError(code, msg.clone())),
+      _ => None,
+    }
+  }
+}
+
+impl CompletableState for RealTimeBarSubscription {
+  fn is_completed(&self) -> bool { self.completed }
+  fn mark_completed(&mut self) { self.completed = true; }
+  fn get_error(&self) -> Option<IBKRError> {
+    match (self.error_code, self.error_message.as_ref()) {
+      (Some(code), Some(msg)) => Some(IBKRError::ApiError(code, msg.clone())),
+      _ => None,
+    }
+  }
+}
+
+impl CompletableState for TickByTickSubscription {
+  fn is_completed(&self) -> bool { self.completed }
+  fn mark_completed(&mut self) { self.completed = true; }
+  fn get_error(&self) -> Option<IBKRError> {
+    match (self.error_code, self.error_message.as_ref()) {
+      (Some(code), Some(msg)) => Some(IBKRError::ApiError(code, msg.clone())),
+      _ => None,
+    }
+  }
+}
+
+impl CompletableState for MarketDepthSubscription {
+  fn is_completed(&self) -> bool { self.completed }
+  fn mark_completed(&mut self) { self.completed = true; }
+  fn get_error(&self) -> Option<IBKRError> {
+    match (self.error_code, self.error_message.as_ref()) {
+      (Some(code), Some(msg)) => Some(IBKRError::ApiError(code, msg.clone())),
+      _ => None,
+    }
+  }
+}
+// Note: HistoricalDataRequestState uses a different wait mechanism, so doesn't need this trait currently.
+
+
+// --- Helper Trait for Downcasting MarketSubscription Enum ---
+// Private helper trait to implement the downcasting logic
+trait TryIntoStateHelper<T> {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut T>;
+}
+
+// Implement the helper trait for each target state type
+impl TryIntoStateHelper<MarketDataSubscription> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut MarketDataSubscription> {
+    match self { MarketSubscription::TickData(s) => Some(s), _ => None }
+  }
+}
+impl TryIntoStateHelper<RealTimeBarSubscription> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut RealTimeBarSubscription> {
+    match self { MarketSubscription::RealTimeBars(s) => Some(s), _ => None }
+  }
+}
+impl TryIntoStateHelper<TickByTickSubscription> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut TickByTickSubscription> {
+    match self { MarketSubscription::TickByTick(s) => Some(s), _ => None }
+  }
+}
+impl TryIntoStateHelper<MarketDepthSubscription> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut MarketDepthSubscription> {
+    match self { MarketSubscription::MarketDepth(s) => Some(s), _ => None }
+  }
+}
+// Add others if needed
+
+
+// Helper methods on the enum to simplify access in the generic wait function
+impl MarketSubscription {
+  // Tries to get a mutable reference to the specific state type S
+  fn try_get_mut<S>(&mut self) -> Option<&mut S>
+  where
+    MarketSubscription: TryIntoStateHelper<S>, // Use helper trait
+  {
+    self.try_into_state_helper_mut()
+  }
+}
 
 
 #[derive(Debug)]
@@ -218,7 +315,127 @@ impl DataMarketManager {
   }
 
 
+  // --- Generic Wait Helper ---
+  // This helper abstracts the common waiting logic for blocking requests.
+  // It takes the request ID, timeout, and a closure to check the completion condition.
+  fn wait_for_completion<S, F>(
+    &self,
+    req_id: i32,
+    timeout: Duration,
+    mut completion_check: F,
+    request_type_name: &str, // For logging purposes (e.g., "MarketData", "TickByTick")
+  ) -> Result<S, IBKRError>
+  where
+    S: Clone + Send + 'static + CompletableState, // Added CompletableState bound
+    F: FnMut(&S) -> bool, // Closure takes state ref, returns true if complete
+  // Ensure the closure can access the correct state type from the enum
+    MarketSubscription: TryIntoStateHelper<S>, // Use the helper trait here
+  {
+    let start_time = std::time::Instant::now();
+    let mut guard = self.subscriptions.lock();
+
+    loop {
+      // 1. Check state *before* waiting
+      let maybe_result = if let Some(sub_ref) = guard.get_mut(&req_id) {
+        // Attempt to get the specific state type (e.g., MarketDataSubscription)
+        if let Some(state) = MarketSubscription::try_get_mut::<S>(sub_ref) {
+          // Check for explicit completion flag first (set by error or handler)
+          if state.is_completed() {
+            debug!("{} request {} marked complete (completed=true).", request_type_name, req_id);
+            if let Some(err) = state.get_error() {
+              Some(Err(err)) // Completed due to error
+            } else {
+              Some(Ok(state.clone())) // Completed successfully by handler/logic
+            }
+          }
+          // Check for error even if not marked completed yet
+          else if let Some(err) = state.get_error() {
+            debug!("Error found for {} request {} before completion signal.", request_type_name, req_id);
+            state.mark_completed(); // Mark completed due to error
+            Some(Err(err))
+          }
+          // Check the user-provided completion condition
+          else if completion_check(state) {
+            debug!("User completion condition met for {} request {}.", request_type_name, req_id);
+            state.mark_completed(); // Mark completed
+            Some(Ok(state.clone()))
+          }
+          // Otherwise, still waiting
+          else {
+            None
+          }
+        } else {
+          // State exists but is the wrong type - internal error
+          Some(Err(IBKRError::InternalError(format!("{} request state for {} has unexpected type during wait", request_type_name, req_id))))
+        }
+      } else {
+        // State missing entirely - internal error or already removed
+        Some(Err(IBKRError::InternalError(format!("{} request state for {} missing during wait", request_type_name, req_id))))
+      };
+
+      match maybe_result {
+        Some(Ok(result)) => {
+          debug!("{} request {} successful, removing state.", request_type_name, req_id);
+          guard.remove(&req_id);
+          return Ok(result);
+        },
+        Some(Err(e)) => {
+          debug!("{} request {} failed, removing state. Error: {:?}", request_type_name, req_id, e);
+          guard.remove(&req_id);
+          return Err(e);
+        },
+        None => {} // Not complete, continue
+      }
+
+      // 2. Calculate remaining timeout
+      let elapsed = start_time.elapsed();
+      if elapsed >= timeout {
+        guard.remove(&req_id); // Clean up state on timeout
+        return Err(Timeout(format!("{} request {} timed out after {:?}", request_type_name, req_id, timeout)));
+      }
+      let remaining_timeout = timeout - elapsed;
+
+      // 3. Wait
+      trace!("{} request {} waiting for {:?}...", request_type_name, req_id, remaining_timeout);
+      let wait_result = self.request_cond.wait_for(&mut guard, remaining_timeout);
+
+      // 4. Handle timeout after wait (re-check state one last time)
+      if wait_result.timed_out() {
+        debug!("Wait timed out for {} request {}. Performing final state check.", request_type_name, req_id);
+        let final_check = if let Some(sub_ref) = guard.get_mut(&req_id) {
+          if let Some(state) = MarketSubscription::try_get_mut::<S>(sub_ref) {
+            if state.is_completed() { // Check completion flag first
+              if let Some(err) = state.get_error() { Some(Err(err)) }
+              else { Some(Ok(state.clone())) } // Completed successfully just before timeout
+            } else if let Some(err) = state.get_error() {
+              Some(Err(err)) // Error occurred just before timeout
+            } else if completion_check(state) { // Check user condition again
+              Some(Ok(state.clone())) // Condition met just before timeout
+            } else { None } // Genuine timeout
+          } else { None } // Wrong type
+        } else { None }; // State gone
+
+        guard.remove(&req_id); // Clean up state regardless
+        return match final_check {
+          Some(Ok(result)) => {
+            warn!("{} request {} completed successfully just before timeout.", request_type_name, req_id);
+            Ok(result)
+          },
+          Some(Err(e)) => {
+            warn!("{} request {} failed with error just before timeout: {:?}", request_type_name, req_id, e);
+            Err(e)
+          },
+          None => Err(Timeout(format!("{} request {} timed out after wait", request_type_name, req_id))),
+        };
+      }
+      // If not timed out, loop continues to re-check state
+    }
+  }
+
+
   // --- Helper to wait for quote completion ---
+  // Note: get_quote uses a specialized wait because its completion is tied to snapshot_end
+  // or receiving specific ticks, not a flexible closure. We keep it separate.
   fn wait_for_quote_completion(
     &self,
     req_id: i32,
@@ -368,6 +585,51 @@ impl DataMarketManager {
     self.message_broker.send_message(&request_msg)?;
     Ok(req_id)
   }
+
+  /// Requests streaming market data (ticks) and blocks until a completion condition is met.
+  pub fn get_market_data<F>(
+    &self,
+    contract: &Contract,
+    generic_tick_list: &str,
+    snapshot: bool, // Note: For true snapshots, get_quote might be simpler
+    regulatory_snapshot: bool,
+    mkt_data_options: &[(String, String)],
+    timeout: Duration,
+    completion_check: F, // Closure: FnMut(&MarketDataSubscription) -> bool
+  ) -> Result<MarketDataSubscription, IBKRError>
+  where
+    F: FnMut(&MarketDataSubscription) -> bool,
+  {
+    info!("Requesting blocking market data: Contract={}, Snapshot={}, Timeout={:?}",
+          contract.symbol, snapshot, timeout);
+
+    // 1. Initiate the non-blocking request (gets req_id and stores initial state)
+    let req_id = self.request_market_data(
+      contract,
+      generic_tick_list,
+      snapshot,
+      regulatory_snapshot,
+      mkt_data_options,
+    )?;
+    debug!("Blocking market data request initiated with ReqID: {}", req_id);
+
+    // 2. Wait for completion using the generic helper
+    let result = self.wait_for_completion(
+      req_id,
+      timeout,
+      completion_check,
+      "MarketData",
+    );
+
+    // 3. Best effort cancel after completion/timeout/error
+    if let Err(e) = self.cancel_market_data(req_id) {
+      // Log cancel error but prioritize returning the primary result/error
+      warn!("Failed to cancel market data request {} after blocking wait: {:?}", req_id, e);
+    }
+
+    result
+  }
+
 
   /// Cancels a streaming market data request.
   pub fn cancel_market_data(&self, req_id: i32) -> Result<(), IBKRError> {
@@ -597,6 +859,8 @@ impl DataMarketManager {
         number_of_ticks,
         ignore_size,
         latest_tick: None,
+        ticks: Vec::new(), // Initialize history
+        completed: false, // Initialize completion flag
         error_code: None,
         error_message: None,
       };
@@ -607,6 +871,54 @@ impl DataMarketManager {
     self.message_broker.send_message(&request_msg)?;
     Ok(req_id)
   }
+
+  /// Requests streaming tick-by-tick data and blocks until a completion condition is met.
+  pub fn get_tick_by_tick_data<F>(
+    &self,
+    contract: &Contract,
+    tick_type: &str, // "Last", "AllLast", "BidAsk", "MidPoint"
+    number_of_ticks: i32, // Should be 0 for streaming blocking requests
+    ignore_size: bool,
+    timeout: Duration,
+    completion_check: F, // Closure: FnMut(&TickByTickSubscription) -> bool
+  ) -> Result<TickByTickSubscription, IBKRError>
+  where
+    F: FnMut(&TickByTickSubscription) -> bool,
+  {
+    if number_of_ticks != 0 {
+      // This function is intended for blocking on *streaming* data.
+      // For historical ticks (number_of_ticks > 0), a different mechanism might be needed.
+      warn!("get_tick_by_tick_data called with non-zero number_of_ticks ({}). This function blocks on streaming data (number_of_ticks=0).", number_of_ticks);
+      // Proceed anyway, but the behavior might not be as expected for historical snapshots.
+    }
+    info!("Requesting blocking tick-by-tick data: Contract={}, Type={}, Timeout={:?}",
+          contract.symbol, tick_type, timeout);
+
+    // 1. Initiate the non-blocking request
+    let req_id = self.request_tick_by_tick_data(
+      contract,
+      tick_type,
+      number_of_ticks, // Pass through, though usually 0
+      ignore_size,
+    )?;
+    debug!("Blocking tick-by-tick request initiated with ReqID: {}", req_id);
+
+    // 2. Wait for completion
+    let result = self.wait_for_completion(
+      req_id,
+      timeout,
+      completion_check,
+      "TickByTick",
+    );
+
+    // 3. Best effort cancel
+    if let Err(e) = self.cancel_tick_by_tick_data(req_id) {
+      warn!("Failed to cancel tick-by-tick request {} after blocking wait: {:?}", req_id, e);
+    }
+
+    result
+  }
+
 
   /// Cancels streaming tick-by-tick data.
   pub fn cancel_tick_by_tick_data(&self, req_id: i32) -> Result<(), IBKRError> {
@@ -656,6 +968,7 @@ impl DataMarketManager {
         mkt_depth_options: mkt_depth_options.to_vec(),
         bid_price: None, ask_price: None, bid_size: None, ask_size: None,
         depth_bids: Vec::new(), depth_asks: Vec::new(),
+        completed: false, // Initialize completion flag
         error_code: None, error_message: None,
       };
       subs.insert(req_id, MarketSubscription::MarketDepth(state));
@@ -665,6 +978,58 @@ impl DataMarketManager {
     self.message_broker.send_message(&request_msg)?;
     Ok(req_id)
   }
+
+  /// Requests streaming market depth and blocks until a completion condition is met.
+  pub fn get_market_depth<F>(
+    &self,
+    contract: &Contract,
+    num_rows: i32,
+    is_smart_depth: bool,
+    mkt_depth_options: &[(String, String)],
+    timeout: Duration,
+    completion_check: F, // Closure: FnMut(&MarketDepthSubscription) -> bool
+  ) -> Result<MarketDepthSubscription, IBKRError>
+  where
+    F: FnMut(&MarketDepthSubscription) -> bool,
+  {
+    info!("Requesting blocking market depth: Contract={}, Rows={}, Smart={}, Timeout={:?}",
+          contract.symbol, num_rows, is_smart_depth, timeout);
+
+    // 1. Initiate the non-blocking request
+    let req_id = self.request_market_depth(
+      contract,
+      num_rows,
+      is_smart_depth,
+      mkt_depth_options,
+    )?;
+    debug!("Blocking market depth request initiated with ReqID: {}", req_id);
+
+    // 2. Wait for completion
+    let result = self.wait_for_completion(
+      req_id,
+      timeout,
+      completion_check,
+      "MarketDepth",
+    );
+
+    // 3. Best effort cancel
+    // Note: cancel_market_depth needs is_smart_depth, which might be tricky if state removed early.
+    // We retrieve it from the result *if successful*, otherwise guess or log warning.
+    let smart_for_cancel = match &result {
+      Ok(state) => state.is_smart_depth,
+      Err(_) => {
+        warn!("Could not determine is_smart_depth for cancelling request {}. Assuming false.", req_id);
+        false // Best guess
+      }
+    };
+    if let Err(e) = self._cancel_market_depth_internal(req_id, smart_for_cancel) {
+      warn!("Failed to cancel market depth request {} after blocking wait: {:?}", req_id, e);
+    }
+
+
+    result
+  }
+
 
   /// Cancels streaming market depth.
   pub fn cancel_market_depth(&self, req_id: i32) -> Result<(), IBKRError> {
@@ -694,8 +1059,29 @@ impl DataMarketManager {
         warn!("Attempted to cancel market depth for unknown or already removed ReqID: {}", req_id);
       }
     }
+    // Internal helper to avoid code duplication, as cancel needs is_smart_depth
+    self._cancel_market_depth_internal(req_id, is_smart_depth)
+  }
+
+  fn _cancel_market_depth_internal(&self, req_id: i32, is_smart_depth: bool) -> Result<(), IBKRError> {
+    info!("Cancelling market depth request: ReqID={}, Smart={}", req_id, is_smart_depth);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_market_depth(req_id, is_smart_depth)?;
+
+    self.message_broker.send_message(&request_msg)?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed market depth subscription state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel market depth for unknown or already removed ReqID: {}", req_id);
+      }
+    }
     Ok(())
   }
+
 
   /// Requests historical bar data. Blocks until data is received or timeout.
   pub fn get_historical_data(
@@ -782,40 +1168,44 @@ impl DataMarketManager {
     if let Some(sub_state) = subs.get_mut(&req_id) {
       warn!("API Error received for market data request {}: Code={:?}, Msg={}", req_id, code, msg);
 
-      // Determine if it's a blocking quote request *before* the main match
-      let is_blocking_quote = matches!(sub_state, MarketSubscription::TickData(s) if s.is_blocking_quote_request);
-
       // Convert code to i32 for storage
       let error_code_int = code as i32;
 
-      // Extract error fields and determine if it's historical
-      let (err_code_field, err_msg_field, is_historical) = match sub_state {
-        MarketSubscription::TickData(s) => (&mut s.error_code, &mut s.error_message, false), // Not historical
-        MarketSubscription::RealTimeBars(s) => (&mut s.error_code, &mut s.error_message, false),
-        MarketSubscription::TickByTick(s) => (&mut s.error_code, &mut s.error_message, false),
-        MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message, false),
-        MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, true), // Is historical
+      // Extract error fields
+      let (err_code_field, err_msg_field) = match sub_state {
+        MarketSubscription::TickData(s) => (&mut s.error_code, &mut s.error_message),
+        MarketSubscription::RealTimeBars(s) => (&mut s.error_code, &mut s.error_message),
+        MarketSubscription::TickByTick(s) => (&mut s.error_code, &mut s.error_message),
+        MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message),
+        MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message),
       };
 
       *err_code_field = Some(error_code_int); // Store the integer code
       *err_msg_field = Some(msg.to_string()); // Store the cloned message string
 
-      // Determine if it's a blocking real-time bar request
-      let is_blocking_rtbars = matches!(sub_state, MarketSubscription::RealTimeBars(s) if s.target_bar_count.is_some());
+      // Determine if it's any kind of blocking request (historical, quote, or flexible closure-based)
+      let is_blocking = match sub_state {
+        MarketSubscription::HistoricalData(_) => true, // Always blocking
+        MarketSubscription::TickData(s) => s.is_blocking_quote_request || s.completed, // Quote or flexible
+        MarketSubscription::RealTimeBars(s) => s.target_bar_count.is_some() || s.completed, // Fixed count or flexible
+        MarketSubscription::TickByTick(s) => s.completed, // Flexible only
+        MarketSubscription::MarketDepth(s) => s.completed, // Flexible only
+      };
 
-      // If it's a blocking request (historical, quote, or rt-bars), mark end and notify waiter
-      if is_blocking_quote || is_historical || is_blocking_rtbars {
+
+      // If it's a blocking request, mark end and notify waiter
+      if is_blocking {
         match sub_state {
-          MarketSubscription::HistoricalData(s) => s.end_received = true,
-          MarketSubscription::TickData(s) if s.is_blocking_quote_request => s.quote_received = true,
-          MarketSubscription::RealTimeBars(s) if s.target_bar_count.is_some() => s.completed = true, // Mark RTBars as completed due to error
-          _ => {} // Non-blocking requests or other types
+          MarketSubscription::HistoricalData(s) => { s.end_received = true; },
+          MarketSubscription::TickData(s) => { s.completed = true; s.quote_received = true; }, // Mark both flags
+          MarketSubscription::RealTimeBars(s) => { s.completed = true; },
+          MarketSubscription::TickByTick(s) => { s.completed = true; },
+          MarketSubscription::MarketDepth(s) => { s.completed = true; },
         }
-        debug!("Error received for blocking request {}, notifying waiter.", req_id);
+        debug!("Error received for blocking request {}, marking complete and notifying waiter.", req_id);
         self.request_cond.notify_all();
       }
-      // For non-blocking streaming requests, the error is stored, but doesn't necessarily stop the subscription state yet.
-      // The user might need to decide whether to cancel based on the error.
+      // For non-blocking streaming requests, the error is just stored.
     } else {
       // Might be an error for a request that already completed/cancelled/timed out.
       trace!("Received error for unknown or completed market data request ID: {}", req_id);
@@ -850,6 +1240,7 @@ impl MarketDataHandler for DataMarketManager {
         _ => trace!("Unhandled tick_type {} in tick_price for ReqID {}", tick_type, req_id),
       }
       // TODO: Store attrib if needed
+      state.ticks.entry(tick_type).or_default().push((price, attrib.clone())); // Store tick history
 
       // If this is for a blocking quote request, check if we have all needed data
       if state.is_blocking_quote_request && !state.quote_received {
@@ -859,6 +1250,9 @@ impl MarketDataHandler for DataMarketManager {
           // but we notify in case snapshot_end is delayed or missed.
           self.request_cond.notify_all();
         }
+      } else {
+        // Notify for general blocking requests if not a quote request
+        self.request_cond.notify_all();
       }
       // self.notify_observers(req_id); // If using observer pattern
     } else {
@@ -885,6 +1279,8 @@ impl MarketDataHandler for DataMarketManager {
         // ... map other size types (DELAYED_BID_SIZE, RT_TRD_VOLUME etc.)
         _ => trace!("Unhandled tick_type {} in tick_size", tick_type),
       }
+      state.sizes.entry(tick_type).or_default().push(size); // Store size history
+      self.request_cond.notify_all(); // Notify waiters
       // self.notify_observers(req_id);
     } else {
       // warn!("Received tick_size for unknown or non-tick subscription ID: {}", req_id);
@@ -1112,7 +1508,9 @@ impl MarketDataHandler for DataMarketManager {
       } else {
         TickByTickData::AllLast { time, price, size, tick_attrib_last, exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
       };
+      state.ticks.push(data.clone()); // Store history
       state.latest_tick = Some(data);
+      self.request_cond.notify_all(); // Notify waiters
       // self.notify_observers(req_id);
     } else {
       // warn!("Received tick_by_tick_all_last for unknown or non-TBT subscription ID: {}", req_id);
@@ -1124,7 +1522,10 @@ impl MarketDataHandler for DataMarketManager {
     trace!("Handler: TickByTick BidAsk: ID={}, Time={}, BidPx={}, AskPx={}", req_id, time, bid_price, ask_price);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
-      state.latest_tick = Some(TickByTickData::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask });
+      let data = TickByTickData::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask };
+      state.ticks.push(data.clone()); // Store history
+      state.latest_tick = Some(data);
+      self.request_cond.notify_all(); // Notify waiters
       // self.notify_observers(req_id);
     } else {
       // warn!("Received tick_by_tick_bid_ask for unknown or non-TBT subscription ID: {}", req_id);
@@ -1135,7 +1536,10 @@ impl MarketDataHandler for DataMarketManager {
     trace!("Handler: TickByTick MidPoint: ID={}, Time={}, MidPt={}", req_id, time, mid_point);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
-      state.latest_tick = Some(TickByTickData::MidPoint { time, mid_point });
+      let data = TickByTickData::MidPoint { time, mid_point };
+      state.ticks.push(data.clone()); // Store history
+      state.latest_tick = Some(data);
+      self.request_cond.notify_all(); // Notify waiters
       // self.notify_observers(req_id);
     } else {
       // warn!("Received tick_by_tick_mid_point for unknown or non-TBT subscription ID: {}", req_id);
@@ -1192,6 +1596,7 @@ impl MarketDataHandler for DataMarketManager {
         _ => warn!("Unknown market depth operation: {}", operation),
       }
       // Trim list if it exceeds num_rows? TWS usually manages this.
+      self.request_cond.notify_all(); // Notify waiters
       // self.notify_observers(req_id);
     } else {
       // warn!("Received update_mkt_depth for unknown or non-Depth subscription ID: {}", req_id);
@@ -1233,6 +1638,7 @@ impl MarketDataHandler for DataMarketManager {
         },
         _ => warn!("Unknown market depth L2 operation: {}", operation),
       }
+      self.request_cond.notify_all(); // Notify waiters
       // self.notify_observers(req_id);
     } else {
       // warn!("Received update_mkt_depth_l2 for unknown or non-Depth subscription ID: {}", req_id);
