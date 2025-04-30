@@ -158,15 +158,9 @@ mod socket {
       Ok(_) => (),
       Err(e) => {
         let _ = stream.set_read_timeout(None);
-        let peer_addr_str = stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
-        error!("read_exact_timeout failed for message size from {}: ErrorKind={:?}, Details={}", peer_addr_str, e.kind(), e);
         return Err(match e.kind() {
           ErrorKind::TimedOut => IBKRError::Timeout(format!("Reading message size: {}", e)),
           ErrorKind::UnexpectedEof => IBKRError::ConnectionFailed(format!("Reading message size (EOF): {}", e)),
-          // Specific handling for reset/refused/broken pipe
-          ErrorKind::ConnectionReset => IBKRError::ConnectionFailed(format!("Reading message size (ConnectionReset): {}", e)),
-          ErrorKind::ConnectionRefused => IBKRError::ConnectionFailed(format!("Reading message size (ConnectionRefused): {}", e)),
-          ErrorKind::BrokenPipe => IBKRError::ConnectionFailed(format!("Reading message size (BrokenPipe): {}", e)),
           _ => IBKRError::SocketError(format!("Reading message size: {}", e)),
         });
       }
@@ -190,15 +184,9 @@ mod socket {
       Ok(_) => (),
       Err(e) => {
         let _ = stream.set_read_timeout(None); // Reset timeout
-        let peer_addr_str = stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
-        error!("read_exact_timeout failed for message body ({} bytes) from {}: ErrorKind={:?}, Details={}", size, peer_addr_str, e.kind(), e);
         return Err(match e.kind() {
           ErrorKind::TimedOut => IBKRError::Timeout(format!("Reading message body ({} bytes): {}", size, e)),
           ErrorKind::UnexpectedEof => IBKRError::ConnectionFailed(format!("Reading message body (EOF, {} bytes): {}", size, e)),
-          // Specific handling for reset/refused/broken pipe
-          ErrorKind::ConnectionReset => IBKRError::ConnectionFailed(format!("Reading message body (ConnectionReset, {} bytes): {}", size, e)),
-          ErrorKind::ConnectionRefused => IBKRError::ConnectionFailed(format!("Reading message body (ConnectionRefused, {} bytes): {}", size, e)),
-          ErrorKind::BrokenPipe => IBKRError::ConnectionFailed(format!("Reading message body (BrokenPipe, {} bytes): {}", size, e)),
           _ => IBKRError::SocketError(format!("Reading message body ({} bytes): {}", size, e)),
         });
       }
@@ -288,17 +276,8 @@ mod socket {
           .with_time(Duration::from_secs(60))       // Time before sending first keepalive probe
           .with_interval(Duration::from_secs(20))   // Interval between keepalive probes
           .with_retries(32);                        // Number of failed probes before dropping the connection
-        match sock_ref.set_tcp_keepalive(&keepalive) {
-          Ok(_) => debug!("Successfully applied TCP keepalive settings."),
-          Err(e) => warn!("Failed to set TCP keepalive: {:?}", e),
-        }
+        sock_ref.set_tcp_keepalive(&keepalive).unwrap_or_else(|e| log::warn!("Failed to set keepalive: {:?}", e));
       }
-      // Log peer address
-      match stream.peer_addr() {
-        Ok(addr) => info!("TCP stream connected to peer: {}", addr),
-        Err(e) => warn!("Failed to get peer address: {}", e),
-      }
-
 
       // --- Handshake H1 ---
       info!("Sending Handshake H1...");
@@ -350,22 +329,17 @@ mod socket {
       log::info!("Starting the reader thread.");
 
       let stop_flag_clone = self.stop_flag.clone();
-      let reader_thread_handle_clone = self.reader_thread.clone(); // Arc<Mutex<Option<JoinHandle>>>
-      let thread_logger = logger_clone.clone(); // Option<ConnectionLogger>
-      let peer_addr_str = reader_stream.peer_addr().map(|a| a.to_string()).unwrap_or_else(|_| "unknown".to_string());
+      let reader_thread_handle_clone = self.reader_thread.clone();
+      let thread_logger = logger_clone.clone();
 
-      *self.stop_flag.lock() = false; // Set stop flag to false before starting
+      *self.stop_flag.lock() = false;
 
       let handle = thread::spawn(move || {
-        info!("Message reader thread started for peer {} (Server Version: {})", peer_addr_str, server_version);
-        let read_loop_timeout = Duration::from_secs(2); // Timeout for individual read attempts
-
-        let mut exit_reason = "Unknown"; // Track why the loop is exiting
+        debug!("Message reader thread started (Server Version: {})", server_version);
+        let read_loop_timeout = Duration::from_secs(2);
 
         loop {
-          // Check stop flag at the beginning of the loop
           if *stop_flag_clone.lock() {
-            exit_reason = "Stop signal received";
             debug!("Reader thread received stop signal.");
             break;
           }
@@ -385,50 +359,31 @@ mod socket {
               }
             },
             Err(IBKRError::Timeout(_)) => {
-              // Timeout is expected during idle periods, just continue
-              log::trace!("Reader thread read timed out ({}ms), continuing loop.", read_loop_timeout.as_millis());
               continue;
             }
-            Err(IBKRError::ConnectionFailed(msg)) => {
-              // These are usually terminal errors for the connection
-              error!("Connection failed in reader thread: {}", msg);
-              exit_reason = "ConnectionFailed";
-              break; // Exit loop
-            }
-            Err(IBKRError::SocketError(msg)) => {
-              // Other socket errors might be recoverable or terminal
-              error!("Socket error in reader thread: {}", msg);
-              // Decide if this specific socket error is terminal
-              if msg.contains("reset") || msg.contains("broken pipe") || msg.contains("refused") {
-                exit_reason = "SocketError (Terminal)";
+            Err(IBKRError::ConnectionFailed(msg)) | Err(IBKRError::SocketError(msg)) => {
+              if msg.contains("timed out") || msg.contains("reset") || msg.contains("broken pipe") || msg.contains("refused") || msg.contains("closed") || msg.contains("EOF") || msg.contains("network") || msg.contains("host is down") {
+                error!("Connection lost/error in reader thread: {}", msg);
+                handler.connection_closed(); // Notify handler
                 break; // Exit loop
               } else {
-                warn!("Non-terminal socket error encountered: {}", msg);
-                thread_sleep(Duration::from_millis(100)); // Avoid busy-loop on persistent errors
+                warn!("Unhandled socket/connection error in reader: {}", msg);
+                thread_sleep(Duration::from_millis(100));
               }
-            }
+            },
             Err(e) => {
-              // Errors during message parsing or other internal issues
               error!("Non-IO error in reader thread: {:?}", e);
-              // Depending on the error, might want to break or continue
-              // For now, log and continue, but could indicate a bug
               thread_sleep(Duration::from_millis(100));
             }
           }
         } // End loop
 
         // --- Cleanup ---
-        info!("Message reader thread loop exited. Reason: {}", exit_reason);
-        // Ensure stop flag is set upon exiting the loop for any reason
+        info!("Message reader thread stopping cleanup...");
         *stop_flag_clone.lock() = true;
 
-        // Notify the handler that the connection is considered closed from the reader's perspective
-        debug!("Reader thread notifying handler of connection closure.");
-        handler.connection_closed();
-
-        // Clear the handle from the shared state
         *reader_thread_handle_clone.lock() = None;
-        info!("Message reader thread finished for peer {}.", peer_addr_str);
+        debug!("Message reader thread finished.");
       }); // End thread::spawn
 
       *self.reader_thread.lock() = Some(handle);
@@ -484,19 +439,18 @@ mod socket {
 
       // 5. Join reader
       if let Some(handle) = reader_handle {
-        debug!("Disconnect: Waiting for reader thread to join...");
-        match handle.join() {
-          Ok(_) => debug!("Disconnect: Reader thread joined successfully."),
-          Err(e) => error!("Disconnect: Error joining reader thread: {:?}", e),
+        debug!("Waiting for reader thread to join...");
+        if let Err(e) = handle.join() {
+          error!("Error joining reader thread: {:?}", e);
+        } else {
+          debug!("Reader thread joined successfully.");
         }
-        // Clear the handle in the shared state *after* joining attempt
-        // (Reader thread itself also clears this, but do it here for robustness)
         *self.reader_thread.lock() = None;
       } else {
-        debug!("Disconnect: No active reader thread found to join.");
+        debug!("No active reader thread to join.");
       }
 
-      info!("Disconnect: Finished disconnecting from TWS.");
+      info!("Disconnected from TWS.");
       Ok(())
     }
 
@@ -604,31 +558,28 @@ mod socket {
   // --- Implement Drop ---
   impl Drop for SocketConnection {
     fn drop(&mut self) {
-      let stop_flag_guard = self.stop_flag.lock();
-      let is_stopping = *stop_flag_guard;
-      drop(stop_flag_guard); // Release lock early
-
-      let needs_disconnect = if is_stopping {
-        false // Already stopping or stopped
-      } else {
-        // Check if resources might still be active
-        let state = self.inner_state.lock();
-        let reader_active = self.reader_thread.lock().is_some();
-        let stream_exists = state.stream.is_some();
-        stream_exists || reader_active
+      // Use PLMutex guard here if stop_flag is PLMutex
+      let needs_disconnect = {
+        if *self.stop_flag.lock() {
+          false
+        } else {
+          let state = self.inner_state.lock();
+          // Check reader thread existence using PLMutex guard
+          state.stream.is_some() || self.reader_thread.lock().is_some()
+        }
       };
 
       if needs_disconnect {
-        info!("Dropping SocketConnection while potentially active. Initiating disconnect...");
+        info!("Dropping SocketConnection, ensuring disconnect...");
         if let Err(e) = self.disconnect() {
           error!("Error during disconnect on drop: {:?}", e);
         }
       } else {
-        // Log based on whether it was already stopping or just never connected properly
-        if is_stopping {
-          info!("Dropping SocketConnection, disconnect already in progress or completed.");
+        // Only log if not already disconnected to avoid noise
+        if self.inner_state.lock().stream.is_some() || self.reader_thread.lock().is_some() {
+          info!("Dropping SocketConnection, already disconnected or stopping.");
         } else {
-          info!("Dropping SocketConnection, was already fully disconnected or never connected.");
+          info!("Dropping SocketConnection, already fully disconnected/never connected.");
         }
       }
     }
