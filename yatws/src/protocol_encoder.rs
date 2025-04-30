@@ -415,15 +415,12 @@ impl Encoder {
 
   // Helper for TagValue lists
   fn write_tag_value_list(&self, cursor: &mut Cursor<Vec<u8>>, list: &[(String, String)]) -> Result<(), IBKRError> {
-    if list.is_empty() {
-      self.write_str_to_cursor(cursor, "")?;
-      return Ok(());
-    }
-    self.write_int_to_cursor(cursor, list.len() as i32)?;
-    for (tag, value) in list {
-      self.write_str_to_cursor(cursor, tag)?;
-      self.write_str_to_cursor(cursor, value)?;
-    }
+    let enc = list
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<String>>()
+        .join(",");
+    self.write_str_to_cursor(cursor, &enc)?;
     Ok(())
   }
 
