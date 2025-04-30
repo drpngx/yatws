@@ -296,7 +296,11 @@ impl AccountManager {
 
     // Include PnL tags directly in the summary request
     // Request a comprehensive set of tags, including PnL
-    let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
+    // --- SIMPLIFIED TAGS FOR DEBUGGING ---
+    // let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
+    let tags = "AccountType,NetLiquidation,TotalCashValue,BuyingPower,Currency".to_string();
+    info!("Requesting simplified account summary tags: {}", tags);
+    // --- END SIMPLIFIED TAGS ---
     let summary_msg = encoder.encode_request_account_summary(req_id, "All", &tags)?;
     // --- ADD RequestPositions ---
     let position_msg = encoder.encode_request_positions()?;
