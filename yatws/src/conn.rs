@@ -266,7 +266,10 @@ mod socket {
       let mut stream = TcpStream::connect_timeout(&socket_addrs[0], timeout)
         .map_err(|e| IBKRError::ConnectionFailed(format!("Connect failed to {}: {}", socket_addrs[0], e)))?;
 
-      stream.set_keepalive(Some(std::time::Duration::from_secs(60)));
+      // Flush small packets.
+      stream.set_nodelay(true).unwrap_or_else(|e| log::warn!("Failed to set nodelay: {:?}", e));
+      // Only tokio::TcpStream has keepalive.
+      // stream.set_keepalive(Some(std::time::Duration::from_secs(60)));
 
       // --- Handshake H1 ---
       info!("Sending Handshake H1...");
