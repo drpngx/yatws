@@ -266,8 +266,7 @@ mod socket {
       let mut stream = TcpStream::connect_timeout(&socket_addrs[0], timeout)
         .map_err(|e| IBKRError::ConnectionFailed(format!("Connect failed to {}: {}", socket_addrs[0], e)))?;
 
-      stream.set_write_timeout(Some(timeout))
-        .map_err(|e| IBKRError::ConnectionFailed(format!("Failed to set write timeout: {}", e)))?;
+      stream.set_keepalive(Some(std::time::Duration::from_secs(60)));
 
       // --- Handshake H1 ---
       info!("Sending Handshake H1...");
