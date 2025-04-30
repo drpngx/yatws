@@ -339,7 +339,7 @@ mod test_cases {
     Ok(())
   }
 
-  pub(super) fn realtime_data_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+  pub(super) fn realtime_data_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Realtime Market Data Stream ---");
     let data_mgr = client.data_market();
     let contract = Contract::stock("SPY"); // Use SPY stock
@@ -670,6 +670,126 @@ mod test_cases {
     }
     Ok(())
   }
+
+
+  pub(super) fn cleanup_orders_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Cleanup Orders (Cancel All Open Orders & List Positions) ---");
+    let order_mgr = client.orders();
+    let acct_mgr = client.account();
+    let refresh_timeout = Duration::from_secs(10);
+    let cancel_wait_timeout = Duration::from_secs(5);
+    let mut cancellation_errors = Vec::new();
+
+    // 1. Refresh and list open orders
+    info!("Refreshing order book...");
+    match order_mgr.refresh_orderbook(refresh_timeout) {
+      Ok(_) => info!("Order book refresh complete."),
+      Err(IBKRError::Timeout(msg)) => {
+        warn!("Order book refresh timed out: {}. Proceeding with potentially stale data.", msg);
+        // Continue anyway, maybe some orders were received before timeout
+      }
+      Err(e) => {
+        error!("Failed to refresh order book: {:?}", e);
+        return Err(e).context("Order book refresh failed");
+      }
+    }
+
+    let open_orders = order_mgr.get_open_orders();
+    if open_orders.is_empty() {
+      info!("No open orders found to cancel.");
+    } else {
+      info!("Found {} open orders. Attempting cancellation...", open_orders.len());
+      for order in open_orders {
+        info!("Cancelling order ID: {} (Symbol: {}, Side: {:?}, Qty: {})",
+              order.id, order.contract.symbol, order.request.side, order.request.quantity);
+        match order_mgr.cancel_order(&order.id) {
+          Ok(true) => {
+            info!("Cancel request sent for {}. Waiting for confirmation...", order.id);
+            match order_mgr.try_wait_order_canceled(&order.id, cancel_wait_timeout) {
+              Ok(status) => info!("Order {} cancellation confirmed with status: {:?}", order.id, status),
+              Err(IBKRError::Timeout(_)) => {
+                let msg = format!("Timeout waiting for cancellation confirmation for order {}", order.id);
+                warn!("{}", msg);
+                cancellation_errors.push(msg);
+              }
+              Err(e) => {
+                let msg = format!("Error waiting for cancellation confirmation for order {}: {:?}", order.id, e);
+                error!("{}", msg);
+                cancellation_errors.push(msg);
+              }
+            }
+          }
+          Ok(false) => {
+            // This means cancel_order decided not to send (e.g., already terminal)
+            info!("Cancellation request for order {} not sent (likely already terminal).", order.id);
+          }
+          Err(e) => {
+            let msg = format!("Failed to send cancel request for order {}: {:?}", order.id, e);
+            error!("{}", msg);
+            cancellation_errors.push(msg);
+          }
+        }
+        // Small delay between cancellations? Maybe not necessary.
+        // std::thread::sleep(Duration::from_millis(100));
+      }
+    }
+
+    // 2. Refresh account details (summary & positions)
+    info!("Refreshing account details after cancellation attempts...");
+    match acct_mgr.refresh() {
+      Ok(_) => info!("Account refresh request completed."),
+      Err(IBKRError::Timeout(msg)) => {
+        warn!("Account refresh timed out: {}. Proceeding with potentially stale data.", msg);
+      }
+      Err(e) => {
+        error!("Account refresh failed critically: {:?}", e);
+        // Don't return error yet, try listing positions anyway
+        cancellation_errors.push(format!("Account refresh failed: {:?}", e));
+      }
+    }
+    // Allow time for potential background updates or processing after refresh signal
+    std::thread::sleep(Duration::from_millis(500));
+
+    // 3. List final positions
+    info!("Fetching final open positions...");
+    match acct_mgr.list_open_positions() {
+      Ok(positions) => {
+        if positions.is_empty() {
+          info!("No open positions found.");
+        } else {
+          info!("Final Open Positions:");
+          for pos in positions {
+            info!(
+              "  Symbol: {}, Qty: {}, AvgCost: {}, MktPx: {}, MktVal: {}, UnPNL: {}",
+              pos.symbol,
+              pos.quantity,
+              pos.average_cost,
+              pos.market_price,
+              pos.market_value,
+              pos.unrealized_pnl
+            );
+          }
+        }
+      }
+      Err(e) => {
+        let msg = format!("Failed to list final open positions: {:?}", e);
+        error!("{}", msg);
+        cancellation_errors.push(msg);
+      }
+    }
+
+    // 4. Report overall success/failure
+    if cancellation_errors.is_empty() {
+      info!("Cleanup orders test completed successfully.");
+      Ok(())
+    } else {
+      error!("Cleanup orders test completed with errors:");
+      for err in &cancellation_errors {
+        error!("  - {}", err);
+      }
+      Err(anyhow!("One or more errors occurred during cleanup: {:?}", cancellation_errors))
+    }
+  }
 }
 
 // --- Test Registration ---
@@ -685,6 +805,7 @@ inventory::submit! { TestDefinition { name: "realtime-bars-blocking", func: test
 inventory::submit! { TestDefinition { name: "market-data-blocking", func: test_cases::market_data_blocking_impl } }
 inventory::submit! { TestDefinition { name: "tick-by-tick-blocking", func: test_cases::tick_by_tick_blocking_impl } }
 inventory::submit! { TestDefinition { name: "market-depth-blocking", func: test_cases::market_depth_blocking_impl } }
+inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 
 

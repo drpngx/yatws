@@ -13,3 +13,9 @@ py_binary(
     srcs = ["realtime_data.py"],
     deps = ["//:ibapi"],
 )
+
+py_binary(
+    name = "broker_cleanup_orders",
+    srcs = ["broker_cleanup_orders.py"],
+    deps = ["//:ibapi"],
+)
