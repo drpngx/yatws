@@ -301,9 +301,9 @@ impl AccountManager {
     let tags = "AccountType,NetLiquidation,TotalCashValue,BuyingPower,Currency".to_string();
     info!("Requesting simplified account summary tags: {}", tags);
     // --- END SIMPLIFIED TAGS ---
-    let summary_msg = encoder.encode_request_account_summary(req_id, "All", &tags)?;
+    // let summary_msg = encoder.encode_request_account_summary(req_id, "All", &tags)?; // <-- COMMENTED OUT FOR TESTING
     // --- ADD RequestPositions ---
-    // let position_msg = encoder.encode_request_positions()?; // <-- COMMENTED OUT FOR TESTING
+    let position_msg = encoder.encode_request_positions()?; // <-- RESTORED FOR TESTING
 
     { // Scope for r_state lock starts
       let mut r_state = self.refresh_state.lock();
@@ -311,20 +311,21 @@ impl AccountManager {
       if r_state.waiting_for_summary_end || r_state.waiting_for_position_end {
         return Err(IBKRError::AlreadyRunning("Refresh already in progress".to_string()));
       }
-      r_state.summary_request_id = Some(req_id);
-      r_state.waiting_for_summary_end = true;
-      // r_state.waiting_for_position_end = true; // <-- COMMENTED OUT FOR TESTING
-      r_state.waiting_for_position_end = false; // Ensure this is false if not waiting
+      // r_state.summary_request_id = Some(req_id); // <-- COMMENTED OUT FOR TESTING
+      r_state.summary_request_id = None; // Ensure None
+      // r_state.waiting_for_summary_end = true; // <-- COMMENTED OUT FOR TESTING
+      r_state.waiting_for_summary_end = false; // Ensure false
+      r_state.waiting_for_position_end = true; // <-- RESTORED FOR TESTING
     } // Lock released briefly
 
-    self.message_broker.send_message(&summary_msg)?;
-    // --- ADD DELAY before sending position request ---
-    let delay_ms = 200;
-    debug!("Waiting {}ms before sending position request...", delay_ms);
-    std::thread::sleep(Duration::from_millis(delay_ms));
-    // --- END DELAY ---
+    // self.message_broker.send_message(&summary_msg)?; // <-- COMMENTED OUT FOR TESTING
+    // --- REMOVE DELAY ---
+    // let delay_ms = 200;
+    // debug!("Waiting {}ms before sending position request...", delay_ms);
+    // std::thread::sleep(Duration::from_millis(delay_ms));
+    // --- END REMOVE DELAY ---
     // --- ADD send for position_msg ---
-    // self.message_broker.send_message(&position_msg)?; // <-- COMMENTED OUT FOR TESTING
+    self.message_broker.send_message(&position_msg)?; // <-- RESTORED FOR TESTING
 
     let wait_timeout = Duration::from_secs(15);
     let start_time = std::time::Instant::now();
@@ -334,58 +335,59 @@ impl AccountManager {
       // Re-lock state for waiting
       let mut r_state = self.refresh_state.lock(); // Lock acquired
 
-      // Wait until summary is complete, or timeout (Position wait commented out)
-      while r_state.waiting_for_summary_end // Check (Position check removed)
+      // Wait until positions are complete, or timeout (Summary wait commented out)
+      while r_state.waiting_for_position_end // Check (Summary check removed)
         && start_time.elapsed() < wait_timeout { // Check
           let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
           let timeout_result = self.refresh_cond.wait_for(&mut r_state, remaining_timeout); // Wait
 
           if timeout_result.timed_out() { // Check timeout
             // Check which operations timed out
-            if r_state.waiting_for_summary_end { // Check
-              warn!("Account refresh timed out waiting for SummaryEnd.");
-              cancel_req_id = r_state.summary_request_id; // Access
-            }
-            // Position timeout check removed
-            // if r_state.waiting_for_position_end { // Check
-            //   warn!("Account refresh timed out waiting for PositionEnd.");
+            // Summary timeout check removed
+            // if r_state.waiting_for_summary_end { // Check
+            //   warn!("Account refresh timed out waiting for SummaryEnd.");
+            //   cancel_req_id = r_state.summary_request_id; // Access
             // }
+            if r_state.waiting_for_position_end { // Check
+              warn!("Account refresh timed out waiting for PositionEnd.");
+              // No specific ID to cancel for positions
+            }
 
-            // Reset state *after* logging and storing cancel ID
-            r_state.waiting_for_summary_end = false; // Access
-            r_state.waiting_for_position_end = false; // Ensure false
-            r_state.summary_request_id = None; // Access
+            // Reset state *after* logging
+            r_state.waiting_for_summary_end = false; // Ensure false
+            r_state.waiting_for_position_end = false; // Access
+            r_state.summary_request_id = None; // Ensure None
             drop(r_state); // Drop lock
 
-            // Cancel summary request if needed
-            if let Some(id) = cancel_req_id {
-              match encoder.encode_cancel_account_summary(id) {
-                Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
-                Err(e) => error!("Failed to encode cancel summary msg: {:?}", e),
-              }
-            }
+            // Cancel summary request if needed (Should be None here)
+            // if let Some(id) = cancel_req_id {
+            //   match encoder.encode_cancel_account_summary(id) {
+            //     Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
+            //     Err(e) => error!("Failed to encode cancel summary msg: {:?}", e),
+            //   }
+            // }
 
             // --- ADD CancelPositions ---
-            // match encoder.encode_cancel_positions() { // <-- COMMENTED OUT FOR TESTING
-            //   Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
-            //   Err(e) => error!("Failed to encode cancel positions msg: {:?}", e),
-            // }
+            match encoder.encode_cancel_positions() { // <-- RESTORED FOR TESTING
+              Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
+              Err(e) => error!("Failed to encode cancel positions msg: {:?}", e),
+            }
 
             return Err(IBKRError::Timeout("Account refresh timed out".to_string()));
           } // End if timeout_result.timed_out()
           // No else block needed here - if not timed out, loop continues
           // This debug message executes ONLY IF NOT TIMED OUT
-          debug!("Refresh wait notified. Waiting flags: Summary={}", r_state.waiting_for_summary_end); // Position flag removed
+          debug!("Refresh wait notified. Waiting flags: Position={}", r_state.waiting_for_position_end); // Summary flag removed
         } // End while loop
 
 
       // After loop, check final state
       // This block runs if the loop terminated because the condition became false (refresh completed)
-      if r_state.waiting_for_summary_end { // Position check removed
+      if r_state.waiting_for_position_end { // Summary check removed
         // This case means loop ended, but flags somehow still set (e.g., timeout occurred *after* last check but before this block)
-        warn!("Refresh loop finished but flags not cleared (Summary={}). Resetting.", r_state.waiting_for_summary_end); // Position flag removed
-        r_state.waiting_for_summary_end = false;
-        r_state.waiting_for_position_end = false; // Ensure false
+        warn!("Refresh loop finished but flags not cleared (Position={}). Resetting.", r_state.waiting_for_position_end); // Summary flag removed
+        r_state.waiting_for_summary_end = false; // Ensure false
+        r_state.waiting_for_position_end = false;
         if start_time.elapsed() >= wait_timeout {
           return Err(IBKRError::Timeout("Account refresh timed out (consistency check)".to_string()));
         } else {
@@ -393,10 +395,10 @@ impl AccountManager {
           return Err(IBKRError::InternalError("Refresh state inconsistency after wait".to_string()));
         }
       } else {
-        info!("Account refresh completed successfully (Summary only)."); // Adjusted message
+        info!("Account refresh completed successfully (Positions only)."); // Adjusted message
       }
-      // Ensure summary_request_id is cleared even on success
-      r_state.summary_request_id = None;
+      // Ensure summary_request_id is cleared even on success (already None)
+      // r_state.summary_request_id = None;
 
     } // Release lock (implicit drop of r_state)
 
@@ -733,62 +735,38 @@ impl AccountHandler for AccountManager {
     let mut r_state = self.refresh_state.lock();
     // Optional: Check if r_state.is_poisoned()
 
-    // if r_state.waiting_for_position_end { // <-- COMMENTED OUT FOR TESTING
-    //   info!("PositionEnd received, marking position refresh as complete.");
-    //   r_state.waiting_for_position_end = false;
-    //   // Check if this was the *last* thing we were waiting for
-    //   if !r_state.waiting_for_summary_end {
-    //     info!("PositionEnd: All refresh operations complete. Notifying waiter.");
-    //     self.refresh_cond.notify_all();
-    //   } else {
-    //     info!("PositionEnd: Still waiting for SummaryEnd.");
-    //   }
-    // } else {
-    //   // This can happen normally during background updates if not in a blocking refresh call
-    //   debug!("PositionEnd received but not currently waiting for it (e.g., during background updates or outside a refresh).");
-    // }
-    debug!("Handler: Position End received (ignored during summary-only test).");
+    if r_state.waiting_for_position_end { // <-- RESTORED FOR TESTING
+      info!("PositionEnd received, marking position refresh as complete.");
+      r_state.waiting_for_position_end = false;
+      // Check if this was the *last* thing we were waiting for (Summary should be false)
+      if !r_state.waiting_for_summary_end {
+        info!("PositionEnd: All refresh operations complete. Notifying waiter.");
+        self.refresh_cond.notify_all();
+      } else {
+        // This case shouldn't happen in this test scenario
+        warn!("PositionEnd: Still waiting for SummaryEnd (unexpected).");
+        self.refresh_cond.notify_all(); // Notify anyway
+      }
+    } else {
+      // This can happen normally during background updates if not in a blocking refresh call
+      debug!("PositionEnd received but not currently waiting for it (e.g., during background updates or outside a refresh).");
+    }
+    // debug!("Handler: Position End received (ignored during summary-only test)."); // Removed debug message
   }
 
   fn account_summary(&self, req_id: i32, account: &str, tag: &str, value: &str, currency: &str) {
-    debug!("Handler: Account Summary: ReqId={}, Account={}, Tag={}, Value={}, Currency={}",
+    // Ignore summary messages during position-only test
+    debug!("Handler: Account Summary received (ignored during position-only test): ReqId={}, Account={}, Tag={}, Value={}, Currency={}",
            req_id, account, tag, value, currency);
-    let currency_opt = if currency.is_empty() { None } else { Some(currency) };
-    self.account_value(tag, value, currency_opt, account);
+    // let currency_opt = if currency.is_empty() { None } else { Some(currency) };
+    // self.account_value(tag, value, currency_opt, account);
   }
 
   fn account_summary_end(&self, req_id: i32) {
-    debug!("Handler: Account Summary End: ReqId={}", req_id);
-    // lock() returns guard directly
-    let mut r_state = self.refresh_state.lock();
-
-    if r_state.waiting_for_summary_end && r_state.summary_request_id == Some(req_id) {
-      info!("AccountSummaryEnd received for request {}, marking summary refresh as complete.", req_id);
-      r_state.summary_request_id = None; // Clear the ID
-      r_state.waiting_for_summary_end = false;
-      // Check if this was the *last* thing we were waiting for (Position check removed)
-      // if !r_state.waiting_for_position_end {
-      info!("AccountSummaryEnd: Summary refresh complete. Notifying waiter."); // Adjusted message
-      self.refresh_cond.notify_all();
-      // } else {
-      //   info!("AccountSummaryEnd: Still waiting for PositionEnd.");
-      // }
-    } else {
-      warn!("AccountSummaryEnd received for ReqID {} but not waiting for it or ID mismatch (Waiting: {:?}, Expected: {:?})",
-            req_id, r_state.waiting_for_summary_end, r_state.summary_request_id);
-      // If we received an unexpected summary end, ensure the waiting flag is cleared if the ID matches
-      // This handles cases where the refresh might have timed out and cancelled, but the end message still arrived.
-      if r_state.summary_request_id == Some(req_id) {
-        warn!("Clearing summary wait flag due to unexpected SummaryEnd for matching ReqID {}", req_id);
-        r_state.waiting_for_summary_end = false;
-        r_state.summary_request_id = None;
-        // Check if this completes the overall refresh now (Position check removed)
-        // if !r_state.waiting_for_position_end {
-        warn!("Notifying waiter after clearing unexpected SummaryEnd.");
-        self.refresh_cond.notify_all();
-        // }
-      }
-    }
+    // Ignore summary end messages during position-only test
+    debug!("Handler: Account Summary End received (ignored during position-only test): ReqId={}", req_id);
+    // let mut r_state = self.refresh_state.lock();
+    // ... (rest of the original logic commented out or removed) ...
   }
 
   fn pnl(&self, _req_id: i32, daily_pnl: f64, unrealized_pnl: Option<f64>, realized_pnl: Option<f64>) {
