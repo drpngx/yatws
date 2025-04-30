@@ -112,6 +112,112 @@ impl DataMarketManager {
     }
   }
 
+
+  // --- Helper to wait for real-time bars completion ---
+  fn wait_for_realtime_bars_completion(
+    &self,
+    req_id: i32,
+    num_bars: usize,
+    timeout: Duration,
+  ) -> Result<Vec<Bar>, IBKRError> {
+    let start_time = std::time::Instant::now();
+    let mut guard = self.subscriptions.lock();
+
+    loop {
+      // 1. Check state *before* waiting
+      let maybe_result = if let Some(MarketSubscription::RealTimeBars(state)) = guard.get_mut(&req_id) {
+        // Check for explicit completion (error or target reached)
+        if state.completed {
+          debug!("RealTimeBars request {} marked complete (completed=true).", req_id);
+          if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+            Some(Err(IBKRError::ApiError(code, msg.clone()))) // Completed due to error
+          } else {
+            Some(Ok(state.bars.clone())) // Completed successfully (count reached)
+          }
+        }
+        // Check for error even if not marked completed yet
+        else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+          debug!("Error found for RealTimeBars request {} before completion signal.", req_id);
+          state.completed = true; // Mark completed due to error
+          Some(Err(IBKRError::ApiError(code, msg.clone())))
+        }
+        // Check if target count reached (should normally set 'completed' flag, but double-check)
+        else if state.bars.len() >= num_bars {
+          debug!("Target bar count ({}) reached for RealTimeBars request {}.", num_bars, req_id);
+          state.completed = true; // Mark completed
+          Some(Ok(state.bars.clone()))
+        }
+        // Otherwise, still waiting
+        else {
+          None
+        }
+      } else {
+        // State missing or wrong type - internal error
+        Some(Err(IBKRError::InternalError(format!("RealTimeBars request state for {} missing or invalid during wait", req_id))))
+      };
+
+      match maybe_result {
+        Some(Ok(result)) => {
+          debug!("RealTimeBars request {} successful, removing state.", req_id);
+          guard.remove(&req_id);
+          return Ok(result);
+        },
+        Some(Err(e)) => {
+          debug!("RealTimeBars request {} failed, removing state. Error: {:?}", req_id, e);
+          guard.remove(&req_id);
+          return Err(e);
+        },
+        None => {} // Not complete, continue
+      }
+
+      // 2. Calculate remaining timeout
+      let elapsed = start_time.elapsed();
+      if elapsed >= timeout {
+        guard.remove(&req_id); // Clean up state on timeout
+        return Err(Timeout(format!("RealTimeBars request {} timed out after {:?} waiting for {} bars", req_id, timeout, num_bars)));
+      }
+      let remaining_timeout = timeout - elapsed;
+
+      // 3. Wait
+      let wait_result = self.request_cond.wait_for(&mut guard, remaining_timeout);
+
+      // 4. Handle timeout after wait (re-check state one last time)
+      if wait_result.timed_out() {
+        debug!("Wait timed out for RealTimeBars request {}. Performing final state check.", req_id);
+        let final_check = if let Some(MarketSubscription::RealTimeBars(state)) = guard.get(&req_id) {
+          if state.completed { // Check completion flag first
+            if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+              Some(Err(IBKRError::ApiError(code, msg.clone())))
+            } else {
+              Some(Ok(state.bars.clone())) // Completed successfully just before timeout
+            }
+          } else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+            Some(Err(IBKRError::ApiError(code, msg.clone()))) // Error occurred just before timeout
+          } else if state.bars.len() >= num_bars {
+            Some(Ok(state.bars.clone())) // Target reached just before timeout
+          } else {
+            None // Genuine timeout
+          }
+        } else { None }; // State gone
+
+        guard.remove(&req_id); // Clean up state regardless
+        return match final_check {
+          Some(Ok(result)) => {
+            warn!("RealTimeBars request {} completed successfully just before timeout.", req_id);
+            Ok(result)
+          },
+          Some(Err(e)) => {
+            warn!("RealTimeBars request {} failed with error just before timeout: {:?}", req_id, e);
+            Err(e)
+          },
+          None => Err(Timeout(format!("RealTimeBars request {} timed out after wait", req_id))),
+        };
+      }
+      // If not timed out, loop continues to re-check state
+    }
+  }
+
+
   // --- Helper to wait for quote completion ---
   fn wait_for_quote_completion(
     &self,
@@ -124,47 +230,47 @@ impl DataMarketManager {
     loop {
       // 1. Check state *before* waiting
       let maybe_result = if let Some(MarketSubscription::TickData(state)) = guard.get(&req_id) {
-          // Prioritize checking for an explicit completion signal (snapshot_end or error)
-          if state.quote_received {
-              debug!("Quote request {} marked complete (quote_received=true).", req_id);
-              if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
-                  // Completed due to error
-                  Some(Err(IBKRError::ApiError(code, msg.clone())))
-              } else {
-                  // Completed successfully (snapshot_end), return whatever data we have
-                  Some(Ok((state.bid_price, state.ask_price, state.last_price)))
-              }
+        // Prioritize checking for an explicit completion signal (snapshot_end or error)
+        if state.quote_received {
+          debug!("Quote request {} marked complete (quote_received=true).", req_id);
+          if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+            // Completed due to error
+            Some(Err(IBKRError::ApiError(code, msg.clone())))
+          } else {
+            // Completed successfully (snapshot_end), return whatever data we have
+            Some(Ok((state.bid_price, state.ask_price, state.last_price)))
           }
-          // If not explicitly complete, check if we received an error anyway
-          else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
-              debug!("Error found for quote request {} before completion signal.", req_id);
-              Some(Err(IBKRError::ApiError(code, msg.clone())))
-          }
-          // If not complete and no error, check if we have all required prices (alternative success)
-          // This can happen if ticks arrive before snapshot_end
-          else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
-              debug!("All required prices received for quote request {} before completion signal.", req_id);
-              Some(Ok((state.bid_price, state.ask_price, state.last_price)))
-          }
-          // Otherwise, still waiting
-          else {
-              None
-          }
+        }
+        // If not explicitly complete, check if we received an error anyway
+        else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+          debug!("Error found for quote request {} before completion signal.", req_id);
+          Some(Err(IBKRError::ApiError(code, msg.clone())))
+        }
+        // If not complete and no error, check if we have all required prices (alternative success)
+        // This can happen if ticks arrive before snapshot_end
+        else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
+          debug!("All required prices received for quote request {} before completion signal.", req_id);
+          Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+        }
+        // Otherwise, still waiting
+        else {
+          None
+        }
       } else {
-          // State missing or wrong type - internal error
-          Some(Err(IBKRError::InternalError(format!("Quote request state for {} missing or invalid during wait", req_id))))
+        // State missing or wrong type - internal error
+        Some(Err(IBKRError::InternalError(format!("Quote request state for {} missing or invalid during wait", req_id))))
       };
 
       match maybe_result {
         Some(Ok(result)) => {
-            debug!("Quote request {} successful, removing state.", req_id);
-            guard.remove(&req_id);
-            return Ok(result);
+          debug!("Quote request {} successful, removing state.", req_id);
+          guard.remove(&req_id);
+          return Ok(result);
         },
         Some(Err(e)) => {
-            debug!("Quote request {} failed, removing state. Error: {:?}", req_id, e);
-            guard.remove(&req_id);
-            return Err(e);
+          debug!("Quote request {} failed, removing state. Error: {:?}", req_id, e);
+          guard.remove(&req_id);
+          return Err(e);
         },
         None => {} // Not complete, continue
       }
@@ -182,40 +288,40 @@ impl DataMarketManager {
 
       // 4. Handle timeout after wait (re-check state one last time)
       if wait_result.timed_out() {
-          debug!("Wait timed out for quote request {}. Performing final state check.", req_id);
-          let final_check = if let Some(MarketSubscription::TickData(state)) = guard.get(&req_id) {
-              // Check completion flag first
-              if state.quote_received {
-                  if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
-                      Some(Err(IBKRError::ApiError(code, msg.clone())))
-                  } else {
-                      Some(Ok((state.bid_price, state.ask_price, state.last_price)))
-                  }
-              }
-              // Check error flag
-              else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
-                  Some(Err(IBKRError::ApiError(code, msg.clone())))
-              }
-              // Check if all prices arrived just before timeout
-              else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
-                  Some(Ok((state.bid_price, state.ask_price, state.last_price)))
-              }
-              // Otherwise, it's a genuine timeout
-              else { None }
-          } else { None }; // State gone
+        debug!("Wait timed out for quote request {}. Performing final state check.", req_id);
+        let final_check = if let Some(MarketSubscription::TickData(state)) = guard.get(&req_id) {
+          // Check completion flag first
+          if state.quote_received {
+            if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+              Some(Err(IBKRError::ApiError(code, msg.clone())))
+            } else {
+              Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+            }
+          }
+          // Check error flag
+          else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
+            Some(Err(IBKRError::ApiError(code, msg.clone())))
+          }
+          // Check if all prices arrived just before timeout
+          else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
+            Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+          }
+          // Otherwise, it's a genuine timeout
+          else { None }
+        } else { None }; // State gone
 
-          guard.remove(&req_id); // Clean up state regardless
-          return match final_check {
-              Some(Ok(result)) => {
-                  warn!("Quote request {} completed successfully just before timeout.", req_id);
-                  Ok(result)
-              },
-              Some(Err(e)) => {
-                  warn!("Quote request {} failed with error just before timeout: {:?}", req_id, e);
-                  Err(e)
-              },
-              None => Err(Timeout(format!("Quote request {} timed out after wait", req_id))),
-          };
+        guard.remove(&req_id); // Clean up state regardless
+        return match final_check {
+          Some(Ok(result)) => {
+            warn!("Quote request {} completed successfully just before timeout.", req_id);
+            Ok(result)
+          },
+          Some(Err(e)) => {
+            warn!("Quote request {} failed with error just before timeout: {:?}", req_id, e);
+            Err(e)
+          },
+          None => Err(Timeout(format!("Quote request {} timed out after wait", req_id))),
+        };
       }
       // If not timed out, loop continues to re-check state
     }
@@ -284,6 +390,68 @@ impl DataMarketManager {
     }
     Ok(())
   }
+
+
+  /// Requests a specific number of 5-second real-time bars. Blocks until the bars are received, an error occurs, or timeout.
+  pub fn get_realtime_bars(
+    &self,
+    contract: &Contract,
+    what_to_show: &str, // "TRADES", "MIDPOINT", "BID", "ASK"
+    use_rth: bool,
+    real_time_bars_options: &[(String, String)],
+    num_bars: usize, // Number of bars to wait for
+    timeout: Duration, // Total timeout for the operation
+  ) -> Result<Vec<Bar>, IBKRError> {
+    if num_bars == 0 {
+      return Err(IBKRError::ConfigurationError("num_bars must be greater than 0".to_string()));
+    }
+    let bar_size = 5; // Hardcoded as per API limitation
+    info!("Requesting {} real time bars: Contract={}, What={}, RTH={}, Timeout={:?}",
+          num_bars, contract.symbol, what_to_show, use_rth, timeout);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_real_time_bars(
+      req_id, contract, bar_size, what_to_show, use_rth, real_time_bars_options,
+    )?;
+
+    // Initialize and store state, marking target count
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
+      let state = RealTimeBarSubscription {
+        req_id,
+        contract: contract.clone(),
+        bar_size,
+        what_to_show: what_to_show.to_string(),
+        use_rth,
+        rt_bar_options: real_time_bars_options.to_vec(),
+        latest_bar: None,
+        bars: Vec::with_capacity(num_bars), // Pre-allocate
+        target_bar_count: Some(num_bars), // Mark target for blocking
+        completed: false, // Not completed yet
+        error_code: None,
+        error_message: None,
+      };
+      subs.insert(req_id, MarketSubscription::RealTimeBars(state));
+      debug!("Blocking real time bar request added for ReqID: {}", req_id);
+    }
+
+    // Send the request
+    self.message_broker.send_message(&request_msg)?;
+
+    // Block and wait for completion
+    let result = self.wait_for_realtime_bars_completion(req_id, num_bars, timeout);
+
+    // Best effort cancel after completion/timeout/error
+    // Ignore error here as the state might already be removed by the wait function
+    let _ = self.cancel_real_time_bars(req_id);
+
+    result
+  }
+
+
 
   /// Gets a single quote (Bid, Ask, Last) for a contract using a snapshot request. Blocks until data is received or timeout.
   pub fn get_quote(&self, contract: &Contract, timeout: Duration) -> Result<Quote, IBKRError> {
@@ -366,11 +534,14 @@ impl DataMarketManager {
         use_rth,
         rt_bar_options: real_time_bars_options.to_vec(),
         latest_bar: None,
+        bars: Vec::new(), // Initialize empty vec for streaming
+        target_bar_count: None, // Not a blocking request by default
+        completed: false, // Not completed yet
         error_code: None,
         error_message: None,
       };
       subs.insert(req_id, MarketSubscription::RealTimeBars(state));
-      debug!("Real time bar subscription added for ReqID: {}", req_id);
+      debug!("Streaming real time bar subscription added for ReqID: {}", req_id);
     }
 
     self.message_broker.send_message(&request_msg)?;
@@ -619,29 +790,32 @@ impl DataMarketManager {
 
       // Extract error fields and determine if it's historical
       let (err_code_field, err_msg_field, is_historical) = match sub_state {
-          MarketSubscription::TickData(s) => (&mut s.error_code, &mut s.error_message, false), // Not historical
-          MarketSubscription::RealTimeBars(s) => (&mut s.error_code, &mut s.error_message, false),
-          MarketSubscription::TickByTick(s) => (&mut s.error_code, &mut s.error_message, false),
-          MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message, false),
-          MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, true), // Is historical
+        MarketSubscription::TickData(s) => (&mut s.error_code, &mut s.error_message, false), // Not historical
+        MarketSubscription::RealTimeBars(s) => (&mut s.error_code, &mut s.error_message, false),
+        MarketSubscription::TickByTick(s) => (&mut s.error_code, &mut s.error_message, false),
+        MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message, false),
+        MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, true), // Is historical
       };
 
       *err_code_field = Some(error_code_int); // Store the integer code
       *err_msg_field = Some(msg.to_string()); // Store the cloned message string
 
-      // If it's a blocking request (historical or quote), mark end and notify waiter
-      if is_blocking_quote || is_historical {
+      // Determine if it's a blocking real-time bar request
+      let is_blocking_rtbars = matches!(sub_state, MarketSubscription::RealTimeBars(s) if s.target_bar_count.is_some());
+
+      // If it's a blocking request (historical, quote, or rt-bars), mark end and notify waiter
+      if is_blocking_quote || is_historical || is_blocking_rtbars {
         match sub_state {
           MarketSubscription::HistoricalData(s) => s.end_received = true,
-          MarketSubscription::TickData(s) if s.is_blocking_quote_request => s.quote_received = true, // Mark quote as 'done' due to error
-          MarketSubscription::TickData(_) => {} // Non-blocking tick data error, do nothing special here
-          _ => {} // Should not happen based on is_blocking/is_historical flags
+          MarketSubscription::TickData(s) if s.is_blocking_quote_request => s.quote_received = true,
+          MarketSubscription::RealTimeBars(s) if s.target_bar_count.is_some() => s.completed = true, // Mark RTBars as completed due to error
+          _ => {} // Non-blocking requests or other types
         }
         debug!("Error received for blocking request {}, notifying waiter.", req_id);
         self.request_cond.notify_all();
       }
-      // For non-blocking streaming requests, the error is stored, but doesn't stop the subscription state yet.
-      // User needs to decide whether to cancel based on the error.
+      // For non-blocking streaming requests, the error is stored, but doesn't necessarily stop the subscription state yet.
+      // The user might need to decide whether to cancel based on the error.
     } else {
       // Might be an error for a request that already completed/cancelled/timed out.
       trace!("Received error for unknown or completed market data request ID: {}", req_id);
@@ -826,14 +1000,27 @@ impl MarketDataHandler for DataMarketManager {
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::RealTimeBars(state)) = subs.get_mut(&req_id) {
       let bar = Bar {
-        time: Utc.timestamp_opt(time, 0).single().unwrap_or(Utc::now()), // Convert Unix timestamp
+        time: Utc.timestamp_opt(time, 0).single().unwrap_or_else(|| {
+          warn!("Failed to parse timestamp {} for real time bar ReqID {}. Using Utc::now().", time, req_id);
+          Utc::now()
+        }),
         open, high, low, close,
         volume: volume as i64, // Convert f64 back to i64
         wap,
         count,
       };
-      state.latest_bar = Some(bar);
-      // self.notify_observers(req_id); // Or specific bar observer
+      state.latest_bar = Some(bar.clone()); // Store latest separately
+      state.bars.push(bar); // Add to the collected list
+
+      // Check if this is a blocking request and if the target count is reached
+      if let Some(target_count) = state.target_bar_count {
+        if !state.completed && state.bars.len() >= target_count {
+          debug!("Target bar count ({}) reached for blocking RealTimeBars ReqID {}. Notifying waiter.", target_count, req_id);
+          state.completed = true;
+          self.request_cond.notify_all();
+        }
+      }
+      // self.notify_observers(req_id); // Or specific bar observer for streaming
     } else {
       // warn!("Received real_time_bar for unknown or non-RTBar subscription ID: {}", req_id);
     }

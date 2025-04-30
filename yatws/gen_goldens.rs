@@ -419,6 +419,54 @@ mod test_cases {
     }
   }
 
+
+  pub(super) fn realtime_bars_blocking_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Blocking Realtime Bars Request ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("AAPL"); // Use AAPL stock
+    let what_to_show = "TRADES";
+    let use_rth = true;
+    let options = &[];
+    let num_bars_to_get = 2; // Request a small number of bars
+    // Timeout needs to be long enough to receive num_bars (e.g., num_bars * 5s + buffer)
+    let timeout = Duration::from_secs(num_bars_to_get as u64 * 5 + 10);
+
+    info!(
+      "Requesting {} realtime bars for {} (What={}, RTH={}, Timeout={:?})...",
+      num_bars_to_get, contract.symbol, what_to_show, use_rth, timeout
+    );
+
+    match data_mgr.get_realtime_bars(
+      &contract,
+      what_to_show,
+      use_rth,
+      options,
+      num_bars_to_get,
+      timeout,
+    ) {
+      Ok(bars) => {
+        info!("Successfully received {} bars:", bars.len());
+        for bar in &bars {
+          info!("  Time: {}, O: {}, H: {}, L: {}, C: {}, Vol: {}",
+                bar.time.format("%Y-%m-%d %H:%M:%S"), bar.open, bar.high, bar.low, bar.close, bar.volume);
+        }
+        // Validate the number of bars received
+        if bars.len() >= num_bars_to_get {
+          info!("Received expected number of bars ({} >= {}). Test successful.", bars.len(), num_bars_to_get);
+          Ok(())
+        } else {
+          error!("Received fewer bars ({}) than expected ({}).", bars.len(), num_bars_to_get);
+          Err(anyhow!("Incorrect number of bars received: {} < {}", bars.len(), num_bars_to_get))
+        }
+      }
+      Err(e) => {
+        error!("Failed to get realtime bars: {:?}", e);
+        Err(e.into())
+      }
+    }
+  }
+
+
   // --- Helper for Order Test ---
   fn attempt_cleanup(client: &IBKRClient, contract: &Contract) -> Result<()> {
     warn!("Attempting emergency cleanup for SPY position...");
@@ -474,6 +522,7 @@ inventory::submit! { TestDefinition { name: "order-limit", func: test_cases::ord
 inventory::submit! { TestDefinition { name: "order-many", func: test_cases::order_many_impl } }
 inventory::submit! { TestDefinition { name: "current-quote", func: test_cases::current_quote_impl } }
 inventory::submit! { TestDefinition { name: "realtime-data", func: test_cases::realtime_data_impl } }
+inventory::submit! { TestDefinition { name: "realtime-bars-blocking", func: test_cases::realtime_bars_blocking_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 
 

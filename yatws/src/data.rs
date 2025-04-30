@@ -127,7 +127,10 @@ pub struct RealTimeBarSubscription {
   pub use_rth: bool,
   pub rt_bar_options: Vec<(String, String)>, // Placeholder for TagValue
   // --- Live Data ---
-  pub latest_bar: Option<Bar>, // Use contract::Bar
+  pub latest_bar: Option<Bar>, // Most recent bar received
+  pub bars: Vec<Bar>, // All bars collected for this request
+  pub target_bar_count: Option<usize>, // For blocking requests
+  pub completed: bool, // Flag for completion (count reached or error)
   pub error_code: Option<i32>,
   pub error_message: Option<String>,
 }
