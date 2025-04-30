@@ -339,6 +339,55 @@ mod test_cases {
     Ok(())
   }
 
+  pub(super) fn realtime_data_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+    info!("--- Testing Realtime Market Data Stream ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("SPY"); // Use SPY stock
+    // Common ticks: 100=Option Volume, 101=Option Open Interest, 104=Hist Vol, 106=Avg Opt Volume
+    // Price ticks (e.g., 1=Bid, 2=Ask, 4=Last) and Size ticks (e.g., 0=BidSize, 3=AskSize, 8=Volume)
+    // are typically included by default when requesting streaming data for stocks.
+    // Requesting the default set by passing an empty string for generic_tick_list.
+    // See: https://interactivebrokers.github.io/tws-api/md_request.html#gsc
+    // Valid generic ticks for STK are listed in the error message if needed for specific data.
+    let generic_tick_list = ""; // Request default ticks
+    let snapshot = false;
+    let regulatory_snapshot = false;
+    let mkt_data_options = &[]; // No specific options
+
+    info!(
+      "Requesting realtime market data for {} (Generic Ticks: '{}')...",
+      contract.symbol, generic_tick_list
+    );
+
+    let req_id = data_mgr
+      .request_market_data(
+        &contract,
+        generic_tick_list,
+        snapshot,
+        regulatory_snapshot,
+        mkt_data_options,
+      )
+      .context("Failed to request market data")?;
+
+    info!("Market data requested with req_id: {}. Waiting for data...", req_id);
+
+    // In a real application, you'd have an observer or callback mechanism.
+    // For gen_goldens, we just wait to allow messages to be logged.
+    let wait_duration = Duration::from_secs(15);
+    info!("Waiting for {:?} to capture streaming data...", wait_duration);
+    std::thread::sleep(wait_duration);
+
+    info!("Cancelling market data request (req_id: {})...", req_id);
+    data_mgr.cancel_market_data(req_id).context("Failed to cancel market data")?;
+    info!("Market data request cancelled.");
+
+    // Allow a moment for the cancel message to be processed/logged
+    std::thread::sleep(Duration::from_millis(500));
+
+    Ok(())
+  }
+
+
   pub(super) fn current_quote_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Get Current Quote ---");
     let data_mgr = client.data_market();
@@ -424,6 +473,7 @@ inventory::submit! { TestDefinition { name: "order-market", func: test_cases::or
 inventory::submit! { TestDefinition { name: "order-limit", func: test_cases::order_limit_impl } }
 inventory::submit! { TestDefinition { name: "order-many", func: test_cases::order_many_impl } }
 inventory::submit! { TestDefinition { name: "current-quote", func: test_cases::current_quote_impl } }
+inventory::submit! { TestDefinition { name: "realtime-data", func: test_cases::realtime_data_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 
 
