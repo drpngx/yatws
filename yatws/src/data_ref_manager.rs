@@ -64,12 +64,12 @@ struct DataRefRequestState {
 #[derive(Debug, Clone)]
 #[allow(unused)]
 pub struct SecDefOptParamsResult {
-  exchange: String,
-  underlying_con_id: i32,
-  trading_class: String,
-  multiplier: String,
-  expirations: Vec<String>,
-  strikes: Vec<f64>,
+  pub exchange: String, // Made public
+  pub underlying_con_id: i32,
+  pub trading_class: String,
+  pub multiplier: String,
+  pub expirations: Vec<String>, // Made public
+  pub strikes: Vec<f64>,       // Made public
 }
 
 #[derive(Debug, Clone)]

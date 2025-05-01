@@ -28,6 +28,7 @@ mod parser_data_market;
 mod parser_data_fin;
 mod parser_data_news;
 mod order_builder;
+mod options_strategy_builder; // Add new module
 mod conn_log;
 mod conn_mock;
 pub mod data;
@@ -45,6 +46,7 @@ pub mod order;
 pub mod data_wsh;  // For now, we just provide the structs.
 
 pub use order_builder::OrderBuilder;
+pub use options_strategy_builder::OptionsStrategyBuilder; // Re-export the new builder
 pub use base::IBKRError;
 
 // Re-export the core data structures

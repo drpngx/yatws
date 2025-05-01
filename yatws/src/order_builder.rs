@@ -1043,7 +1043,7 @@ impl OrderBuilder {
         }
         // Potentially add more checks based on string parsing if needed
       }
-      return Err(IBKRError::InvalidOrder("Order conditions not implemented".to_string()));
+      // Removed hardcoded error for conditions
     }
 
     // --- Finalization ---

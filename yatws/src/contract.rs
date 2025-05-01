@@ -422,7 +422,7 @@ fn app(buf: &mut String, obj: &str) {
 
 
 /// Option right enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)] // Added Hash
 pub enum OptionRight {
   Call,
   Put,
