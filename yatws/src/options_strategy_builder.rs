@@ -110,7 +110,7 @@ impl OptionsStrategyBuilder {
   // --- Internal Helper Methods ---
 
   /// Fetches and caches the underlying contract details (conId, exchange, currency).
-  async fn fetch_underlying_details(&mut self) -> Result<(), IBKRError> {
+  fn fetch_underlying_details(&mut self) -> Result<(), IBKRError> {
     if self.underlying_con_id.is_some() {
       return Ok(()); // Already fetched
     }
@@ -128,8 +128,7 @@ impl OptionsStrategyBuilder {
 
     let details_list = self
       .data_ref_manager
-      .get_contract_details(&underlying_contract_spec) // Assuming get_contract_details is sync for now
-      ?;
+      .get_contract_details(&underlying_contract_spec)?; // Now sync
 
     if details_list.is_empty() {
       return Err(IBKRError::InvalidContract(format!(
@@ -166,7 +165,7 @@ impl OptionsStrategyBuilder {
   }
 
   /// Fetches and caches option chain parameters for a given exchange.
-  async fn fetch_option_params(&mut self, exchange: &str) -> Result<&SecDefOptParamsResult, IBKRError> {
+  fn fetch_option_params(&mut self, exchange: &str) -> Result<&SecDefOptParamsResult, IBKRError> {
     if !self.option_params_cache.contains_key(exchange) {
       info!(
         "Fetching option chain params for Underlying ConID={} on Exchange={}",
@@ -180,7 +179,7 @@ impl OptionsStrategyBuilder {
         fut_fop_exchange,
         self.underlying_sec_type.clone(),
         self.underlying_con_id.unwrap(),
-      )?;
+      )?; // Now sync
 
       // Find the params matching the requested exchange
       if let Some(params) = params_list.into_iter().find(|p| p.exchange == exchange) {
@@ -231,39 +230,8 @@ impl OptionsStrategyBuilder {
       .ok_or_else(|| IBKRError::InvalidParameter("No available strikes found".to_string()))
   }
 
-  /// Finds the nearest Out-of-the-Money (OTM) strike.
-  fn find_nearest_otm_strike(
-    &self,
-    underlying_price: f64,
-    right: OptionRight,
-    available_strikes: &[f64],
-  ) -> Result<f64, IBKRError> {
-    let otm_strikes: Vec<f64> = available_strikes
-      .iter()
-      .filter(|&&strike| match right {
-        OptionRight::Call => strike > underlying_price,
-        OptionRight::Put => strike < underlying_price,
-      })
-      .cloned()
-      .collect();
-
-    if otm_strikes.is_empty() {
-      return Err(IBKRError::InvalidParameter(format!(
-        "No OTM {} strikes found relative to price {}", right, underlying_price
-      )));
-    }
-
-    // Find the strike closest to the underlying price among the OTM strikes
-    otm_strikes
-      .iter()
-      .min_by(|a, b| (*a - underlying_price).abs().partial_cmp(&(*b - underlying_price).abs()).unwrap()) // Dereferenced a and b
-      .cloned()
-      .ok_or_else(|| IBKRError::InternalError("Failed to find minimum OTM strike".to_string())) // Should not happen if otm_strikes is not empty
-  }
-
-
   /// Fetches and caches the specific option contract details.
-  async fn fetch_option_contract(
+  fn fetch_option_contract(
     &mut self,
     expiry_date: NaiveDate,
     strike: f64,
@@ -299,8 +267,7 @@ impl OptionsStrategyBuilder {
 
       let details_list = self
         .data_ref_manager
-        .get_contract_details(&option_contract_spec)
-        ?;
+        .get_contract_details(&option_contract_spec)?; // Now sync
 
       if details_list.is_empty() {
         return Err(IBKRError::InvalidContract(format!(
@@ -346,116 +313,183 @@ impl OptionsStrategyBuilder {
   // --- Vertical Spreads ---
 
   /// Defines a Bull Call Spread (Debit Call Spread). Buy lower strike call, Sell higher strike call.
-  pub fn bull_call_spread(self, expiry: NaiveDate, strike1: f64, strike2: f64) -> Result<Self, IBKRError> {
-    self.vertical_spread_internal(expiry, OptionRight::Call, strike1, strike2, OrderSide::Buy, "Bull Call Spread")
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn bull_call_spread(self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64) -> Result<Self, IBKRError> { // Add mut
+    self.vertical_spread_internal(expiry, OptionRight::Call, target_strike1, target_strike2, OrderSide::Buy, "Bull Call Spread")
   }
 
   /// Defines a Bear Call Spread (Credit Call Spread). Sell lower strike call, Buy higher strike call.
-  pub fn bear_call_spread(self, expiry: NaiveDate, strike1: f64, strike2: f64) -> Result<Self, IBKRError> {
-    self.vertical_spread_internal(expiry, OptionRight::Call, strike1, strike2, OrderSide::Sell, "Bear Call Spread")
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn bear_call_spread(self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64) -> Result<Self, IBKRError> { // Add mut
+    self.vertical_spread_internal(expiry, OptionRight::Call, target_strike1, target_strike2, OrderSide::Sell, "Bear Call Spread")
   }
 
   /// Defines a Bull Put Spread (Credit Put Spread). Sell higher strike put, Buy lower strike put.
-  pub fn bull_put_spread(self, expiry: NaiveDate, strike1: f64, strike2: f64) -> Result<Self, IBKRError> {
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn bull_put_spread(self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64) -> Result<Self, IBKRError> { // Add mut
     // Note: Action is on the *lower* strike (strike1) in vertical_spread_internal
-    self.vertical_spread_internal(expiry, OptionRight::Put, strike1, strike2, OrderSide::Buy, "Bull Put Spread")
+    self.vertical_spread_internal(expiry, OptionRight::Put, target_strike1, target_strike2, OrderSide::Buy, "Bull Put Spread")
   }
 
   /// Defines a Bear Put Spread (Debit Put Spread). Buy higher strike put, Sell lower strike put.
-  pub fn bear_put_spread(self, expiry: NaiveDate, strike1: f64, strike2: f64) -> Result<Self, IBKRError> {
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn bear_put_spread(self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64) -> Result<Self, IBKRError> { // Add mut
     // Note: Action is on the *lower* strike (strike1) in vertical_spread_internal
-    self.vertical_spread_internal(expiry, OptionRight::Put, strike1, strike2, OrderSide::Sell, "Bear Put Spread")
+    self.vertical_spread_internal(expiry, OptionRight::Put, target_strike1, target_strike2, OrderSide::Sell, "Bear Put Spread")
   }
 
-  /// Internal helper for vertical spreads. `strike1` < `strike2`. `action` applies to `strike1`.
+  /// Internal helper for vertical spreads. `target_strike1` < `target_strike2`. `action` applies to `strike1`.
+  /// Finds nearest available strikes.
   fn vertical_spread_internal(
-    mut self,
-    expiry: NaiveDate,
+    mut self, // Add mut self back
+    expiry: NaiveDate, // Add expiry back
     right: OptionRight,
-    strike1: f64,
-    strike2: f64,
+    target_strike1: f64,
+    target_strike2: f64,
     action_strike1: OrderSide,
     name: &str,
   ) -> Result<Self, IBKRError> {
-    if strike1 >= strike2 {
+    if target_strike1 >= target_strike2 {
       return Err(IBKRError::InvalidParameter(format!(
-        "For vertical spread, strike1 ({}) must be less than strike2 ({})", strike1, strike2
+        "For vertical spread, target_strike1 ({}) must be less than target_strike2 ({})", target_strike1, target_strike2
       )));
     }
+
+    // Fetch details and params
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = {
+        let params = self.fetch_option_params(&exch)?;
+        params.strikes.clone()
+    };
+
+    // Find nearest actual strikes
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+
+    // Ensure actual strikes maintain order after snapping (could become equal)
+    if actual_strike1 >= actual_strike2 {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for vertical spread (target: {}/{})",
+            actual_strike1, actual_strike2, target_strike1, target_strike2
+        )));
+    }
+
+
     let action_strike2 = match action_strike1 {
       OrderSide::Buy => OrderSide::Sell,
       OrderSide::Sell | OrderSide::SellShort => OrderSide::Buy,
     };
 
-    self.strategy_name = Some(format!("{} {}/{}", name, strike1, strike2));
+    self.strategy_name = Some(format!("{} {}/{}", name, actual_strike1, actual_strike2));
     self.legs.clear();
-    self.add_leg(expiry, strike1, right, action_strike1, 1);
-    self.add_leg(expiry, strike2, right, action_strike2, 1);
+    self.add_leg(expiry, actual_strike1, right, action_strike1, 1);
+    self.add_leg(expiry, actual_strike2, right, action_strike2, 1);
     Ok(self)
   }
 
   // --- Straddles / Strangles ---
 
   /// Defines a Long Straddle (Buy Call and Buy Put at the same strike/expiry).
-  pub fn long_straddle(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Long Straddle {}", strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn long_straddle(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Long Straddle {}", actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Call, OrderSide::Buy, 1);
-    self.add_leg(expiry, strike, OptionRight::Put, OrderSide::Buy, 1);
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Call, OrderSide::Buy, 1);
+    self.add_leg(expiry, actual_strike, OptionRight::Put, OrderSide::Buy, 1);
+    Ok(self)
   }
 
   /// Defines a Short Straddle (Sell Call and Sell Put at the same strike/expiry).
-  pub fn short_straddle(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Short Straddle {}", strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn short_straddle(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Short Straddle {}", actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Call, OrderSide::Sell, 1);
-    self.add_leg(expiry, strike, OptionRight::Put, OrderSide::Sell, 1);
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Call, OrderSide::Sell, 1);
+    self.add_leg(expiry, actual_strike, OptionRight::Put, OrderSide::Sell, 1);
+    Ok(self)
   }
 
   /// Defines a Long Strangle (Buy OTM Call and Buy OTM Put, same expiry).
+  /// Strikes are approximate targets; the nearest available strikes will be used.
   pub fn long_strangle(
     mut self,
     expiry: NaiveDate,
-    call_strike: f64,
-    put_strike: f64,
+    target_call_strike: f64,
+    target_put_strike: f64,
   ) -> Result<Self, IBKRError> {
-    if put_strike >= call_strike {
+    if target_put_strike >= target_call_strike {
       return Err(IBKRError::InvalidParameter(
-        "For strangle, put_strike must be less than call_strike".to_string(),
+        "For strangle, target_put_strike must be less than target_call_strike".to_string(),
       ));
     }
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_call_strike = self.find_nearest_strike(target_call_strike, &available_strikes)?;
+    let actual_put_strike = self.find_nearest_strike(target_put_strike, &available_strikes)?;
+
+    if actual_put_strike >= actual_call_strike {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for strangle (target: {}/{})",
+            actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
+        )));
+    }
+
     // Optional: Add validation using self.underlying_price if available
     self.strategy_name = Some(format!(
       "Long Strangle {}/{}",
-      put_strike, call_strike
+      actual_put_strike, actual_call_strike
     ));
     self.legs.clear();
-    self.add_leg(expiry, call_strike, OptionRight::Call, OrderSide::Buy, 1);
-    self.add_leg(expiry, put_strike, OptionRight::Put, OrderSide::Buy, 1);
+    self.add_leg(expiry, actual_call_strike, OptionRight::Call, OrderSide::Buy, 1);
+    self.add_leg(expiry, actual_put_strike, OptionRight::Put, OrderSide::Buy, 1);
     Ok(self)
   }
 
   /// Defines a Short Strangle (Sell OTM Call and Sell OTM Put, same expiry).
+  /// Strikes are approximate targets; the nearest available strikes will be used.
   pub fn short_strangle(
     mut self,
     expiry: NaiveDate,
-    call_strike: f64,
-    put_strike: f64,
+    target_call_strike: f64,
+    target_put_strike: f64,
   ) -> Result<Self, IBKRError> {
-    if put_strike >= call_strike {
+    if target_put_strike >= target_call_strike {
       return Err(IBKRError::InvalidParameter(
-        "For strangle, put_strike must be less than call_strike".to_string(),
+        "For strangle, target_put_strike must be less than target_call_strike".to_string(),
       ));
     }
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_call_strike = self.find_nearest_strike(target_call_strike, &available_strikes)?;
+    let actual_put_strike = self.find_nearest_strike(target_put_strike, &available_strikes)?;
+
+    if actual_put_strike >= actual_call_strike {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for strangle (target: {}/{})",
+            actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
+        )));
+    }
+
     self.strategy_name = Some(format!(
       "Short Strangle {}/{}",
-      put_strike, call_strike
+      actual_put_strike, actual_call_strike
     ));
     self.legs.clear();
-    self.add_leg(expiry, call_strike, OptionRight::Call, OrderSide::Sell, 1);
-    self.add_leg(expiry, put_strike, OptionRight::Put, OrderSide::Sell, 1);
+    self.add_leg(expiry, actual_call_strike, OptionRight::Call, OrderSide::Sell, 1);
+    self.add_leg(expiry, actual_put_strike, OptionRight::Put, OrderSide::Sell, 1);
     Ok(self)
   }
 
@@ -463,74 +497,109 @@ impl OptionsStrategyBuilder {
 
   /// Defines a Box Spread using the nearest available expiration >= `target_expiry`.
   /// Buys a Bull Call Spread and Buys a Bear Put Spread.
-  pub async fn box_spread_nearest_expiry(
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn box_spread_nearest_expiry(
     mut self,
     target_expiry: NaiveDate,
-    strike1: f64, // Lower strike
-    strike2: f64, // Higher strike
+    target_strike1: f64, // Lower target strike
+    target_strike2: f64, // Higher target strike
   ) -> Result<Self, IBKRError> {
-    if strike1 >= strike2 {
+    if target_strike1 >= target_strike2 {
       return Err(IBKRError::InvalidParameter(
-        "For box spread, strike1 must be less than strike2".to_string(),
+        "For box spread, target_strike1 must be less than target_strike2".to_string(),
       ));
     }
     // 1. Fetch underlying details if needed
-    self.fetch_underlying_details().await?;
+    self.fetch_underlying_details()?;
     // 2. Fetch option params for the primary exchange
     let exch = self.underlying_exchange.clone();
-    let expirations = { // Fetch params and clone expirations in a separate scope
-        let params = self.fetch_option_params(&exch).await?;
-        params.expirations.clone() // Clone the expirations to release the borrow on params/self
+    let (expirations, available_strikes) = { // Fetch params and clone data
+        let params = self.fetch_option_params(&exch)?;
+        (params.expirations.clone(), params.strikes.clone())
     };
     // 3. Find nearest expiry string using the cloned list
     let expiry_str = self.find_nearest_expiration(target_expiry, &expirations)?;
     // 4. Parse the found expiry string back to NaiveDate for internal use
     let expiry_date = NaiveDate::parse_from_str(expiry_str, "%Y%m%d")
       .map_err(|e| IBKRError::ParseError(format!("Failed to parse expiry string '{}': {}", expiry_str, e)))?;
+    // 5. Find nearest actual strikes
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
 
-    self.strategy_name = Some(format!("Box Spread {}/{} (Exp: {})", strike1, strike2, expiry_str));
+    if actual_strike1 >= actual_strike2 {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for box spread (target: {}/{})",
+            actual_strike1, actual_strike2, target_strike1, target_strike2
+        )));
+    }
+
+    self.strategy_name = Some(format!("Box Spread {}/{} (Exp: {})", actual_strike1, actual_strike2, expiry_str));
     self.legs.clear();
     // Bull Call Spread part
-    self.add_leg(expiry_date, strike1, OptionRight::Call, OrderSide::Buy, 1);
-    self.add_leg(expiry_date, strike2, OptionRight::Call, OrderSide::Sell, 1);
+    self.add_leg(expiry_date, actual_strike1, OptionRight::Call, OrderSide::Buy, 1);
+    self.add_leg(expiry_date, actual_strike2, OptionRight::Call, OrderSide::Sell, 1);
     // Bear Put Spread part
-    self.add_leg(expiry_date, strike2, OptionRight::Put, OrderSide::Buy, 1);
-    self.add_leg(expiry_date, strike1, OptionRight::Put, OrderSide::Sell, 1);
+    self.add_leg(expiry_date, actual_strike2, OptionRight::Put, OrderSide::Buy, 1);
+    self.add_leg(expiry_date, actual_strike1, OptionRight::Put, OrderSide::Sell, 1);
     Ok(self)
   }
 
   // --- Single Leg Options ---
 
   /// Buy a single Call option.
-  pub fn buy_call(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Buy Call {} {}", expiry.format("%Y%m%d"), strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn buy_call(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Buy Call {} {}", expiry.format("%Y%m%d"), actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Call, OrderSide::Buy, 1);
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Call, OrderSide::Buy, 1);
+    Ok(self)
   }
 
   /// Sell (short) a single Call option (Naked Call).
-  pub fn sell_call(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Sell Call {} {}", expiry.format("%Y%m%d"), strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn sell_call(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Sell Call {} {}", expiry.format("%Y%m%d"), actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Call, OrderSide::Sell, 1);
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Call, OrderSide::Sell, 1);
+    Ok(self)
   }
 
   /// Buy a single Put option.
-  pub fn buy_put(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Buy Put {} {}", expiry.format("%Y%m%d"), strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn buy_put(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Buy Put {} {}", expiry.format("%Y%m%d"), actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Put, OrderSide::Buy, 1);
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Put, OrderSide::Buy, 1);
+    Ok(self)
   }
 
   /// Sell (short) a single Put option (Naked Put).
-  pub fn sell_put(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Sell Put {} {}", expiry.format("%Y%m%d"), strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn sell_put(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Sell Put {} {}", expiry.format("%Y%m%d"), actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Put, OrderSide::Sell, 1);
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Put, OrderSide::Sell, 1);
+    Ok(self)
   }
 
   // --- Strategies involving Stock (Option Legs Only) ---
@@ -538,208 +607,399 @@ impl OptionsStrategyBuilder {
 
   /// Defines the option legs for a Collar (Long Put + Short Call).
   /// Stock leg (Long Stock) must be handled separately.
-  pub fn collar_options(mut self, expiry: NaiveDate, put_strike: f64, call_strike: f64) -> Result<Self, IBKRError> {
-    if put_strike >= call_strike {
-      return Err(IBKRError::InvalidParameter("For collar, put_strike must be less than call_strike".to_string()));
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn collar_options(mut self, expiry: NaiveDate, target_put_strike: f64, target_call_strike: f64) -> Result<Self, IBKRError> {
+    if target_put_strike >= target_call_strike {
+      return Err(IBKRError::InvalidParameter("For collar, target_put_strike must be less than target_call_strike".to_string()));
     }
-    self.strategy_name = Some(format!("Collar Options {}/{}", put_strike, call_strike));
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_put_strike = self.find_nearest_strike(target_put_strike, &available_strikes)?;
+    let actual_call_strike = self.find_nearest_strike(target_call_strike, &available_strikes)?;
+
+    if actual_put_strike >= actual_call_strike {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for collar (target: {}/{})",
+            actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
+        )));
+    }
+
+    self.strategy_name = Some(format!("Collar Options {}/{}", actual_put_strike, actual_call_strike));
     self.legs.clear();
-    self.add_leg(expiry, put_strike, OptionRight::Put, OrderSide::Buy, 1); // Long Put
-    self.add_leg(expiry, call_strike, OptionRight::Call, OrderSide::Sell, 1); // Short Call
+    self.add_leg(expiry, actual_put_strike, OptionRight::Put, OrderSide::Buy, 1); // Long Put
+    self.add_leg(expiry, actual_call_strike, OptionRight::Call, OrderSide::Sell, 1); // Short Call
     Ok(self)
   }
 
   /// Defines the option leg for a Covered Call (Short Call).
   /// Stock leg (Long Stock) must be handled separately.
-  pub fn covered_call_option(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Covered Call Option {}", strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn covered_call_option(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Covered Call Option {}", actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Call, OrderSide::Sell, 1); // Short Call
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Call, OrderSide::Sell, 1); // Short Call
+    Ok(self)
   }
 
   /// Defines the option leg for a Covered Put (Short Put).
   /// Stock leg (Short Stock) must be handled separately.
-  pub fn covered_put_option(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Covered Put Option {}", strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn covered_put_option(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Covered Put Option {}", actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Put, OrderSide::Sell, 1); // Short Put
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Put, OrderSide::Sell, 1); // Short Put
+    Ok(self)
   }
 
   /// Defines the option leg for a Protective Put (Long Put).
   /// Stock leg (Long Stock) must be handled separately.
-  pub fn protective_put_option(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Protective Put Option {}", strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn protective_put_option(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Protective Put Option {}", actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Put, OrderSide::Buy, 1); // Long Put
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Put, OrderSide::Buy, 1); // Long Put
+    Ok(self)
   }
 
   /// Defines the option legs for a Stock Repair strategy (Buy 1 Call, Sell 2 Higher Strike Calls).
   /// Stock leg (Long Stock) must be handled separately.
-  pub fn stock_repair_options(mut self, expiry: NaiveDate, strike1: f64, strike2: f64) -> Result<Self, IBKRError> {
-    if strike1 >= strike2 {
-      return Err(IBKRError::InvalidParameter("For stock repair, strike1 must be less than strike2".to_string()));
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn stock_repair_options(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64) -> Result<Self, IBKRError> {
+    if target_strike1 >= target_strike2 {
+      return Err(IBKRError::InvalidParameter("For stock repair, target_strike1 must be less than target_strike2".to_string()));
     }
-    self.strategy_name = Some(format!("Stock Repair Options {}/{}", strike1, strike2));
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+
+    if actual_strike1 >= actual_strike2 {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for stock repair (target: {}/{})",
+            actual_strike1, actual_strike2, target_strike1, target_strike2
+        )));
+    }
+
+    self.strategy_name = Some(format!("Stock Repair Options {}/{}", actual_strike1, actual_strike2));
     self.legs.clear();
-    self.add_leg(expiry, strike1, OptionRight::Call, OrderSide::Buy, 1);  // Buy 1 Call
-    self.add_leg(expiry, strike2, OptionRight::Call, OrderSide::Sell, 2); // Sell 2 Calls
+    self.add_leg(expiry, actual_strike1, OptionRight::Call, OrderSide::Buy, 1);  // Buy 1 Call
+    self.add_leg(expiry, actual_strike2, OptionRight::Call, OrderSide::Sell, 2); // Sell 2 Calls
     Ok(self)
   }
 
   // --- Ratio Spreads ---
 
   /// Defines a Long Ratio Call Spread (e.g., Buy 1 Lower Call, Sell N Higher Calls).
-  pub fn long_ratio_call_spread(mut self, expiry: NaiveDate, strike1: f64, strike2: f64, buy_ratio: i32, sell_ratio: i32) -> Result<Self, IBKRError> {
-    if strike1 >= strike2 { return Err(IBKRError::InvalidParameter("strike1 must be less than strike2".into())); }
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn long_ratio_call_spread(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, buy_ratio: i32, sell_ratio: i32) -> Result<Self, IBKRError> {
+    if target_strike1 >= target_strike2 { return Err(IBKRError::InvalidParameter("target_strike1 must be less than target_strike2".into())); }
     if buy_ratio <= 0 || sell_ratio <= 0 { return Err(IBKRError::InvalidParameter("Ratios must be positive".into())); }
-    self.strategy_name = Some(format!("Long Ratio Call Spread {}/{} ({}:{})", strike1, strike2, buy_ratio, sell_ratio));
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+
+    if actual_strike1 >= actual_strike2 {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
+            actual_strike1, actual_strike2, target_strike1, target_strike2
+        )));
+    }
+
+    self.strategy_name = Some(format!("Long Ratio Call Spread {}/{} ({}:{})", actual_strike1, actual_strike2, buy_ratio, sell_ratio));
     self.legs.clear();
-    self.add_leg(expiry, strike1, OptionRight::Call, OrderSide::Buy, buy_ratio);
-    self.add_leg(expiry, strike2, OptionRight::Call, OrderSide::Sell, sell_ratio);
+    self.add_leg(expiry, actual_strike1, OptionRight::Call, OrderSide::Buy, buy_ratio);
+    self.add_leg(expiry, actual_strike2, OptionRight::Call, OrderSide::Sell, sell_ratio);
     Ok(self)
   }
 
   /// Defines a Long Ratio Put Spread (e.g., Buy N Higher Puts, Sell 1 Lower Put).
-  pub fn long_ratio_put_spread(mut self, expiry: NaiveDate, strike1: f64, strike2: f64, buy_ratio: i32, sell_ratio: i32) -> Result<Self, IBKRError> {
-    if strike1 >= strike2 { return Err(IBKRError::InvalidParameter("strike1 must be less than strike2".into())); }
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn long_ratio_put_spread(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, buy_ratio: i32, sell_ratio: i32) -> Result<Self, IBKRError> {
+    if target_strike1 >= target_strike2 { return Err(IBKRError::InvalidParameter("target_strike1 must be less than target_strike2".into())); }
     if buy_ratio <= 0 || sell_ratio <= 0 { return Err(IBKRError::InvalidParameter("Ratios must be positive".into())); }
-    self.strategy_name = Some(format!("Long Ratio Put Spread {}/{} ({}:{})", strike1, strike2, buy_ratio, sell_ratio));
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+
+    if actual_strike1 >= actual_strike2 {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
+            actual_strike1, actual_strike2, target_strike1, target_strike2
+        )));
+    }
+
+    self.strategy_name = Some(format!("Long Ratio Put Spread {}/{} ({}:{})", actual_strike1, actual_strike2, buy_ratio, sell_ratio));
     self.legs.clear();
-    self.add_leg(expiry, strike2, OptionRight::Put, OrderSide::Buy, buy_ratio);
-    self.add_leg(expiry, strike1, OptionRight::Put, OrderSide::Sell, sell_ratio);
+    self.add_leg(expiry, actual_strike2, OptionRight::Put, OrderSide::Buy, buy_ratio);
+    self.add_leg(expiry, actual_strike1, OptionRight::Put, OrderSide::Sell, sell_ratio);
     Ok(self)
   }
 
   /// Defines a Short Ratio Put Spread (e.g., Sell N Higher Puts, Buy 1 Lower Put).
-  pub fn short_ratio_put_spread(mut self, expiry: NaiveDate, strike1: f64, strike2: f64, sell_ratio: i32, buy_ratio: i32) -> Result<Self, IBKRError> {
-    if strike1 >= strike2 { return Err(IBKRError::InvalidParameter("strike1 must be less than strike2".into())); }
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn short_ratio_put_spread(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, sell_ratio: i32, buy_ratio: i32) -> Result<Self, IBKRError> {
+    if target_strike1 >= target_strike2 { return Err(IBKRError::InvalidParameter("target_strike1 must be less than target_strike2".into())); }
     if buy_ratio <= 0 || sell_ratio <= 0 { return Err(IBKRError::InvalidParameter("Ratios must be positive".into())); }
-    self.strategy_name = Some(format!("Short Ratio Put Spread {}/{} ({}:{})", strike1, strike2, sell_ratio, buy_ratio));
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+
+    if actual_strike1 >= actual_strike2 {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
+            actual_strike1, actual_strike2, target_strike1, target_strike2
+        )));
+    }
+
+    self.strategy_name = Some(format!("Short Ratio Put Spread {}/{} ({}:{})", actual_strike1, actual_strike2, sell_ratio, buy_ratio));
     self.legs.clear();
-    self.add_leg(expiry, strike2, OptionRight::Put, OrderSide::Sell, sell_ratio);
-    self.add_leg(expiry, strike1, OptionRight::Put, OrderSide::Buy, buy_ratio);
+    self.add_leg(expiry, actual_strike2, OptionRight::Put, OrderSide::Sell, sell_ratio);
+    self.add_leg(expiry, actual_strike1, OptionRight::Put, OrderSide::Buy, buy_ratio);
     Ok(self)
   }
 
   // --- Butterflies ---
-  // strike1 < strike2 < strike3
+  // target_strike1 < target_strike2 < target_strike3
 
   /// Defines a Long Put Butterfly (Buy 1 High Put, Sell 2 Mid Puts, Buy 1 Low Put).
-  pub fn long_put_butterfly(mut self, expiry: NaiveDate, strike1: f64, strike2: f64, strike3: f64) -> Result<Self, IBKRError> {
-    if !(strike1 < strike2 && strike2 < strike3) { return Err(IBKRError::InvalidParameter("Strikes must be ordered: strike1 < strike2 < strike3".into())); }
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn long_put_butterfly(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, target_strike3: f64) -> Result<Self, IBKRError> {
+    if !(target_strike1 < target_strike2 && target_strike2 < target_strike3) { return Err(IBKRError::InvalidParameter("Target strikes must be ordered: strike1 < strike2 < strike3".into())); }
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+    let actual_strike3 = self.find_nearest_strike(target_strike3, &available_strikes)?;
+
+    if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3) {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}, {}) are not ordered correctly for butterfly (target: {}/{}/{})",
+            actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
+        )));
+    }
     // Optional: Check for equal distance: strike2-strike1 == strike3-strike2
-    self.strategy_name = Some(format!("Long Put Butterfly {}/{}/{}", strike1, strike2, strike3));
+    self.strategy_name = Some(format!("Long Put Butterfly {}/{}/{}", actual_strike1, actual_strike2, actual_strike3));
     self.legs.clear();
-    self.add_leg(expiry, strike3, OptionRight::Put, OrderSide::Buy, 1);
-    self.add_leg(expiry, strike2, OptionRight::Put, OrderSide::Sell, 2);
-    self.add_leg(expiry, strike1, OptionRight::Put, OrderSide::Buy, 1);
+    self.add_leg(expiry, actual_strike3, OptionRight::Put, OrderSide::Buy, 1);
+    self.add_leg(expiry, actual_strike2, OptionRight::Put, OrderSide::Sell, 2);
+    self.add_leg(expiry, actual_strike1, OptionRight::Put, OrderSide::Buy, 1);
     Ok(self)
   }
 
   /// Defines a Short Call Butterfly (Sell 1 Low Call, Buy 2 Mid Calls, Sell 1 High Call).
-  pub fn short_call_butterfly(mut self, expiry: NaiveDate, strike1: f64, strike2: f64, strike3: f64) -> Result<Self, IBKRError> {
-    if !(strike1 < strike2 && strike2 < strike3) { return Err(IBKRError::InvalidParameter("Strikes must be ordered: strike1 < strike2 < strike3".into())); }
-    self.strategy_name = Some(format!("Short Call Butterfly {}/{}/{}", strike1, strike2, strike3));
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn short_call_butterfly(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, target_strike3: f64) -> Result<Self, IBKRError> {
+    if !(target_strike1 < target_strike2 && target_strike2 < target_strike3) { return Err(IBKRError::InvalidParameter("Target strikes must be ordered: strike1 < strike2 < strike3".into())); }
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+    let actual_strike3 = self.find_nearest_strike(target_strike3, &available_strikes)?;
+
+    if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3) {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}, {}) are not ordered correctly for butterfly (target: {}/{}/{})",
+            actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
+        )));
+    }
+    self.strategy_name = Some(format!("Short Call Butterfly {}/{}/{}", actual_strike1, actual_strike2, actual_strike3));
     self.legs.clear();
-    self.add_leg(expiry, strike1, OptionRight::Call, OrderSide::Sell, 1);
-    self.add_leg(expiry, strike2, OptionRight::Call, OrderSide::Buy, 2);
-    self.add_leg(expiry, strike3, OptionRight::Call, OrderSide::Sell, 1);
+    self.add_leg(expiry, actual_strike1, OptionRight::Call, OrderSide::Sell, 1);
+    self.add_leg(expiry, actual_strike2, OptionRight::Call, OrderSide::Buy, 2);
+    self.add_leg(expiry, actual_strike3, OptionRight::Call, OrderSide::Sell, 1);
     Ok(self)
   }
 
   /// Defines a Long Iron Butterfly (Buy OTM Put, Sell ATM Put, Sell ATM Call, Buy OTM Call).
-  /// Assumes strike2 is the ATM strike. strike1 < strike2 < strike3.
-  pub fn long_iron_butterfly(mut self, expiry: NaiveDate, strike1: f64, strike2: f64, strike3: f64) -> Result<Self, IBKRError> {
-    if !(strike1 < strike2 && strike2 < strike3) { return Err(IBKRError::InvalidParameter("Strikes must be ordered: strike1 < strike2 < strike3".into())); }
-    self.strategy_name = Some(format!("Long Iron Butterfly {}/{}/{}", strike1, strike2, strike3));
+  /// Assumes target_strike2 is the ATM strike. target_strike1 < target_strike2 < target_strike3.
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn long_iron_butterfly(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, target_strike3: f64) -> Result<Self, IBKRError> {
+    if !(target_strike1 < target_strike2 && target_strike2 < target_strike3) { return Err(IBKRError::InvalidParameter("Target strikes must be ordered: strike1 < strike2 < strike3".into())); }
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+    let actual_strike3 = self.find_nearest_strike(target_strike3, &available_strikes)?;
+
+    if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3) {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}, {}) are not ordered correctly for iron butterfly (target: {}/{}/{})",
+            actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
+        )));
+    }
+    self.strategy_name = Some(format!("Long Iron Butterfly {}/{}/{}", actual_strike1, actual_strike2, actual_strike3));
     self.legs.clear();
-    self.add_leg(expiry, strike1, OptionRight::Put, OrderSide::Buy, 1);  // Buy Low Put
-    self.add_leg(expiry, strike2, OptionRight::Put, OrderSide::Sell, 1); // Sell Mid Put
-    self.add_leg(expiry, strike2, OptionRight::Call, OrderSide::Sell, 1); // Sell Mid Call
-    self.add_leg(expiry, strike3, OptionRight::Call, OrderSide::Buy, 1);  // Buy High Call
+    self.add_leg(expiry, actual_strike1, OptionRight::Put, OrderSide::Buy, 1);  // Buy Low Put
+    self.add_leg(expiry, actual_strike2, OptionRight::Put, OrderSide::Sell, 1); // Sell Mid Put
+    self.add_leg(expiry, actual_strike2, OptionRight::Call, OrderSide::Sell, 1); // Sell Mid Call
+    self.add_leg(expiry, actual_strike3, OptionRight::Call, OrderSide::Buy, 1);  // Buy High Call
     Ok(self)
   }
 
   // --- Condors ---
-  // strike1 < strike2 < strike3 < strike4
+  // target_strike1 < target_strike2 < target_strike3 < target_strike4
 
   /// Defines a Long Put Condor (Buy High Put, Sell Mid-High Put, Sell Mid-Low Put, Buy Low Put).
-  pub fn long_put_condor(mut self, expiry: NaiveDate, strike1: f64, strike2: f64, strike3: f64, strike4: f64) -> Result<Self, IBKRError> {
-    if !(strike1 < strike2 && strike2 < strike3 && strike3 < strike4) { return Err(IBKRError::InvalidParameter("Strikes must be ordered: strike1 < strike2 < strike3 < strike4".into())); }
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn long_put_condor(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, target_strike3: f64, target_strike4: f64) -> Result<Self, IBKRError> {
+    if !(target_strike1 < target_strike2 && target_strike2 < target_strike3 && target_strike3 < target_strike4) { return Err(IBKRError::InvalidParameter("Target strikes must be ordered: strike1 < strike2 < strike3 < strike4".into())); }
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+    let actual_strike3 = self.find_nearest_strike(target_strike3, &available_strikes)?;
+    let actual_strike4 = self.find_nearest_strike(target_strike4, &available_strikes)?;
+
+    if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3 && actual_strike3 < actual_strike4) {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}, {}, {}) are not ordered correctly for condor (target: {}/{}/{}/{})",
+            actual_strike1, actual_strike2, actual_strike3, actual_strike4, target_strike1, target_strike2, target_strike3, target_strike4
+        )));
+    }
     // Optional: Check for equal wing widths
-    self.strategy_name = Some(format!("Long Put Condor {}/{}/{}/{}", strike1, strike2, strike3, strike4));
+    self.strategy_name = Some(format!("Long Put Condor {}/{}/{}/{}", actual_strike1, actual_strike2, actual_strike3, actual_strike4));
     self.legs.clear();
-    self.add_leg(expiry, strike4, OptionRight::Put, OrderSide::Buy, 1);  // Buy Highest Put
-    self.add_leg(expiry, strike3, OptionRight::Put, OrderSide::Sell, 1); // Sell Mid-High Put
-    self.add_leg(expiry, strike2, OptionRight::Put, OrderSide::Sell, 1); // Sell Mid-Low Put
-    self.add_leg(expiry, strike1, OptionRight::Put, OrderSide::Buy, 1);  // Buy Lowest Put
+    self.add_leg(expiry, actual_strike4, OptionRight::Put, OrderSide::Buy, 1);  // Buy Highest Put
+    self.add_leg(expiry, actual_strike3, OptionRight::Put, OrderSide::Sell, 1); // Sell Mid-High Put
+    self.add_leg(expiry, actual_strike2, OptionRight::Put, OrderSide::Sell, 1); // Sell Mid-Low Put
+    self.add_leg(expiry, actual_strike1, OptionRight::Put, OrderSide::Buy, 1);  // Buy Lowest Put
     Ok(self)
   }
 
   /// Defines a Short Condor / Iron Condor (Sell OTM Put Spread, Sell OTM Call Spread).
   /// Sell Low Put, Buy Lower Put, Sell High Call, Buy Higher Call.
-  pub fn short_condor(mut self, expiry: NaiveDate, strike1: f64, strike2: f64, strike3: f64, strike4: f64) -> Result<Self, IBKRError> {
-    if !(strike1 < strike2 && strike2 < strike3 && strike3 < strike4) { return Err(IBKRError::InvalidParameter("Strikes must be ordered: strike1 < strike2 < strike3 < strike4".into())); }
-    self.strategy_name = Some(format!("Short Condor (Iron) {}/{}/{}/{}", strike1, strike2, strike3, strike4));
+  /// Strikes are approximate targets; the nearest available strikes will be used.
+  pub fn short_condor(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, target_strike3: f64, target_strike4: f64) -> Result<Self, IBKRError> {
+    if !(target_strike1 < target_strike2 && target_strike2 < target_strike3 && target_strike3 < target_strike4) { return Err(IBKRError::InvalidParameter("Target strikes must be ordered: strike1 < strike2 < strike3 < strike4".into())); }
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike1 = self.find_nearest_strike(target_strike1, &available_strikes)?;
+    let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
+    let actual_strike3 = self.find_nearest_strike(target_strike3, &available_strikes)?;
+    let actual_strike4 = self.find_nearest_strike(target_strike4, &available_strikes)?;
+
+    if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3 && actual_strike3 < actual_strike4) {
+        return Err(IBKRError::InvalidParameter(format!(
+            "Nearest strikes found ({}, {}, {}, {}) are not ordered correctly for condor (target: {}/{}/{}/{})",
+            actual_strike1, actual_strike2, actual_strike3, actual_strike4, target_strike1, target_strike2, target_strike3, target_strike4
+        )));
+    }
+    self.strategy_name = Some(format!("Short Condor (Iron) {}/{}/{}/{}", actual_strike1, actual_strike2, actual_strike3, actual_strike4));
     self.legs.clear();
-    self.add_leg(expiry, strike1, OptionRight::Put, OrderSide::Buy, 1);  // Buy Lowest Put
-    self.add_leg(expiry, strike2, OptionRight::Put, OrderSide::Sell, 1); // Sell Mid-Low Put
-    self.add_leg(expiry, strike3, OptionRight::Call, OrderSide::Sell, 1); // Sell Mid-High Call
-    self.add_leg(expiry, strike4, OptionRight::Call, OrderSide::Buy, 1);  // Buy Highest Call
+    self.add_leg(expiry, actual_strike1, OptionRight::Put, OrderSide::Buy, 1);  // Buy Lowest Put
+    self.add_leg(expiry, actual_strike2, OptionRight::Put, OrderSide::Sell, 1); // Sell Mid-Low Put
+    self.add_leg(expiry, actual_strike3, OptionRight::Call, OrderSide::Sell, 1); // Sell Mid-High Call
+    self.add_leg(expiry, actual_strike4, OptionRight::Call, OrderSide::Buy, 1);  // Buy Highest Call
     Ok(self)
   }
 
   // --- Calendar Spreads ---
 
   /// Defines a Long Put Calendar Spread (Sell Near Put, Buy Far Put, same strike).
-  pub fn long_put_calendar_spread(mut self, strike: f64, near_expiry: NaiveDate, far_expiry: NaiveDate) -> Result<Self, IBKRError> {
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn long_put_calendar_spread(mut self, target_strike: f64, near_expiry: NaiveDate, far_expiry: NaiveDate) -> Result<Self, IBKRError> {
     if near_expiry >= far_expiry { return Err(IBKRError::InvalidParameter("near_expiry must be before far_expiry".into())); }
-    self.strategy_name = Some(format!("Long Put Calendar {} {}/{}", strike, near_expiry.format("%Y%m%d"), far_expiry.format("%Y%m%d")));
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    // Assume strikes are available for both expiries on the same exchange
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Long Put Calendar {} {}/{}", actual_strike, near_expiry.format("%Y%m%d"), far_expiry.format("%Y%m%d")));
     self.legs.clear();
-    self.add_leg(near_expiry, strike, OptionRight::Put, OrderSide::Sell, 1);
-    self.add_leg(far_expiry, strike, OptionRight::Put, OrderSide::Buy, 1);
+    self.add_leg(near_expiry, actual_strike, OptionRight::Put, OrderSide::Sell, 1);
+    self.add_leg(far_expiry, actual_strike, OptionRight::Put, OrderSide::Buy, 1);
     Ok(self)
   }
 
   /// Defines a Short Call Calendar Spread (Buy Near Call, Sell Far Call, same strike).
-  pub fn short_call_calendar_spread(mut self, strike: f64, near_expiry: NaiveDate, far_expiry: NaiveDate) -> Result<Self, IBKRError> {
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn short_call_calendar_spread(mut self, target_strike: f64, near_expiry: NaiveDate, far_expiry: NaiveDate) -> Result<Self, IBKRError> {
     if near_expiry >= far_expiry { return Err(IBKRError::InvalidParameter("near_expiry must be before far_expiry".into())); }
-    self.strategy_name = Some(format!("Short Call Calendar {} {}/{}", strike, near_expiry.format("%Y%m%d"), far_expiry.format("%Y%m%d")));
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Short Call Calendar {} {}/{}", actual_strike, near_expiry.format("%Y%m%d"), far_expiry.format("%Y%m%d")));
     self.legs.clear();
-    self.add_leg(near_expiry, strike, OptionRight::Call, OrderSide::Buy, 1);
-    self.add_leg(far_expiry, strike, OptionRight::Call, OrderSide::Sell, 1);
+    self.add_leg(near_expiry, actual_strike, OptionRight::Call, OrderSide::Buy, 1);
+    self.add_leg(far_expiry, actual_strike, OptionRight::Call, OrderSide::Sell, 1);
     Ok(self)
   }
 
   // --- Synthetics ---
 
   /// Defines a Synthetic Long Put (Short Stock + Long Call). Option leg only.
-  pub fn synthetic_long_put_option(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Synthetic Long Put Option {}", strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn synthetic_long_put_option(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Synthetic Long Put Option {}", actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Call, OrderSide::Buy, 1); // Long Call
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Call, OrderSide::Buy, 1); // Long Call
+    Ok(self)
   }
 
   /// Defines a Synthetic Long Stock (Long Call + Short Put).
-  pub fn synthetic_long_stock(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Synthetic Long Stock {}", strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn synthetic_long_stock(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Synthetic Long Stock {}", actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Call, OrderSide::Buy, 1);
-    self.add_leg(expiry, strike, OptionRight::Put, OrderSide::Sell, 1);
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Call, OrderSide::Buy, 1);
+    self.add_leg(expiry, actual_strike, OptionRight::Put, OrderSide::Sell, 1);
+    Ok(self)
   }
 
   /// Defines a Synthetic Short Stock (Short Call + Long Put).
-  pub fn synthetic_short_stock(mut self, expiry: NaiveDate, strike: f64) -> Self {
-    self.strategy_name = Some(format!("Synthetic Short Stock {}", strike));
+  /// Strike is an approximate target; the nearest available strike will be used.
+  pub fn synthetic_short_stock(mut self, expiry: NaiveDate, target_strike: f64) -> Result<Self, IBKRError> {
+    self.fetch_underlying_details()?;
+    let exch = self.underlying_exchange.clone();
+    let available_strikes = { let params = self.fetch_option_params(&exch)?; params.strikes.clone() };
+    let actual_strike = self.find_nearest_strike(target_strike, &available_strikes)?;
+
+    self.strategy_name = Some(format!("Synthetic Short Stock {}", actual_strike));
     self.legs.clear();
-    self.add_leg(expiry, strike, OptionRight::Call, OrderSide::Sell, 1);
-    self.add_leg(expiry, strike, OptionRight::Put, OrderSide::Buy, 1);
-    self
+    self.add_leg(expiry, actual_strike, OptionRight::Call, OrderSide::Sell, 1);
+    self.add_leg(expiry, actual_strike, OptionRight::Put, OrderSide::Buy, 1);
+    Ok(self)
   }
 
   // --- Unsupported / Notes ---
@@ -805,7 +1065,7 @@ impl OptionsStrategyBuilder {
   // --- Build Method ---
 
   /// Finalize the strategy, fetch contracts, and build the combo order.
-  pub async fn build(mut self) -> Result<(Contract, OrderRequest), IBKRError> {
+  pub fn build(mut self) -> Result<(Contract, OrderRequest), IBKRError> {
     info!(
       "Building strategy: {} for {}",
       self.strategy_name.as_deref().unwrap_or("Unnamed"),
@@ -819,7 +1079,7 @@ impl OptionsStrategyBuilder {
     }
 
     // 1. Ensure underlying details are fetched
-    self.fetch_underlying_details().await?;
+    self.fetch_underlying_details()?;
 
     // 2. Collect leg definitions to avoid borrow checker issues
     let leg_definitions: Vec<OptionLegDefinition> = self.legs.clone(); // Clone the definitions
@@ -834,8 +1094,7 @@ impl OptionsStrategyBuilder {
 
       // Now `self` can be borrowed mutably here
       let option_contract = self
-        .fetch_option_contract(leg_def.expiry, leg_def.strike, leg_def.right) // Pass NaiveDate
-        .await?;
+        .fetch_option_contract(leg_def.expiry, leg_def.strike, leg_def.right)?; // Pass NaiveDate
 
       final_legs.push(StrategyLeg {
         contract: option_contract.clone(), // Clone the fetched contract
@@ -920,5 +1179,4 @@ impl OptionsStrategyBuilder {
 // - Add more robust error handling and validation (e.g., check available strikes/expirations).
 // - Handle strategies involving stock legs (e.g., Covered Call) - might need separate orders or different combo setup.
 // - Refine exchange handling for options and combos.
-// - Make async methods truly async if DataRefManager methods become async.
 // - Add tests.
