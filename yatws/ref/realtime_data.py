@@ -60,7 +60,7 @@ if __name__ == "__main__":
 
     # Connection details (match your TWS/Gateway settings)
     host = '127.0.0.1'
-    port = 4002 # Default paper trading port
+    port = 3002 # Default paper trading port
     client_id = 102 # Choose a unique client ID
 
     print(f"Connecting to {host}:{port} with Client ID: {client_id}...")

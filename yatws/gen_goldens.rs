@@ -790,7 +790,61 @@ mod test_cases {
       Err(anyhow!("One or more errors occurred during cleanup: {:?}", cancellation_errors))
     }
   }
-}
+
+
+  pub(super) fn historical_data_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Get Historical Data ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("IBM"); // Use IBM stock
+    let end_date_time = None; // Request up to present
+    let duration_str = "3 D"; // Request 3 days of data
+    let bar_size_setting = "1 hour";
+    let what_to_show = "TRADES";
+    let use_rth = true;
+    let format_date = 1; // yyyyMMdd HH:mm:ss
+    let keep_up_to_date = false;
+    let chart_options = &[];
+
+    info!(
+      "Requesting historical data for {}: Duration={}, BarSize={}, What={}, RTH={}",
+      contract.symbol, duration_str, bar_size_setting, what_to_show, use_rth
+    );
+
+    match data_mgr.get_historical_data(
+      &contract,
+      end_date_time,
+      duration_str,
+      bar_size_setting,
+      what_to_show,
+      use_rth,
+      format_date,
+      keep_up_to_date,
+      chart_options,
+    ) {
+      Ok(bars) => {
+        info!("Successfully received {} historical bars.", bars.len());
+        if let Some(first_bar) = bars.first() {
+          info!("  First Bar: Time={}, O={}, H={}, L={}, C={}, Vol={}",
+                first_bar.time.format("%Y-%m-%d %H:%M:%S"), first_bar.open, first_bar.high, first_bar.low, first_bar.close, first_bar.volume);
+        }
+        if let Some(last_bar) = bars.last() {
+           info!("  Last Bar:  Time={}, O={}, H={}, L={}, C={}, Vol={}",
+                last_bar.time.format("%Y-%m-%d %H:%M:%S"), last_bar.open, last_bar.high, last_bar.low, last_bar.close, last_bar.volume);
+        }
+        // Basic validation: Check if we received *some* bars. The exact number can vary.
+        if bars.is_empty() {
+          warn!("Received 0 historical bars. This might be okay depending on market hours/data availability.");
+          // Decide if this should be an error or just a warning. Let's allow 0 bars for now.
+        }
+        Ok(())
+      }
+      Err(e) => {
+        error!("Failed to get historical data for {}: {:?}", contract.symbol, e);
+        Err(e.into())
+      }
+    }
+  }
+} // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
 // Associate canonical names with the implementation functions in the module.
@@ -805,6 +859,7 @@ inventory::submit! { TestDefinition { name: "realtime-bars-blocking", func: test
 inventory::submit! { TestDefinition { name: "market-data-blocking", func: test_cases::market_data_blocking_impl } }
 inventory::submit! { TestDefinition { name: "tick-by-tick-blocking", func: test_cases::tick_by_tick_blocking_impl } }
 inventory::submit! { TestDefinition { name: "market-depth-blocking", func: test_cases::market_depth_blocking_impl } }
+inventory::submit! { TestDefinition { name: "historical-data", func: test_cases::historical_data_impl } }
 inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 

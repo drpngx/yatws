@@ -1094,17 +1094,17 @@ impl DataMarketManager {
     use_rth: bool,
     format_date: i32, // 1 for yyyyMMdd HH:mm:ss, 2 for system time (seconds)
     keep_up_to_date: bool, // Subscribe to updates after initial load
-    _chart_options: &[(String, String)], // TagValue list
+    chart_options: &[(String, String)], // TagValue list
   ) -> Result<Vec<Bar>, IBKRError> {
-    info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}",
-          contract.symbol, duration_str, bar_size_setting, what_to_show);
+    info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}, KeepUpToDate={}",
+          contract.symbol, duration_str, bar_size_setting, what_to_show, keep_up_to_date);
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_historical_data(
       req_id, contract, end_date_time, duration_str, bar_size_setting,
-      what_to_show, use_rth, format_date, keep_up_to_date, // chart_options,
+      what_to_show, use_rth, format_date, keep_up_to_date, chart_options,
     )?;
 
     {

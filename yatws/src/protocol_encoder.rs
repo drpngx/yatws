@@ -1538,17 +1538,19 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn encode_request_historical_data(&self, req_id: i32, contract: &Contract, end_date_time: Option<DateTime<Utc>>, duration_str: &str, bar_size_setting: &str, what_to_show: &str, use_rth: bool, format_date: i32, keep_up_to_date: bool /* Add chart options */) -> Result<Vec<u8>, IBKRError> {
+  pub fn encode_request_historical_data(&self, req_id: i32, contract: &Contract, end_date_time: Option<DateTime<Utc>>, duration_str: &str, bar_size_setting: &str, what_to_show: &str, use_rth: bool, format_date: i32, keep_up_to_date: bool, chart_options: &[(String, String)]) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request historical data: ReqID={}", req_id);
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestHistoricalData as i32)?;
-    // Version determination is complex based on keepUpToDate, chartOptions, etc.
-    let version = 6; // Example base version
 
-    self.write_int_to_cursor(&mut cursor, version)?;
+    // Version field is not sent for this message according to documentation.
+    // Server likely infers based on fields present or connection version.
+
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
-    // Contract fields (similar to reqContractData, check specific reqHistoricalData needs)
-    if self.server_version >= min_server_ver::TRADING_CLASS { // Example check
+    // Contract fields (minimal set needed for historical data request)
+    // Note: conId and tradingClass are often optional/not needed here unless required by specific server versions/features.
+    // Let's send them conditionally based on server version supporting TRADING_CLASS as a proxy for newer features.
+    if self.server_version >= min_server_ver::TRADING_CLASS {
       self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
@@ -1561,38 +1563,46 @@ impl Encoder {
     self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
     self.write_str_to_cursor(&mut cursor, &contract.currency)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
-    if self.server_version >= min_server_ver::TRADING_CLASS {
-      self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
-    }
-    if version >= 2 {
-      self.write_bool_to_cursor(&mut cursor, contract.include_expired)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    // NOTE: includeExpired is NOT part of the reqHistoricalData message itself.
+
+    // Historical Data Request Parameters (Order based on official documentation)
+    // 1. endDateTime (String) - Format: "yyyyMMdd HH:mm:ss [zzz]" or "" for current time
+    //    Using format without timezone suffix as per common examples, TWS usually assumes local or UTC based on context.
+    let end_date_time_str = self.format_datetime_tws(end_date_time, "%Y%m%d %H:%M:%S", None); // No TZ suffix
+    self.write_str_to_cursor(&mut cursor, &end_date_time_str)?;
+
+    // 2. durationStr (String) - e.g., "1 Y", "3 M", "60 D", "3600 S"
+    self.write_str_to_cursor(&mut cursor, duration_str)?;
+
+    // 3. barSizeSetting (String) - e.g., "1 day", "30 mins", "1 secs"
+    self.write_str_to_cursor(&mut cursor, bar_size_setting)?;
+
+    // 4. whatToShow (String) - e.g., "TRADES", "MIDPOINT", "BID", "ASK"
+    self.write_str_to_cursor(&mut cursor, what_to_show)?;
+
+    // 5. useRTH (int) - 1=RTH only, 0=All data
+    self.write_bool_to_cursor(&mut cursor, use_rth)?;
+
+    // 6. formatDate (int) - 1=yyyyMMdd{ }hh:mm:ss, 2=epoch seconds
+    self.write_int_to_cursor(&mut cursor, format_date)?;
+
+    // 7. keepUpToDate (bool) - Conditional on server version
+    if self.server_version >= min_server_ver::SYNT_REALTIME_BARS { // Use correct min_server_ver
+        self.write_bool_to_cursor(&mut cursor, keep_up_to_date)?;
+    } else if keep_up_to_date {
+        // Warn or error if requested but not supported? Let's warn for now.
+        warn!("keepUpToDate=true requested but server version {} does not support it (requires {}). Ignoring.", self.server_version, min_server_ver::SYNT_REALTIME_BARS);
+        // Do not send the field if not supported
     }
 
-    // Historical Data Request Parameters
-    self.write_str_to_cursor(&mut cursor, &self.format_datetime_tws(end_date_time, "%Y%m%d-%H:%M:%S", Some(" UTC")))?;
-    if version >= 3 {
-      self.write_str_to_cursor(&mut cursor, bar_size_setting)?; // e.g., "1 day", "30 mins"
-    }
-    self.write_str_to_cursor(&mut cursor, duration_str)?; // e.g., "1 Y", "3 M", "600 S"
-    self.write_bool_to_cursor(&mut cursor, use_rth)?; // 1=RTH only, 0=All data
-    self.write_str_to_cursor(&mut cursor, what_to_show)?; // e.g., "TRADES", "MIDPOINT", "BID", "ASK"
-    if version >= 1 {
-      self.write_int_to_cursor(&mut cursor, format_date)?; // 1=yyyyMMdd{ }hh:mm:ss, 2=epoch seconds
-    }
-    if contract.sec_type == SecType::Combo {
-      return Err(IBKRError::Unsupported("Combo not implemented yet".to_string()));
-      // self.write_bool_to_cursor(&mut cursor, contract.use_combo_data)?; // Add use_combo_data to Contract
-    }
-    if version >= 5 {
-      self.write_bool_to_cursor(&mut cursor, keep_up_to_date)?;
-    }
-    if version >= 6 {
-      // Placeholder for chart options (TagValue list)
-      self.write_tag_value_list(&mut cursor, &[])?; // Pass actual chart options here
-    }
+    // 8. chartOptions (TagValueList) - Conditional on server version
+    self.write_tag_value_list(&mut cursor, chart_options)?;
+
+    // Note: Combo handling (use_combo_data) is not standard for historical data requests.
 
     Ok(self.finish_encoding(cursor))
-  }
+}
 
   pub fn _encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request managed accounts");
