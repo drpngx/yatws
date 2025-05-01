@@ -24,7 +24,8 @@ DEFAULT_CLIENT_ID = 102 # Use a different ID than gen_goldens live tests
 
 # --- Logging Setup ---
 log = logging.getLogger(__name__)
-log.setLevel(logging.INFO)
+# Set level to DEBUG to see historicalData callback logs
+log.setLevel(logging.DEBUG) # Keep DEBUG level
 handler = logging.StreamHandler(sys.stdout)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
@@ -104,6 +105,8 @@ class TestApp(wrapper.EWrapper, EClient):
     # --- Historical Data Callbacks ---
     @iswrapper
     def historicalData(self, reqId: int, bar: wrapper.BarData):
+        # Add INFO level log here to ensure it's seen even if DEBUG is filtered
+        log.info("CALLBACK historicalData: ReqId: %d, Date: %s", reqId, bar.date)
         log.debug("HistoricalData. ReqId: %d, Date: %s, Open: %f, High: %f, Low: %f, Close: %f, Volume: %d, Count: %d, WAP: %f",
                  reqId, bar.date, bar.open, bar.high, bar.low, bar.close, bar.volume, bar.barCount, bar.wap)
         if reqId == self.hist_data_req_id:
@@ -112,7 +115,8 @@ class TestApp(wrapper.EWrapper, EClient):
     @iswrapper
     def historicalDataEnd(self, reqId: int, start: str, end: str):
         super().historicalDataEnd(reqId, start, end)
-        log.info("HistoricalDataEnd. ReqId: %d from %s to %s", reqId, start, end)
+        # Add INFO level log here
+        log.info("CALLBACK historicalDataEnd: ReqId: %d from %s to %s", reqId, start, end)
         if reqId == self.hist_data_req_id:
             self.hist_data_finished.set() # Signal completion
 
@@ -147,21 +151,9 @@ class TestApp(wrapper.EWrapper, EClient):
                                durationStr, barSizeSetting, whatToShow,
                                useRTH, formatDate, keepUpToDate, chartOptions)
 
-        # Wait for the historical data end signal or timeout
-        log.info(f"Waiting for historical data (reqId: {self.hist_data_req_id})...")
-        if self.hist_data_finished.wait(timeout=60): # 60 second timeout
-            log.info(f"Historical data request {self.hist_data_req_id} finished.")
-            log.info(f"Received {len(self.hist_data_list)} bars.")
-            if self.hist_data_list:
-                log.info(f"  First Bar: {self.hist_data_list[0].date} O:{self.hist_data_list[0].open} H:{self.hist_data_list[0].high} L:{self.hist_data_list[0].low} C:{self.hist_data_list[0].close} V:{self.hist_data_list[0].volume}")
-                log.info(f"  Last Bar:  {self.hist_data_list[-1].date} O:{self.hist_data_list[-1].open} H:{self.hist_data_list[-1].high} L:{self.hist_data_list[-1].low} C:{self.hist_data_list[-1].close} V:{self.hist_data_list[-1].volume}")
-        else:
-            log.warning(f"Historical data request {self.hist_data_req_id} timed out!")
-            # Attempt to cancel if timed out (best effort)
-            self.cancelHistoricalData(self.hist_data_req_id)
-
-        # Disconnect after the test
-        self.disconnect()
+        # Request initiated. The waiting logic is now handled in main().
+        log.info(f"Historical data request {self.hist_data_req_id} sent. Background thread will process response.")
+        # Do NOT wait or disconnect here.
 
 
 # --- Main Execution ---
@@ -177,21 +169,60 @@ def main():
 
     try:
         app = TestApp()
+        # Ensure logger level is set before connect/run
+        log.info(f"Logger level set to: {logging.getLevelName(log.level)}") # Add this check
+
         app.connect(args.host, args.port, args.clientId)
-        log.info("Connection initiated. Server version: %s", app.serverVersion())
+        log.info("Connection initiated. Server version: %s", app.serverVersion()) # This might be 0 if connect returns before ack
 
         # Start the EClient message loop in a separate thread
+        log.info("Starting EClient.run() message loop in background thread...") # Add this log
         thread = threading.Thread(target=app.run, daemon=True)
         thread.start()
+        log.info("EClient.run() thread started.")
 
-        # Wait for the thread to finish (which happens after disconnect)
-        thread.join(timeout=90) # Give ample time for connection, request, and disconnect
+        # --- Wait for the specific test event in the main thread ---
+        wait_timeout_secs = 90 # Timeout for the historical data itself
+        log.info(f"Main thread waiting up to {wait_timeout_secs}s for historical data end signal (reqId: {app.hist_data_req_id})...")
+        wait_successful = app.hist_data_finished.wait(timeout=wait_timeout_secs)
+
+        if wait_successful:
+            log.info(f"Main thread: Historical data request {app.hist_data_req_id} finished (end signal received).")
+            # Log results here if needed, accessing app.hist_data_list
+            log.info(f"Main thread: Received {len(app.hist_data_list)} bars.")
+            if app.hist_data_list:
+                 log.info(f"  First Bar: {app.hist_data_list[0].date}")
+                 log.info(f"  Last Bar:  {app.hist_data_list[-1].date}")
+        else:
+            log.warning(f"Main thread: Historical data request {app.hist_data_req_id} timed out waiting for end signal!")
+            log.warning(f"  Received {len(app.hist_data_list)} bars before timeout.")
+            # Attempt to cancel if timed out (best effort)
+            if app.isConnected() and not app._my_errors.get(app.hist_data_req_id):
+                 log.info(f"Main thread: Attempting to cancel historical data request {app.hist_data_req_id} due to timeout.")
+                 app.cancelHistoricalData(app.hist_data_req_id)
+
+        # --- Disconnect and wait for thread exit ---
+        log.info("Main thread: Disconnecting...")
+        if app.isConnected():
+            app.disconnect()
+        else:
+            log.info("Main thread: Already disconnected.")
+
+        # Wait for the EClient thread to finish after disconnect
+        join_timeout_secs = 10 # Short timeout for join after disconnect
+        log.info(f"Main thread waiting for EClient thread to join (timeout {join_timeout_secs}s)...")
+        thread.join(timeout=join_timeout_secs)
+        log.info("Main thread finished waiting for EClient thread.")
 
         if thread.is_alive():
-             log.warning("EClient thread did not exit cleanly.")
+             log.warning("EClient thread did not exit cleanly after disconnect and join timeout.")
              # Attempt disconnect again if stuck
              if app.isConnected():
+                 log.warning("Attempting disconnect again...")
                  app.disconnect()
+        else:
+             log.info("EClient thread exited cleanly.")
+
 
         log.info("Historical Data Test finished.")
 
