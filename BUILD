@@ -20,6 +20,7 @@ py_binary(
 # You have to download the toolkit from IBKR.
 py_library(
     name = "ibapi",
-    srcs = glob(["IBJts/source/pythonclient/ibapi/*.py"], allow_empty=True),
-    visibility = ["//visibility:public"]
+    srcs = glob(["IBJts/source/pythonclient/ibapi/**/*.py"], allow_empty=True),
+    imports = ["IBJts/source/pythonclient"],
+    visibility = ["//visibility:public"],
 )
