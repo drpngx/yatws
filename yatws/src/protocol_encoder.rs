@@ -1589,7 +1589,15 @@ impl Encoder {
       self.write_int_to_cursor(&mut cursor, format_date)?;
     }
 
-    // TODO: if SecType == BAG...
+    if contract.sec_type == SecType::Combo {
+      self.write_int_to_cursor(&mut cursor, contract.combo_legs.len() as i32)?;
+      for leg in &contract.combo_legs {
+        self.write_int_to_cursor(&mut cursor, leg.con_id)?;
+        self.write_int_to_cursor(&mut cursor, leg.ratio)?;
+        self.write_str_to_cursor(&mut cursor, &leg.action)?;
+        self.write_str_to_cursor(&mut cursor, &leg.exchange)?;
+      }
+    }
 
     // keepUpToDate (bool) - Conditional on server version
     if self.server_version >= min_server_ver::SYNT_REALTIME_BARS { // Use correct min_server_ver
