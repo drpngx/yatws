@@ -145,10 +145,127 @@ impl OrderBuilder {
     self
   }
 
-  pub fn for_cfd(mut self, symbol: &str) -> Self {
+  pub fn for_continuous_future(mut self, symbol: &str) -> Self {
     self.contract.symbol = symbol.to_string();
-    self.contract.sec_type = SecType::Stock; // IBKR uses SecType::Stock for CFD
-    self.contract.exchange = "SMART".to_string(); // Or specific CFD exchange
+    self.contract.sec_type = SecType::ContinuousFuture;
+    self.contract.exchange = "SMART".to_string(); // Default, might need override
+    self.contract.currency = "USD".to_string();   // Default, might need override
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_bond(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Bond;
+    self.contract.exchange = "SMART".to_string(); // Default, might need override
+    // Currency is often important for bonds, ensure it's set via .with_currency()
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_future_option(mut self, symbol: &str, expiry: &str, strike: f64, right: OptionRight) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::FutureOption;
+    self.contract.last_trade_date_or_contract_month = Some(expiry.to_string());
+    self.contract.strike = Some(strike);
+    self.contract.right = Some(right);
+    // Exchange, Currency, Multiplier likely needed via .with_ methods
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_warrant(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Warrant;
+    self.contract.exchange = "SMART".to_string(); // Default, might need override
+    self.contract.currency = "USD".to_string();   // Default, might need override
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_index_option(mut self, symbol: &str, expiry: &str, strike: f64, right: OptionRight) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::IndexOption;
+    self.contract.last_trade_date_or_contract_month = Some(expiry.to_string());
+    self.contract.strike = Some(strike);
+    self.contract.right = Some(right);
+    // Exchange, Currency, Multiplier likely needed via .with_ methods
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_forward(mut self, symbol: &str, expiry: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Forward;
+    self.contract.last_trade_date_or_contract_month = Some(expiry.to_string());
+    // Exchange, Currency likely needed via .with_ methods
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_index(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Index;
+    // Exchange, Currency likely needed via .with_ methods
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_bill(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Bill;
+    // Exchange, Currency likely needed via .with_ methods
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_fund(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Fund;
+    self.contract.exchange = "FUNDSERV".to_string(); // Common default for funds
+    // Currency likely needed via .with_currency()
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_fixed(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Fixed;
+    // Exchange, Currency likely needed via .with_ methods
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_slb(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Slb;
+    // Exchange, Currency likely needed via .with_ methods
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_commodity(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Commodity;
+    // Exchange, Currency likely needed via .with_ methods
+    self.is_combo = false;
+    self
+  }
+
+  pub fn for_basket(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Basket;
+    // Exchange, Currency likely needed via .with_ methods
+    // Note: Baskets might behave similarly to Combos regarding legs.
+    self.is_combo = false; // Treat as non-combo by default, legs added separately?
+    self
+  }
+
+  pub fn for_crypto(mut self, symbol: &str) -> Self {
+    self.contract.symbol = symbol.to_string();
+    self.contract.sec_type = SecType::Crypto;
+    self.contract.exchange = "PAXOS".to_string(); // Common default for crypto
+    self.contract.currency = "USD".to_string();   // Common default for crypto
     self.is_combo = false;
     self
   }

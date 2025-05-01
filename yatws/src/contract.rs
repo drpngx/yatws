@@ -9,17 +9,29 @@ use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SecType {
-  Stock,
-  Option,
-  Future,
+  Stock,          // STK
+  Option,         // OPT
+  Future,         // FUT
+  ContinuousFuture, // CONTFUT
+  Forex,          // CASH
+  Bond,           // BOND
+  Cfd,            // CFD
+  FutureOption,   // FOP
+  Warrant,        // WAR
+  IndexOption,    // IOPT
+  Forward,        // FWD
+  Combo,          // BAG
   Index,
-  FutureOption,
-  Forex,
-  Commodity,
-  Bond,
-  Warrant,
-  Fund,
-  Combo,
+  Bill,           // BILL
+  Fund,           // FUND
+  Fixed,          // FIXED
+  Slb,            // SLB
+  News,           // NEWS
+  Commodity,      // CMDTY
+  Basket,         // BSK
+  Icu,            // ICU - Index-Linked Currency Unit?
+  Ics,            // ICS - Index-Linked Contract?
+  Crypto,         // CRYPTO
 }
 
 impl fmt::Display for SecType {
@@ -28,14 +40,26 @@ impl fmt::Display for SecType {
       SecType::Stock => "STK",
       SecType::Option => "OPT",
       SecType::Future => "FUT",
-      SecType::Index => "IND",
-      SecType::FutureOption => "FOP",
+      SecType::ContinuousFuture => "CONTFUT",
       SecType::Forex => "CASH",
-      SecType::Commodity => "CMDTY",
       SecType::Bond => "BOND",
+      SecType::Cfd => "CFD",
+      SecType::FutureOption => "FOP",
       SecType::Warrant => "WAR",
-      SecType::Fund => "FUND",
+      SecType::IndexOption => "IOPT",
+      SecType::Forward => "FWD",
       SecType::Combo => "BAG",
+      SecType::Index => "IND",
+      SecType::Bill => "BILL",
+      SecType::Fund => "FUND",
+      SecType::Fixed => "FIXED",
+      SecType::Slb => "SLB",
+      SecType::News => "NEWS",
+      SecType::Commodity => "CMDTY",
+      SecType::Basket => "BSK",
+      SecType::Icu => "ICU",
+      SecType::Ics => "ICS",
+      SecType::Crypto => "CRYPTO",
     };
     write!(f, "{}", s)
   }
@@ -49,14 +73,26 @@ impl std::str::FromStr for SecType {
       "STK" => Ok(SecType::Stock),
       "OPT" => Ok(SecType::Option),
       "FUT" => Ok(SecType::Future),
-      "IND" => Ok(SecType::Index),
-      "FOP" => Ok(SecType::FutureOption),
+      "CONTFUT" => Ok(SecType::ContinuousFuture),
       "CASH" => Ok(SecType::Forex),
-      "CMDTY" => Ok(SecType::Commodity),
       "BOND" => Ok(SecType::Bond),
+      "CFD" => Ok(SecType::Cfd),
+      "FOP" => Ok(SecType::FutureOption),
       "WAR" => Ok(SecType::Warrant),
-      "FUND" => Ok(SecType::Fund),
+      "IOPT" => Ok(SecType::IndexOption),
+      "FWD" => Ok(SecType::Forward),
       "BAG" => Ok(SecType::Combo),
+      "IND" => Ok(SecType::Index),
+      "BILL" => Ok(SecType::Bill),
+      "FUND" => Ok(SecType::Fund),
+      "FIXED" => Ok(SecType::Fixed),
+      "SLB" => Ok(SecType::Slb),
+      "NEWS" => Ok(SecType::News),
+      "CMDTY" => Ok(SecType::Commodity),
+      "BSK" => Ok(SecType::Basket),
+      "ICU" => Ok(SecType::Icu),
+      "ICS" => Ok(SecType::Ics),
+      "CRYPTO" => Ok(SecType::Crypto),
       _ => Err(format!("Unknown security type: {}", s)),
     }
   }
