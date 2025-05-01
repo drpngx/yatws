@@ -416,10 +416,10 @@ impl Encoder {
   // Helper for TagValue lists
   fn write_tag_value_list(&self, cursor: &mut Cursor<Vec<u8>>, list: &[(String, String)]) -> Result<(), IBKRError> {
     let enc = list
-        .iter()
-        .map(|(k, v)| format!("{}={}", k, v))
-        .collect::<Vec<String>>()
-        .join(",");
+      .iter()
+      .map(|(k, v)| format!("{}={}", k, v))
+      .collect::<Vec<String>>()
+      .join(",");
     self.write_str_to_cursor(cursor, &enc)?;
     Ok(())
   }
@@ -1116,15 +1116,15 @@ impl Encoder {
     // --- Order Misc Options ---
     if self.server_version >= min_server_ver::LINKING {
       let misc_options_str = if request.order_misc_options.is_empty() {
-          // If the vector is empty, send an empty string (which results in just '\0')
-          String::new()
+        // If the vector is empty, send an empty string (which results in just '\0')
+        String::new()
       } else {
-          // If not empty, format as Key=Value pairs joined by semicolons
-          request.order_misc_options
-              .iter()
-              .map(|(key, value)| format!("{key}={value}"))
-              .collect::<Vec<String>>()
-              .join(";") // Use semicolon separator
+        // If not empty, format as Key=Value pairs joined by semicolons
+        request.order_misc_options
+          .iter()
+          .map(|(key, value)| format!("{key}={value}"))
+          .collect::<Vec<String>>()
+          .join(";") // Use semicolon separator
       };
 
       // Write the resulting string (empty or joined) followed by null terminator
@@ -1374,14 +1374,14 @@ impl Encoder {
       }
     }
     if self.server_version < min_server_ver::REQ_SMART_COMPONENTS && regulatory_snapshot {
-        return Err(IBKRError::UpdateTws(
-            "Server version does not support regulatory snapshot requests.".to_string(),
-        ));
+      return Err(IBKRError::UpdateTws(
+        "Server version does not support regulatory snapshot requests.".to_string(),
+      ));
     }
     if self.server_version < min_server_ver::LINKING && !mkt_data_options.is_empty() {
-        return Err(IBKRError::UpdateTws(
-            "Server version does not support market data options.".to_string(),
-        ));
+      return Err(IBKRError::UpdateTws(
+        "Server version does not support market data options.".to_string(),
+      ));
     }
 
     // --- Start Encoding ---
@@ -1542,14 +1542,13 @@ impl Encoder {
     debug!("Encoding request historical data: ReqID={}", req_id);
     let mut cursor = self.start_encoding(OutgoingMessageType::RequestHistoricalData as i32)?;
 
-    // Version field is not sent for this message according to documentation.
-    // Server likely infers based on fields present or connection version.
+    const VERSION: i32 = 6;
 
+    if self.server_version < min_server_ver::SYNT_REALTIME_BARS {
+      self.write_int_to_cursor(&mut cursor, VERSION)?;
+    }
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
-    // Contract fields (minimal set needed for historical data request)
-    // Note: conId and tradingClass are often optional/not needed here unless required by specific server versions/features.
-    // Let's send them conditionally based on server version supporting TRADING_CLASS as a proxy for newer features.
     if self.server_version >= min_server_ver::TRADING_CLASS {
       self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
     }
@@ -1563,46 +1562,46 @@ impl Encoder {
     self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
     self.write_str_to_cursor(&mut cursor, &contract.currency)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
-    // NOTE: includeExpired is NOT part of the reqHistoricalData message itself.
-
-    // Historical Data Request Parameters (Order based on official documentation)
-    // 1. endDateTime (String) - Format: "yyyyMMdd HH:mm:ss [zzz]" or "" for current time
-    //    Using format without timezone suffix as per common examples, TWS usually assumes local or UTC based on context.
-    let end_date_time_str = self.format_datetime_tws(end_date_time, "%Y%m%d %H:%M:%S", None); // No TZ suffix
-    self.write_str_to_cursor(&mut cursor, &end_date_time_str)?;
-
-    // 2. durationStr (String) - e.g., "1 Y", "3 M", "60 D", "3600 S"
-    self.write_str_to_cursor(&mut cursor, duration_str)?;
-
-    // 3. barSizeSetting (String) - e.g., "1 day", "30 mins", "1 secs"
-    self.write_str_to_cursor(&mut cursor, bar_size_setting)?;
-
-    // 4. whatToShow (String) - e.g., "TRADES", "MIDPOINT", "BID", "ASK"
-    self.write_str_to_cursor(&mut cursor, what_to_show)?;
-
-    // 5. useRTH (int) - 1=RTH only, 0=All data
-    self.write_bool_to_cursor(&mut cursor, use_rth)?;
-
-    // 6. formatDate (int) - 1=yyyyMMdd{ }hh:mm:ss, 2=epoch seconds
-    self.write_int_to_cursor(&mut cursor, format_date)?;
-
-    // 7. keepUpToDate (bool) - Conditional on server version
-    if self.server_version >= min_server_ver::SYNT_REALTIME_BARS { // Use correct min_server_ver
-        self.write_bool_to_cursor(&mut cursor, keep_up_to_date)?;
-    } else if keep_up_to_date {
-        // Warn or error if requested but not supported? Let's warn for now.
-        warn!("keepUpToDate=true requested but server version {} does not support it (requires {}). Ignoring.", self.server_version, min_server_ver::SYNT_REALTIME_BARS);
-        // Do not send the field if not supported
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    }
+    if self.server_version >= 31 {
+      self.write_int_to_cursor(&mut cursor, if contract.include_expired { 1 } else { 0 })?;
+    }
+    if self.server_version >= 20 {
+      let end_date_time_str = self.format_datetime_tws(end_date_time, "%Y%m%d %H:%M:%S", None); // No TZ suffix
+      self.write_str_to_cursor(&mut cursor, &end_date_time_str)?;
+      // e.g., "1 day", "30 mins", "1 secs"
+      self.write_str_to_cursor(&mut cursor, bar_size_setting)?;
     }
 
-    // 8. chartOptions (TagValueList) - Conditional on server version
-    self.write_tag_value_list(&mut cursor, chart_options)?;
+    // e.g., "1 Y", "3 M", "60 D", "3600 S"
+    self.write_str_to_cursor(&mut cursor, duration_str)?;
 
-    // Note: Combo handling (use_combo_data) is not standard for historical data requests.
+    // 1=RTH only, 0=All data
+    self.write_bool_to_cursor(&mut cursor, use_rth)?;
+
+    // e.g., "TRADES", "MIDPOINT", "BID", "ASK"
+    self.write_str_to_cursor(&mut cursor, what_to_show)?;
+
+    if self.server_version > 16 {
+      // 1=yyyyMMdd{ }hh:mm:ss, 2=epoch seconds
+      self.write_int_to_cursor(&mut cursor, format_date)?;
+    }
+
+    // TODO: if SecType == BAG...
+
+    // keepUpToDate (bool) - Conditional on server version
+    if self.server_version >= min_server_ver::SYNT_REALTIME_BARS { // Use correct min_server_ver
+      self.write_bool_to_cursor(&mut cursor, keep_up_to_date)?;
+    }
+
+    if self.server_version >= min_server_ver::LINKING {
+      self.write_tag_value_list(&mut cursor, chart_options)?;
+    }
 
     Ok(self.finish_encoding(cursor))
-}
+  }
 
   pub fn _encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request managed accounts");
