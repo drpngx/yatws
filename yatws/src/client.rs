@@ -13,6 +13,7 @@ use mgr::ClientManager;
 use crate::handler::MessageHandler;
 
 pub struct IBKRClient {
+  client_id: i32,
   client_mgr: Arc<ClientManager>,
   order_mgr: Arc<OrderManager>,
   account_mgr: Arc<AccountManager>,
@@ -44,6 +45,7 @@ impl IBKRClient {
     message_broker.set_message_handler(msg_handler);
     order_init()?;
     Ok(IBKRClient {
+      client_id,
       client_mgr,
       order_mgr,
       account_mgr,
@@ -73,6 +75,7 @@ impl IBKRClient {
     message_broker.set_message_handler(msg_handler);
     order_init()?;
     Ok(IBKRClient {
+      client_id: 0,
       client_mgr,
       order_mgr,
       account_mgr,
@@ -82,6 +85,8 @@ impl IBKRClient {
       data_fin_mgr,
     })
   }
+
+  pub fn client_id(&self) -> i32 { self.client_id }
 
   pub fn client(&self) -> Arc<ClientManager> {
     self.client_mgr.clone()

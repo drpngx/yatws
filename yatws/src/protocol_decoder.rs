@@ -809,8 +809,10 @@ pub enum ClientErrorCode {
   NotSubscribedMarketData = 10089,
   /// Part of requested market data is not subscribed.
   PartiallySubscribedMarketData = 10090,
+  /// OrderId <OrderId> that needs to be cancelled is not found.
+  CannotCancelNotFoundOrder = 10147,
   /// OrderId <OrderId> that needs to be cancelled can not be cancelled, state: <State>
-  CannotCancelFilledOrder = 10148, // Placeholder
+  CannotCancelFilledOrder = 10148,
   /// Requested market data is not subscribed. Delayed market data is not enabled
   MarketDataNotSubscribedDelayedDisabled = 10186,
   /// No market data during competing session
@@ -1251,6 +1253,7 @@ impl fmt::Display for ClientErrorCode {
       ClientErrorCode::InvalidComboRoutingTagApi => "Invalid combo routing tag API.",
       ClientErrorCode::NotSubscribedMarketData => "Not subscribed for requested market data.",
       ClientErrorCode::PartiallySubscribedMarketData => "Part of requested market data is not subscribed.",
+      ClientErrorCode::CannotCancelNotFoundOrder => "OrderId <OrderId> that needs to be cancelled is not found, state: <State>",
       ClientErrorCode::CannotCancelFilledOrder => "OrderId <OrderId> that needs to be cancelled can not be cancelled, state: <State>",
       ClientErrorCode::MarketDataNotSubscribedDelayedDisabled => "Requested market data is not subscribed. Delayed market data is not enabled",
       ClientErrorCode::NoMarketDataDuringCompetingSession => "No market data during competing session",
@@ -1660,6 +1663,7 @@ impl TryFrom<i32> for ClientErrorCode {
       10027 => Ok(ClientErrorCode::InvalidComboRoutingTagApi),
       10089 => Ok(ClientErrorCode::NotSubscribedToMarketData),
       10090 => Ok(ClientErrorCode::PartiallySubscribedMarketData),
+      10147 => Ok(ClientErrorCode::CannotCancelNotFoundOrder),
       10148 => Ok(ClientErrorCode::CannotCancelFilledOrder),
       10186 => Ok(ClientErrorCode::MarketDataNotSubscribedDelayedDisabled),
       10197 => Ok(ClientErrorCode::NoMarketDataDuringCompetingSession),

@@ -243,6 +243,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InvalidLeg2ToMktTime1Api | // Deprecated
     ClientErrorCode::InvalidLeg2ToMktTime2Api | // Deprecated
     ClientErrorCode::InvalidComboRoutingTagApi | // Deprecated
+    ClientErrorCode::CannotCancelNotFoundOrder | // Placeholder
     ClientErrorCode::CannotCancelFilledOrder | // Placeholder
     ClientErrorCode::DefaultsInheritedFromCashPreset | // Info/Warning
     ClientErrorCode::DecisionMakerRequiredNonDesktop |

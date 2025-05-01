@@ -674,6 +674,7 @@ mod test_cases {
 
   pub(super) fn cleanup_orders_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Cleanup Orders (Cancel All Open Orders & List Positions) ---");
+    assert!(client.client_id() == 0, "Must cleanup from client 0, got {}", client.client_id());
     let order_mgr = client.orders();
     let acct_mgr = client.account();
     let refresh_timeout = Duration::from_secs(10);
