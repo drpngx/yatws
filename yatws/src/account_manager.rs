@@ -50,6 +50,9 @@ pub struct AccountManager {
   executions_state: Mutex<HashMap<i32, ExecutionRequestState>>, // State for execution requests (ReqID -> State)
   executions_cond: Condvar, // Condvar for execution requests
   is_subscribed: AtomicBool, // Track if continuous updates are active
+  // State for manual position refresh
+  manual_position_refresh_waiting: Mutex<bool>,
+  manual_position_refresh_cond: Condvar,
 }
 
 impl AccountManager {
@@ -68,6 +71,8 @@ impl AccountManager {
       executions_state: Mutex::new(HashMap::new()),
       executions_cond: Condvar::new(),
       is_subscribed: AtomicBool::new(false),
+      manual_position_refresh_waiting: Mutex::new(false),
+      manual_position_refresh_cond: Condvar::new(),
     })
   }
 
@@ -183,12 +188,63 @@ impl AccountManager {
       .or_else(|_| self.get_parsed_value("EquityWithLoanValue"))
   }
 
+  /// Requests a fresh snapshot of positions and returns them.
+  /// This is a blocking call that waits for the position data to be updated.
   pub fn list_open_positions(&self) -> Result<Vec<Position>, IBKRError> {
-    self.ensure_subscribed()?;
-    // read() returns guard directly
-    let state = self.account_state.read();
-    Ok(state.portfolio.values().filter(|p| p.quantity != 0.0).cloned().collect())
+    self.ensure_subscribed()?; // Ensure basic account info is likely present
+
+    info!("Requesting manual position refresh.");
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_request_positions()?;
+
+    // Prepare state for waiting
+    let mut waiting_guard = self.manual_position_refresh_waiting.lock();
+    if *waiting_guard {
+        // Another refresh is already in progress
+        warn!("list_open_positions called while another manual refresh is already in progress.");
+        return Err(IBKRError::AlreadyRunning("Manual position refresh already in progress".to_string()));
+    }
+    *waiting_guard = true; // Mark as waiting
+
+    // Send the request *after* marking as waiting but *before* starting the wait loop
+    self.message_broker.send_message(&request_msg)?;
+    info!("Manual position request sent. Waiting for PositionEnd...");
+
+    // Wait for position_end to signal completion
+    let wait_timeout = Duration::from_secs(15); // Adjust timeout as needed
+    let start_time = std::time::Instant::now();
+
+    while *waiting_guard && start_time.elapsed() < wait_timeout {
+        let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
+        let timeout_result = self.manual_position_refresh_cond.wait_for(&mut waiting_guard, remaining_timeout);
+        if timeout_result.timed_out() {
+            // Check again if the state changed right before timeout
+            if *waiting_guard { // Still waiting after timeout
+                warn!("Manual position refresh timed out waiting for PositionEnd.");
+                *waiting_guard = false; // Reset waiting flag on timeout
+                return Err(IBKRError::Timeout("Manual position refresh timed out".to_string()));
+            }
+        }
+        // If woken up, the loop condition (*waiting_guard) will be checked again.
+    }
+
+    // Check if we exited the loop because waiting became false (success)
+    if !*waiting_guard {
+        info!("Manual position refresh completed successfully.");
+        // Drop the lock explicitly before reading account state
+        drop(waiting_guard);
+        // Read the updated positions
+        let state = self.account_state.read();
+        Ok(state.portfolio.values().filter(|p| p.quantity != 0.0).cloned().collect())
+    } else {
+        // Should not happen if timeout logic is correct, but handle defensively
+        error!("Manual position refresh loop ended unexpectedly while still marked as waiting.");
+        *waiting_guard = false; // Reset flag
+        Err(IBKRError::InternalError("Manual position refresh state inconsistency".to_string()))
+    }
   }
+
 
   pub fn get_daily_pnl(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
@@ -822,22 +878,39 @@ impl AccountHandler for AccountManager {
 
   fn position_end(&self) {
     debug!("Handler: Position End");
-    let mut u_state = self.update_state.lock();
 
-    if u_state.is_initial_fetch_active && u_state.waiting_for_initial_position_end {
-      info!("PositionEnd received during initial fetch, marking positions as complete.");
-      u_state.waiting_for_initial_position_end = false;
-      // Check if this was the *last* thing we were waiting for during initial fetch
-      if !u_state.waiting_for_initial_summary_end {
-        info!("PositionEnd: Initial fetch complete. Notifying waiter.");
-        self.update_cond.notify_all();
-      } else {
-        info!("PositionEnd: Still waiting for initial SummaryEnd.");
-      }
-    } else {
-      // Received during continuous updates or when not actively fetching
-      debug!("PositionEnd received outside of initial fetch.");
-    }
+    // --- Check for Manual Refresh Completion ---
+    { // Scope for manual refresh lock
+        let mut waiting_guard = self.manual_position_refresh_waiting.lock();
+        if *waiting_guard {
+            info!("PositionEnd received, completing manual position refresh.");
+            *waiting_guard = false; // Clear the flag
+            self.manual_position_refresh_cond.notify_all(); // Notify the waiting list_open_positions call
+            // We assume PositionEnd is only for one thing at a time (either initial or manual)
+            // If it could be for both, logic would need adjustment.
+            return; // Handled as manual refresh completion
+        }
+        // else: Not waiting for a manual refresh, proceed to check initial fetch.
+    } // Release manual refresh lock
+
+    // --- Check for Initial Fetch Completion ---
+    { // Scope for initial fetch lock
+        let mut u_state = self.update_state.lock();
+        if u_state.is_initial_fetch_active && u_state.waiting_for_initial_position_end {
+            info!("PositionEnd received during initial fetch, marking positions as complete.");
+            u_state.waiting_for_initial_position_end = false;
+            // Check if this was the *last* thing we were waiting for during initial fetch
+            if !u_state.waiting_for_initial_summary_end {
+                info!("PositionEnd: Initial fetch complete. Notifying waiter.");
+                self.update_cond.notify_all();
+            } else {
+                info!("PositionEnd: Still waiting for initial SummaryEnd.");
+            }
+        } else {
+            // Received during continuous updates or when not actively fetching/refreshing
+            debug!("PositionEnd received outside of initial fetch or manual refresh.");
+        }
+    } // Release initial fetch lock
   }
 
   fn account_summary(&self, req_id: i32, account: &str, tag: &str, value: &str, currency: &str) {
