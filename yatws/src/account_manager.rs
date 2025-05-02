@@ -17,14 +17,17 @@ use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 use std::time::Duration;
 
 
-// State for tracking refresh operations
+// State for tracking subscription and initial fetch operations
 #[derive(Debug, Default)]
-struct RefreshState {
-  summary_request_id: Option<i32>,
-  waiting_for_summary_end: bool,
-  waiting_for_position_end: bool,
-  // No specific request ID for positions, TWS manages it internally
-  // Add flags for other data if needed (e.g., PnL)
+struct UpdateState {
+  // ID of the active reqAccountSummary request used for continuous updates
+  // and cancellation. Also used to identify the initial fetch request.
+  current_summary_req_id: Option<i32>,
+  // Flags used *only* during the initial blocking fetch in subscribe_account_updates
+  waiting_for_initial_summary_end: bool,
+  waiting_for_initial_position_end: bool,
+  // Flag to prevent concurrent initial fetches
+  is_initial_fetch_active: bool,
 }
 
 // State for tracking execution requests
@@ -42,11 +45,11 @@ pub struct AccountManager {
   // executions: RwLock<Vec<Arc<Execution>>>,
   observers: RwLock<HashMap<usize, Box<dyn AccountObserver + Send + Sync>>>,
   next_observer_id: AtomicUsize,
-  refresh_state: Mutex<RefreshState>, // Mutex + Condvar for blocking refresh
-  refresh_cond: Condvar,
+  update_state: Mutex<UpdateState>, // State for subscription and initial fetch
+  update_cond: Condvar, // Condvar for initial fetch wait
   executions_state: Mutex<HashMap<i32, ExecutionRequestState>>, // State for execution requests (ReqID -> State)
   executions_cond: Condvar, // Condvar for execution requests
-  is_subscribed: AtomicBool, // Track background update subscription
+  is_subscribed: AtomicBool, // Track if continuous updates are active
 }
 
 impl AccountManager {
@@ -60,12 +63,34 @@ impl AccountManager {
       account_state: RwLock::new(initial_state),
       observers: RwLock::new(HashMap::new()),
       next_observer_id: AtomicUsize::new(1),
-      refresh_state: Mutex::new(RefreshState::default()),
-      refresh_cond: Condvar::new(),
+      update_state: Mutex::new(UpdateState::default()),
+      update_cond: Condvar::new(),
       executions_state: Mutex::new(HashMap::new()),
       executions_cond: Condvar::new(),
       is_subscribed: AtomicBool::new(false),
     })
+  }
+
+  /// Ensures that account updates are subscribed and the initial data fetch has completed.
+  /// Calls `subscribe_account_updates` if not already subscribed.
+  fn ensure_subscribed(&self) -> Result<(), IBKRError> {
+    if !self.is_subscribed.load(Ordering::Relaxed) {
+      // Attempt to subscribe only if not already subscribed.
+      // The subscribe function itself handles race conditions.
+      self.subscribe_account_updates()?;
+    }
+    // After calling subscribe, we assume the initial fetch is done or an error was returned.
+    // Check if the state is populated as a final verification.
+    let state = self.account_state.read();
+    if state.last_updated.is_none() || state.values.is_empty() || state.portfolio.is_empty() {
+      // This might happen if subscribe finished but data hasn't arrived yet, or if subscribe failed silently.
+      // Or if subscribe was called concurrently and the current thread didn't wait.
+      // For simplicity, return an error indicating data isn't ready.
+      // A more robust solution might involve waiting here, but that adds complexity.
+      warn!("ensure_subscribed: Account state still appears empty after subscription attempt.");
+      return Err(IBKRError::InternalError("Account state not populated after subscription. Data might be pending or subscription failed.".to_string()));
+    }
+    Ok(())
   }
 
   // --- Helper to get specific account value ---
@@ -90,11 +115,13 @@ impl AccountManager {
   // --- Public API Methods ---
 
   pub fn get_account_info(&self) -> Result<AccountInfo, IBKRError> {
+    self.ensure_subscribed()?;
     // read() returns the guard directly
     let state = self.account_state.read();
 
+    // Check again after ensuring subscription, in case it failed silently or data is missing
     if state.last_updated.is_none() || state.values.is_empty() {
-      return Err(IBKRError::InternalError("Account state not yet populated. Call refresh() or wait for updates.".to_string()));
+      return Err(IBKRError::InternalError("Account state not populated after subscription attempt.".to_string()));
     }
 
     // Helper closures remain the same conceptually, but access `state` guard directly
@@ -141,40 +168,49 @@ impl AccountManager {
   }
 
   pub fn get_buying_power(&self) -> Result<f64, IBKRError> {
+    self.ensure_subscribed()?;
     self.get_parsed_value("BuyingPower")
   }
 
   pub fn get_cash_balance(&self) -> Result<f64, IBKRError> {
+    self.ensure_subscribed()?;
     self.get_parsed_value("TotalCashValue")
   }
 
   pub fn get_equity(&self) -> Result<f64, IBKRError> {
+    self.ensure_subscribed()?;
     self.get_parsed_value("NetLiquidation")
       .or_else(|_| self.get_parsed_value("EquityWithLoanValue"))
   }
 
   pub fn list_open_positions(&self) -> Result<Vec<Position>, IBKRError> {
+    self.ensure_subscribed()?;
     // read() returns guard directly
     let state = self.account_state.read();
     Ok(state.portfolio.values().filter(|p| p.quantity != 0.0).cloned().collect())
   }
 
   pub fn get_daily_pnl(&self) -> Result<f64, IBKRError> {
+    self.ensure_subscribed()?;
     self.get_parsed_value("DailyPnL")
   }
 
   pub fn get_unrealized_pnl(&self) -> Result<f64, IBKRError> {
+    self.ensure_subscribed()?;
     self.get_parsed_value("UnrealizedPnL")
   }
 
   pub fn get_realized_pnl(&self) -> Result<f64, IBKRError> {
+    self.ensure_subscribed()?;
     self.get_parsed_value("RealizedPnL")
   }
 
   /// Requests and returns execution details merged with commission data for the current trading day.
   /// It uses a default filter (all executions for the current connection).
   /// See `get_executions_filtered` for using a custom filter.
+  /// Note: This does NOT require prior subscription via `subscribe_account_updates`.
   pub fn get_day_executions(&self) -> Result<Vec<Execution>, IBKRError> {
+    // Execution requests are independent of the account summary/position subscription
     let filter = ExecutionFilter::default(); // Use default filter
     self.get_executions_filtered(&filter)
   }
@@ -287,222 +323,288 @@ impl AccountManager {
     removed
   }
 
-  pub fn refresh(&self) -> Result<(), IBKRError> {
-    info!("Starting full account refresh (summary and positions)...");
-    let req_id = self.message_broker.next_request_id();
+  /// Subscribes to continuous account summary and position updates.
+  /// This function performs an initial blocking fetch of the account summary and positions.
+  /// Once the initial data is received, it returns, and updates will continue to arrive
+  /// in the background, notifying observers.
+  ///
+  /// If already subscribed, this function returns Ok(()) immediately.
+  /// This is a blocking call during the initial data fetch.
+  ///
+  /// This does NOT use reqAccountUpdates, because only one subscription per account
+  /// is allowed. So, if one client has it, no other client would have been able to
+  /// list positions.
+  pub fn subscribe_account_updates(&self) -> Result<(), IBKRError> {
+    // Quick check without lock first
+    if self.is_subscribed.load(Ordering::Relaxed) {
+      debug!("Already subscribed to account updates.");
+      return Ok(());
+    }
 
+    info!("Attempting to subscribe to account updates and perform initial fetch...");
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
+    let req_id = self.message_broker.next_request_id();
+    let initial_fetch_started: bool; // Tracks if *this* thread initiated the fetch
+    let mut result = Ok(());
+    let mut timed_out = false; // Tracks if the initial fetch wait timed out
+    let mut cancel_req_id_on_timeout = None; // Store req_id if timeout occurs
 
-    // Include PnL tags directly in the summary request
-    // Request a comprehensive set of tags, including PnL
-    let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
-    let summary_msg = encoder.encode_request_account_summary(req_id, "All", &tags)?;
-    // --- ADD RequestPositions ---
-    let position_msg = encoder.encode_request_positions()?;
+    { // Scope for locking update_state to initiate requests
+      let mut u_state = self.update_state.lock();
 
-    { // Scope for r_state lock starts
-      let mut r_state = self.refresh_state.lock();
-      // Check if any refresh operation is already running
-      if r_state.waiting_for_summary_end || r_state.waiting_for_position_end {
-        return Err(IBKRError::AlreadyRunning("Refresh already in progress".to_string()));
+      // Double-check subscription and initial fetch status *after* acquiring lock
+      if self.is_subscribed.load(Ordering::SeqCst) {
+        info!("Subscription started concurrently, returning.");
+        return Ok(());
       }
-      r_state.summary_request_id = Some(req_id);
-      r_state.waiting_for_summary_end = true;
-      r_state.waiting_for_position_end = true; // Wait for PositionEnd
-    } // Lock released briefly
+      if u_state.is_initial_fetch_active {
+        warn!("Initial fetch already in progress, returning.");
+        // Another thread is handling it, consider this call successful conceptually
+        // Or return AlreadyRunning if strict single-entry is desired.
+        return Ok(());
+        // return Err(IBKRError::AlreadyRunning("Initial fetch already in progress".to_string()));
+      }
 
-    self.message_broker.send_message(&summary_msg)?;
-    // --- ADD send for position_msg ---
-    self.message_broker.send_message(&position_msg)?;
+      // Mark initial fetch as active *within the lock*
+      u_state.is_initial_fetch_active = true;
+      u_state.current_summary_req_id = Some(req_id);
+      u_state.waiting_for_initial_summary_end = true;
+      u_state.waiting_for_initial_position_end = true;
+      initial_fetch_started = true; // Mark that *this* thread initiated the fetch
 
-    let wait_timeout = Duration::from_secs(15);
-    let start_time = std::time::Instant::now();
-    let mut cancel_req_id = None;
+      // Prepare messages
+      // Request a comprehensive set of tags, including PnL
+      let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
 
-    { // Scope for waiting lock starts
-      // Re-lock state for waiting
-      let mut r_state = self.refresh_state.lock(); // Lock acquired
+      // Send summary request (this also implicitly starts continuous updates)
+      match encoder.encode_request_account_summary(req_id, "All", &tags) {
+        Ok(summary_msg) => {
+          if let Err(e) = self.message_broker.send_message(&summary_msg) {
+            error!("Failed to send account summary request: {:?}", e);
+            u_state.is_initial_fetch_active = false; // Reset state on error
+            u_state.current_summary_req_id = None;
+            return Err(e);
+          }
+        },
+        Err(e) => {
+          error!("Failed to encode account summary request: {:?}", e);
+          u_state.is_initial_fetch_active = false; // Reset state on error
+          u_state.current_summary_req_id = None;
+          return Err(e);
+        }
+      }
 
-      // Wait until both summary and positions are complete, or timeout
-      while (r_state.waiting_for_summary_end || r_state.waiting_for_position_end) // Check
-        && start_time.elapsed() < wait_timeout { // Check
-          let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
-          let timeout_result = self.refresh_cond.wait_for(&mut r_state, remaining_timeout); // Wait
-
-          if timeout_result.timed_out() { // Check timeout
-            // Check which operations timed out
-            if r_state.waiting_for_summary_end { // Check
-              warn!("Account refresh timed out waiting for SummaryEnd.");
-              cancel_req_id = r_state.summary_request_id; // Access
-            }
-            if r_state.waiting_for_position_end { // Check
-              warn!("Account refresh timed out waiting for PositionEnd.");
-              // No specific ID to cancel for positions, but flag needs reset
-            }
-
-            // Reset state *after* logging and storing cancel ID
-            r_state.waiting_for_summary_end = false; // Access
-            r_state.waiting_for_position_end = false; // Access
-            r_state.summary_request_id = None; // Access
-            drop(r_state); // Drop lock
-
-            // Cancel summary request if needed
-            if let Some(id) = cancel_req_id {
-              match encoder.encode_cancel_account_summary(id) {
-                Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
-                Err(e) => error!("Failed to encode cancel summary msg: {:?}", e),
+      // Send position request (this also implicitly starts continuous updates)
+      match encoder.encode_request_positions() {
+        Ok(position_msg) => {
+          if let Err(e) = self.message_broker.send_message(&position_msg) {
+            error!("Failed to send position request: {:?}", e);
+            // Attempt to cancel summary if it was sent
+            if let Some(id) = u_state.current_summary_req_id {
+              if let Ok(cancel_msg) = encoder.encode_cancel_account_summary(id) {
+                let _ = self.message_broker.send_message(&cancel_msg);
               }
             }
-
-            // --- ADD CancelPositions ---
-            match encoder.encode_cancel_positions() {
-              Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
-              Err(e) => error!("Failed to encode cancel positions msg: {:?}", e),
+            u_state.is_initial_fetch_active = false; // Reset state on error
+            u_state.current_summary_req_id = None;
+            return Err(e);
+          }
+        },
+        Err(e) => {
+          error!("Failed to encode position request: {:?}", e);
+          // Attempt to cancel summary if it was sent
+          if let Some(id) = u_state.current_summary_req_id {
+            if let Ok(cancel_msg) = encoder.encode_cancel_account_summary(id) {
+              let _ = self.message_broker.send_message(&cancel_msg);
             }
-
-            return Err(IBKRError::Timeout("Account refresh timed out".to_string()));
-          } // End if timeout_result.timed_out()
-          // No else block needed here - if not timed out, loop continues
-          // This debug message executes ONLY IF NOT TIMED OUT
-          debug!("Refresh wait notified. Waiting flags: Summary={}, Position={}", r_state.waiting_for_summary_end, r_state.waiting_for_position_end);
-        } // End while loop
-
-
-      // After loop, check final state
-      // This block runs if the loop terminated because the condition became false (refresh completed)
-      if r_state.waiting_for_summary_end || r_state.waiting_for_position_end {
-        // This case means loop ended, but flags somehow still set (e.g., timeout occurred *after* last check but before this block)
-        warn!("Refresh loop finished but flags not cleared (Summary={}, Position={}). Resetting.", r_state.waiting_for_summary_end, r_state.waiting_for_position_end);
-        r_state.waiting_for_summary_end = false;
-        r_state.waiting_for_position_end = false;
-        if start_time.elapsed() >= wait_timeout {
-          return Err(IBKRError::Timeout("Account refresh timed out (consistency check)".to_string()));
-        } else {
-          // This path is less likely if timeout didn't happen, maybe a race?
-          return Err(IBKRError::InternalError("Refresh state inconsistency after wait".to_string()));
+          }
+          u_state.is_initial_fetch_active = false; // Reset state on error
+          u_state.current_summary_req_id = None;
+          return Err(e);
         }
-      } else {
-        info!("Account refresh completed successfully.");
       }
-      // Ensure summary_request_id is cleared even on success
-      r_state.summary_request_id = None;
+      info!("Initial account summary (ReqID {}) and position requests sent. Waiting for completion...", req_id);
+    } // Release update_state lock before waiting
 
-    } // Release lock (implicit drop of r_state)
+    // --- Wait for initial fetch completion ---
+    if initial_fetch_started {
+      let wait_timeout = Duration::from_secs(20); // Increased timeout
+      let start_time = std::time::Instant::now();
 
-    Ok(())
-  } // End refresh function
+      { // Scope for waiting lock starts
+        let mut u_state = self.update_state.lock(); // Re-acquire lock for waiting
 
-  pub fn refresh_positions(&self) -> Result<(), IBKRError> {
-    info!("Starting position-only refresh...");
+        while (u_state.waiting_for_initial_summary_end || u_state.waiting_for_initial_position_end)
+          && start_time.elapsed() < wait_timeout
+        {
+            let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
+            let timeout_result = self.update_cond.wait_for(&mut u_state, remaining_timeout); // Wait
 
-    let server_version = self.message_broker.get_server_version()?;
-    let encoder = Encoder::new(server_version);
+            if timeout_result.timed_out() {
+              warn!("Initial account data fetch timed out (SummaryEnd: {}, PositionEnd: {}).",
+                    !u_state.waiting_for_initial_summary_end, !u_state.waiting_for_initial_position_end);
 
-    let position_msg = encoder.encode_request_positions()?;
+              // Store the ID needed for cancellation later, outside the lock
+              if u_state.waiting_for_initial_summary_end {
+                cancel_req_id_on_timeout = u_state.current_summary_req_id;
+              }
 
-    {
-      let mut r_state = self.refresh_state.lock();
-      // Check if any refresh operation is already running
-      if r_state.waiting_for_summary_end || r_state.waiting_for_position_end {
-        return Err(IBKRError::AlreadyRunning("Refresh operation already in progress".to_string()));
-      }
-      r_state.waiting_for_position_end = true; // Wait for PositionEnd
-      // Summary flags remain false/None
-    }
+              // Set flag and reset state *within the lock*
+              timed_out = true;
+              u_state.is_initial_fetch_active = false;
+              u_state.waiting_for_initial_summary_end = false;
+              u_state.waiting_for_initial_position_end = false;
+              u_state.current_summary_req_id = None; // Clear ID on timeout
 
-    self.message_broker.send_message(&position_msg)?;
-
-    let wait_timeout = Duration::from_secs(10); // Shorter timeout for positions only?
-    let start_time = std::time::Instant::now();
-
-    { // Re-lock state for waiting
-      let mut r_state = self.refresh_state.lock(); // Acquired lock
-
-      // Wait until positions are complete, or timeout
-      while r_state.waiting_for_position_end && start_time.elapsed() < wait_timeout {
-        let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
-        let timeout_result = self.refresh_cond.wait_for(&mut r_state, remaining_timeout); // Waits, re-acquires lock
-
-        if timeout_result.timed_out() { // Checks timeout
-          if r_state.waiting_for_position_end { // Uses r_state
-            warn!("Position refresh timed out waiting for PositionEnd.");
-            r_state.waiting_for_position_end = false; // Uses r_state
-            drop(r_state); // Drops lock
-
-            // Cancel positions request
-            match encoder.encode_cancel_positions() {
-              Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
-              Err(e) => error!("Failed to encode cancel positions msg: {:?}", e),
+              // Set error result
+              result = Err(IBKRError::Timeout("Initial account data fetch timed out".to_string()));
+              // No drop(u_state) here! Let the scope handle it.
+              break; // Exit wait loop
             }
-            return Err(IBKRError::Timeout("Position refresh timed out".to_string())); // Returns
+            // If not timed out, log and continue loop
+            debug!("Initial fetch wait notified. Waiting flags: Summary={}, Position={}", u_state.waiting_for_initial_summary_end, u_state.waiting_for_initial_position_end);
+          } // End while loop
+
+        // After loop, check final state (still holding lock `u_state`)
+        if !timed_out { // Only check consistency if timeout didn't happen inside the loop
+          if u_state.waiting_for_initial_summary_end || u_state.waiting_for_initial_position_end {
+            // This means loop ended, but flags somehow still set (e.g., spurious wakeup?)
+            // Or maybe timeout occurred *after* last check but before this block? Check elapsed time again.
+            if start_time.elapsed() >= wait_timeout {
+               warn!("Initial fetch loop finished but flags not cleared and timeout elapsed. Resetting.");
+               timed_out = true; // Mark as timed out for logic below
+               result = Err(IBKRError::Timeout("Initial account fetch timed out (consistency check)".to_string()));
+               cancel_req_id_on_timeout = u_state.current_summary_req_id; // Store ID for cancellation
+            } else {
+               // This path is less likely, maybe a race or spurious wakeup?
+               warn!("Initial fetch loop finished but flags not cleared (Summary={}, Position={}). Resetting.", u_state.waiting_for_initial_summary_end, u_state.waiting_for_initial_position_end);
+               result = Err(IBKRError::InternalError("Initial fetch state inconsistency after wait".to_string()));
+            }
+            // Reset state fully on any error discovered here
+            u_state.is_initial_fetch_active = false;
+            u_state.waiting_for_initial_summary_end = false;
+            u_state.waiting_for_initial_position_end = false;
+            u_state.is_initial_fetch_active = false;
+            u_state.waiting_for_initial_summary_end = false;
+            u_state.waiting_for_initial_position_end = false;
+            u_state.current_summary_req_id = None; // Clear ID on error
           } else {
-            // This branch means timed_out() was true, but waiting_for_position_end was somehow false.
-            // This is unexpected but could happen in race conditions. Log it and break.
-            debug!("Position refresh wait timed out, but condition met concurrently.");
-            break; // Exit loop as the condition we were waiting on is false.
+            // Success path: Loop finished, flags cleared, no timeout detected
+            info!("Initial account data fetch completed successfully.");
+            // Mark subscription as fully active *only on success*
+            self.is_subscribed.store(true, Ordering::SeqCst);
+            u_state.is_initial_fetch_active = false; // Mark fetch as complete
+            // Keep current_summary_req_id for potential cancellation later by stop_account_updates
           }
         }
-        // If not timed out (i.e., notified), just let the loop continue to check the condition again.
-        debug!("Position refresh wait notified. Waiting for PositionEnd? {}", r_state.waiting_for_position_end);
-      } // End while loop
-
-      // After loop, check final state
-      // This block runs if the loop terminated because the condition became false (refresh completed)
-      if r_state.waiting_for_position_end {
-        // This case means loop ended, but flag somehow still set (e.g., timeout occurred *after* last check but before this block)
-        warn!("Position refresh loop finished but flag not cleared. Resetting.");
-        r_state.waiting_for_position_end = false; // Reset flag
-        if start_time.elapsed() >= wait_timeout {
-          return Err(IBKRError::Timeout("Position refresh timed out (consistency check)".to_string()));
-        } else {
-          return Err(IBKRError::InternalError("Position refresh state inconsistency after wait".to_string()));
+        // If timed_out is true (either from loop or consistency check), ensure state is reset
+        if timed_out {
+            u_state.is_initial_fetch_active = false;
+            u_state.waiting_for_initial_summary_end = false;
+            u_state.waiting_for_initial_position_end = false;
+            // current_summary_req_id should already be None if timeout occurred,
+            // but set it again just in case the consistency check path was taken.
+            u_state.current_summary_req_id = None;
         }
-      } else {
-        info!("Position refresh completed successfully.");
+      } // Release lock (`u_state`) here
+
+      // --- Send cancellations outside the lock if a timeout occurred ---
+      if timed_out {
+          if let Some(id) = cancel_req_id_on_timeout {
+              match encoder.encode_cancel_account_summary(id) {
+                  Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
+                  Err(e) => error!("Failed to encode cancel summary msg on timeout: {:?}", e),
+              }
+          }
+          match encoder.encode_cancel_positions() {
+              Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
+              Err(e) => error!("Failed to encode cancel positions msg on timeout: {:?}", e),
+          }
       }
-    } // Release lock (implicit drop)
+    } // End if initial_fetch_started
 
-    Ok(())
-  } // End refresh_positions function
+    result // Return Ok(()) on success, or Err(IBKRError::Timeout/InternalError) on failure
+  } // End subscribe_account_updates function
 
 
-  pub fn start_background_updates(&self) -> Result<(), IBKRError> {
-    if self.is_subscribed.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
-      warn!("Attempted to start background updates when already subscribed.");
-      return Ok(()); // Or return an error like AlreadyRunning
+  /// Stops receiving continuous updates for account summary and positions.
+  pub fn stop_account_updates(&self) -> Result<(), IBKRError> {
+    // Quick check first
+    if !self.is_subscribed.load(Ordering::Relaxed) {
+      debug!("Not currently subscribed to account updates.");
+      return Ok(());
     }
-    info!("Starting background account updates...");
-    // Get account ID safely - use default if empty which might be intended for some setups
-    let account_id = self.account_state.read().account_id.clone();
-    if account_id.is_empty() {
-      warn!("Attempting to start background updates but account ID is not yet known. Using empty account code.");
-    }
+
+    info!("Attempting to stop account updates...");
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
-    // Subscribe=true, pass account_id (can be empty)
-    let msg = encoder.encode_request_account_data(true, &account_id)?;
-    self.message_broker.send_message(&msg)
+    let summary_req_id_to_cancel;
 
-  }
+    { // Scope for lock
+      let mut u_state = self.update_state.lock();
 
-  pub fn stop_background_updates(&self) -> Result<(), IBKRError> {
-    if self.is_subscribed.compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst).is_err() {
-      warn!("Attempted to stop background updates when not subscribed.");
-      return Ok(()); // Or return an error like NotRunning
+      // Double check subscription status after lock
+      if !self.is_subscribed.load(Ordering::SeqCst) {
+        debug!("Subscription stopped concurrently.");
+        return Ok(());
+      }
+
+      // Clear subscription flag first
+      self.is_subscribed.store(false, Ordering::SeqCst);
+
+      // Get the summary request ID to cancel it
+      summary_req_id_to_cancel = u_state.current_summary_req_id.take(); // Take ownership and clear from state
+
+      // Reset any lingering initial fetch flags (shouldn't be active, but just in case)
+      u_state.is_initial_fetch_active = false;
+      u_state.waiting_for_initial_summary_end = false;
+      u_state.waiting_for_initial_position_end = false;
+
+    } // Release lock
+
+    // Send cancellation messages outside the lock
+    let mut cancel_errors = Vec::new();
+
+    if let Some(req_id) = summary_req_id_to_cancel {
+      info!("Sending cancel account summary request (ReqID: {})", req_id);
+      match encoder.encode_cancel_account_summary(req_id) {
+        Ok(cancel_msg) => {
+          if let Err(e) = self.message_broker.send_message(&cancel_msg) {
+            error!("Failed to send cancel account summary request: {:?}", e);
+            cancel_errors.push(e);
+          }
+        },
+        Err(e) => {
+          error!("Failed to encode cancel account summary request: {:?}", e);
+          cancel_errors.push(e);
+        }
+      }
+    } else {
+      warn!("No active summary request ID found to cancel.");
     }
-    info!("Stopping background account updates...");
-    // Get account ID safely - use default if empty
-    let account_id = self.account_state.read().account_id.clone();
-    if account_id.is_empty() {
-      warn!("Attempting to stop background updates but account ID is not known. Using empty account code.");
-    }
-    let server_version = self.message_broker.get_server_version()?;
-    let encoder = Encoder::new(server_version);
-    // Subscribe=false, pass account_id (can be empty)
-    let msg = encoder.encode_request_account_data(false, &account_id)?;
-    self.message_broker.send_message(&msg)
 
+    info!("Sending cancel positions request");
+    match encoder.encode_cancel_positions() {
+      Ok(cancel_msg) => {
+        if let Err(e) = self.message_broker.send_message(&cancel_msg) {
+          error!("Failed to send cancel positions request: {:?}", e);
+          cancel_errors.push(e);
+        }
+      },
+      Err(e) => {
+        error!("Failed to encode cancel positions request: {:?}", e);
+        cancel_errors.push(e);
+      }
+    }
+
+    if cancel_errors.is_empty() {
+      info!("Account updates stopped successfully.");
+      Ok(())
+    } else {
+      // Combine errors? For now, return the first one.
+      Err(cancel_errors.remove(0))
+    }
   }
 
 
@@ -720,22 +822,21 @@ impl AccountHandler for AccountManager {
 
   fn position_end(&self) {
     debug!("Handler: Position End");
-    let mut r_state = self.refresh_state.lock();
-    // Optional: Check if r_state.is_poisoned()
+    let mut u_state = self.update_state.lock();
 
-    if r_state.waiting_for_position_end {
-      info!("PositionEnd received, marking position refresh as complete.");
-      r_state.waiting_for_position_end = false;
-      // Check if this was the *last* thing we were waiting for
-      if !r_state.waiting_for_summary_end {
-        info!("PositionEnd: All refresh operations complete. Notifying waiter.");
-        self.refresh_cond.notify_all();
+    if u_state.is_initial_fetch_active && u_state.waiting_for_initial_position_end {
+      info!("PositionEnd received during initial fetch, marking positions as complete.");
+      u_state.waiting_for_initial_position_end = false;
+      // Check if this was the *last* thing we were waiting for during initial fetch
+      if !u_state.waiting_for_initial_summary_end {
+        info!("PositionEnd: Initial fetch complete. Notifying waiter.");
+        self.update_cond.notify_all();
       } else {
-        info!("PositionEnd: Still waiting for SummaryEnd.");
+        info!("PositionEnd: Still waiting for initial SummaryEnd.");
       }
     } else {
-      // This can happen normally during background updates if not in a blocking refresh call
-      debug!("PositionEnd received but not currently waiting for it (e.g., during background updates or outside a refresh).");
+      // Received during continuous updates or when not actively fetching
+      debug!("PositionEnd received outside of initial fetch.");
     }
   }
 
@@ -748,34 +849,37 @@ impl AccountHandler for AccountManager {
 
   fn account_summary_end(&self, req_id: i32) {
     debug!("Handler: Account Summary End: ReqId={}", req_id);
-    // lock() returns guard directly
-    let mut r_state = self.refresh_state.lock();
+    let mut u_state = self.update_state.lock();
 
-    if r_state.waiting_for_summary_end && r_state.summary_request_id == Some(req_id) {
-      info!("AccountSummaryEnd received for request {}, marking summary refresh as complete.", req_id);
-      r_state.summary_request_id = None; // Clear the ID
-      r_state.waiting_for_summary_end = false;
-      // Check if this was the *last* thing we were waiting for
-      if !r_state.waiting_for_position_end {
-        info!("AccountSummaryEnd: All refresh operations complete. Notifying waiter.");
-        self.refresh_cond.notify_all();
-      } else {
-        info!("AccountSummaryEnd: Still waiting for PositionEnd.");
-      }
-    } else {
-      warn!("AccountSummaryEnd received for ReqID {} but not waiting for it or ID mismatch (Waiting: {:?}, Expected: {:?})",
-            req_id, r_state.waiting_for_summary_end, r_state.summary_request_id);
-      // If we received an unexpected summary end, ensure the waiting flag is cleared if the ID matches
-      // This handles cases where the refresh might have timed out and cancelled, but the end message still arrived.
-      if r_state.summary_request_id == Some(req_id) {
-        warn!("Clearing summary wait flag due to unexpected SummaryEnd for matching ReqID {}", req_id);
-        r_state.waiting_for_summary_end = false;
-        r_state.summary_request_id = None;
-        // Check if this completes the overall refresh now
-        if !r_state.waiting_for_position_end {
-          warn!("Notifying waiter after clearing unexpected SummaryEnd.");
-          self.refresh_cond.notify_all();
+    if u_state.is_initial_fetch_active && u_state.current_summary_req_id == Some(req_id) {
+      if u_state.waiting_for_initial_summary_end {
+        info!("AccountSummaryEnd received for initial fetch request {}, marking summary as complete.", req_id);
+        u_state.waiting_for_initial_summary_end = false;
+        // Check if this was the *last* thing we were waiting for during initial fetch
+        if !u_state.waiting_for_initial_position_end {
+          info!("AccountSummaryEnd: Initial fetch complete. Notifying waiter.");
+          self.update_cond.notify_all();
+        } else {
+          info!("AccountSummaryEnd: Still waiting for initial PositionEnd.");
         }
+      } else {
+        // SummaryEnd received for the correct req_id, but we weren't waiting for it (e.g., already timed out/completed).
+        warn!("AccountSummaryEnd received for initial fetch ReqID {} but not waiting for summary.", req_id);
+      }
+      // Do NOT clear current_summary_req_id here, it's needed for cancellation.
+    } else if u_state.current_summary_req_id == Some(req_id) {
+      // Received during continuous updates for the active subscription ID
+      debug!("AccountSummaryEnd received for ReqID {} during continuous updates.", req_id);
+    } else {
+      // Received for an unknown or outdated request ID
+      warn!("AccountSummaryEnd received for unexpected ReqID {} (Expected: {:?}, Initial Fetch Active: {}).",
+            req_id, u_state.current_summary_req_id, u_state.is_initial_fetch_active);
+      // If it matches an ID we *thought* was active but fetch isn't marked active, maybe reset flags?
+      if u_state.current_summary_req_id == Some(req_id) && !u_state.is_initial_fetch_active {
+        warn!("Clearing lingering wait flags due to unexpected SummaryEnd for matching ReqID {}.", req_id);
+        u_state.waiting_for_initial_summary_end = false;
+        u_state.waiting_for_initial_position_end = false;
+        // Don't notify here as we weren't actively waiting.
       }
     }
   }
@@ -932,19 +1036,25 @@ impl AccountHandler for AccountManager {
         }
       } // Release exec_state lock
 
-      // Check if it's for an account summary request
+      // Check if it's for the active account summary/subscription request
       {
-        let mut r_state = self.refresh_state.lock();
-        if r_state.summary_request_id == Some(req_id) {
-          error!("API Error for account summary request {}: Code={:?}, Msg={}", req_id, code, msg);
-          // Mark the summary part of the refresh as failed
-          r_state.waiting_for_summary_end = false; // Stop waiting for summary
-          r_state.summary_request_id = None; // Clear the ID
-          // Notify the refresh waiter
-          self.refresh_cond.notify_all();
-          return; // Handled as summary error
+        let mut u_state = self.update_state.lock();
+        if u_state.current_summary_req_id == Some(req_id) {
+          error!("API Error for account subscription/summary request {}: Code={:?}, Msg={}", req_id, code, msg);
+          // If this happens during initial fetch, mark it as failed and notify waiter
+          if u_state.is_initial_fetch_active {
+            u_state.waiting_for_initial_summary_end = false; // Stop waiting
+            u_state.waiting_for_initial_position_end = false; // Stop waiting for positions too
+            u_state.is_initial_fetch_active = false; // Mark fetch as failed/inactive
+            self.update_cond.notify_all(); // Notify the subscribe waiter about the error
+          }
+          // Regardless of initial fetch, clear the problematic request ID
+          u_state.current_summary_req_id = None;
+          // Mark as unsubscribed since the request failed
+          self.is_subscribed.store(false, Ordering::SeqCst);
+          return; // Handled as account subscription error
         }
-      } // Release r_state lock
+      } // Release u_state lock
     }
 
     // If not matched to a specific request, log as a general account error

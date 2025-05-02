@@ -112,7 +112,7 @@ mod test_cases {
     let acct_mgr = client.account();
 
     info!("Requesting full account refresh...");
-    match acct_mgr.refresh() {
+    match acct_mgr.subscribe_account_updates() {
       Ok(_) => info!("Account refresh request completed."),
       Err(IBKRError::Timeout(msg)) => {
         warn!("Account refresh timed out: {}. Proceeding with potentially stale data.", msg);
@@ -199,7 +199,6 @@ mod test_cases {
     // Verify Position Exists
     info!("Verifying position exists after BUY...");
     std::thread::sleep(Duration::from_secs(3)); // Allow account data propagation
-    acct_mgr.refresh_positions().context("Failed to refresh positions after BUY")?;
     match acct_mgr.list_open_positions()?.iter().find(|p| p.contract.symbol == "SPY") {
       Some(pos) if (pos.quantity - 1.0).abs() < f64::EPSILON => info!("Verified position exists: SPY Quantity = {}", pos.quantity),
       Some(pos) => {
@@ -237,10 +236,6 @@ mod test_cases {
     // Verify Position Closed
     info!("Verifying position closed after SELL...");
     std::thread::sleep(Duration::from_secs(3)); // Allow account data propagation
-    if let Err(e) = acct_mgr.refresh_positions() {
-      warn!("Failed to refresh positions after SELL: {:?}. Manual verification may be needed.", e);
-      // Continue to check last known state from memory
-    }
     match acct_mgr.list_open_positions()?.iter().find(|p| p.contract.symbol == "SPY") {
       Some(pos) if pos.quantity.abs() < f64::EPSILON => {
         info!("Verified position closed (Zero Quantity). Test successful.");
@@ -633,10 +628,6 @@ mod test_cases {
     let acct_mgr = client.account();
     std::thread::sleep(Duration::from_secs(1)); // Small delay before check
 
-    if let Err(e) = acct_mgr.refresh_positions() {
-      error!("Cleanup: Failed to refresh positions: {:?}", e);
-      // Don't return error, cleanup is best-effort
-    }
     // Use last known state even if refresh failed
     let positions = match acct_mgr.list_open_positions() {
       Ok(p) => p,
@@ -736,19 +727,7 @@ mod test_cases {
     }
 
     // 2. Refresh account details (summary & positions)
-    info!("Refreshing account details after cancellation attempts...");
-    match acct_mgr.refresh() {
-      Ok(_) => info!("Account refresh request completed."),
-      Err(IBKRError::Timeout(msg)) => {
-        warn!("Account refresh timed out: {}. Proceeding with potentially stale data.", msg);
-      }
-      Err(e) => {
-        error!("Account refresh failed critically: {:?}", e);
-        // Don't return error yet, try listing positions anyway
-        cancellation_errors.push(format!("Account refresh failed: {:?}", e));
-      }
-    }
-    // Allow time for potential background updates or processing after refresh signal
+    // Updates come every 3 minutes.
     std::thread::sleep(Duration::from_millis(500));
 
     // 3. List final positions

@@ -1531,18 +1531,20 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn encode_request_account_data(&self, subscribe: bool, account_code: &str) -> Result<Vec<u8>, IBKRError> {
-    debug!("Encoding request account data: Subscribe={}, Account={}", subscribe, account_code);
-    let mut cursor = self.start_encoding(OutgoingMessageType::ReqAccountData as i32)?;
-    let version = 2;
-    self.write_int_to_cursor(&mut cursor, version)?;
-    self.write_bool_to_cursor(&mut cursor, subscribe)?;
-    // Account code field added in version 2 / server version 9
-    if self.server_version >= 9 {
-      self.write_str_to_cursor(&mut cursor, account_code)?; // Can be empty for default
-    }
-    Ok(self.finish_encoding(cursor))
-  }
+  // NOTE: reqAccountData is deprecated. Use reqAccountSummary and reqPositions instead.
+  // pub fn encode_request_account_data(&self, subscribe: bool, account_code: &str) -> Result<Vec<u8>, IBKRError> {
+  //   debug!("Encoding request account data: Subscribe={}, Account={}", subscribe, account_code);
+  //   let mut cursor = self.start_encoding(OutgoingMessageType::ReqAccountData as i32)?;
+  //   let version = 2;
+  //   self.write_int_to_cursor(&mut cursor, version)?;
+  //   self.write_bool_to_cursor(&mut cursor, subscribe)?;
+  //   // Account code field added in version 2 / server version 9
+  //   if self.server_version >= 9 {
+  //     self.write_str_to_cursor(&mut cursor, account_code)?; // Can be empty for default
+  //   }
+  //   Ok(self.finish_encoding(cursor))
+  // }
+
   pub fn encode_request_contract_data(&self, req_id: i32, contract: &Contract) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request contract data: ReqID={}", req_id);
     if self.server_version < 4 {
