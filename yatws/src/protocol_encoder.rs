@@ -516,12 +516,23 @@ impl Encoder {
     debug!("Encoding cancel order message for order ID {}", order_id);
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelOrder as i32)?;
     // Version 1 (implicit by field count before MANUAL_ORDER_TIME)
-    let version = 2;
+    let version = 1;
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, order_id)?;
 
-    // Usually empty for cancels unless overriding a specific manual timestamp
-    self.write_str_to_cursor(&mut cursor, "")?;
+    if self.server_version >= min_server_ver::MANUAL_ORDER_TIME {
+      let manual_cancel_order_time = "";
+      self.write_str_to_cursor(&mut cursor, manual_cancel_order_time)?;
+    }
+
+    if self.server_version >= min_server_ver::RFQ_FIELDS {
+      let ext_operator = "";
+      self.write_str_to_cursor(&mut cursor, ext_operator)?;
+      let exteral_user_id = "";
+      self.write_str_to_cursor(&mut cursor, external_user_id)?;
+      let manual_order_indicator = "";
+      self.write_str_to_cursor(&mut cursor, manual_order_indicator)?;
+    }
 
     Ok(self.finish_encoding(cursor))
   }
