@@ -4,11 +4,11 @@
 use std::io::Cursor;
 use crate::base::IBKRError;
 use crate::contract::{Contract, SecType, ComboLeg};
-use crate::order::{OrderRequest, OrderType};
+use crate::order::{OrderRequest, OrderType, OrderCancel};
 use crate::account::ExecutionFilter;
 use crate::data_wsh::WshEventDataRequest;
 use crate::min_server_ver::min_server_ver;
-use chrono::{DateTime, Utc, SecondsFormat};
+use chrono::{DateTime, Utc};
 use log::{debug, trace, warn};
 use std::io::Write;
 
@@ -16,44 +16,44 @@ use std::io::Write;
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutgoingMessageType {
-  RequestMarketData = 1,
-  CancelMarketData = 2,
+  ReqMktData = 1,
+  CancelMktData = 2,
   PlaceOrder = 3,
   CancelOrder = 4,
-  RequestOpenOrders = 5,
-  RequestAccountData = 6,
-  RequestExecutions = 7,
-  RequestIds = 8,
-  RequestContractData = 9,
-  RequestMarketDepth = 10,
-  CancelMarketDepth = 11,
-  RequestNewsBulletins = 12,
+  ReqOpenOrders = 5,
+  ReqAccountData = 6,
+  ReqExecutions = 7,
+  ReqIds = 8,
+  ReqContractData = 9,
+  ReqMktDepth = 10,
+  CancelMktDepth = 11,
+  ReqNewsBulletins = 12,
   CancelNewsBulletins = 13,
-  SetServerLogLevel = 14,
-  RequestAutoOpenOrders = 15,
-  RequestAllOpenOrders = 16,
-  RequestManagedAccts = 17,
-  RequestFinancialAdvisor = 18,
-  ReplaceFinancialAdvisor = 19,
-  RequestHistoricalData = 20,
+  SetServerLoglevel = 14,
+  ReqAutoOpenOrders = 15,
+  ReqAllOpenOrders = 16,
+  ReqManagedAccts = 17,
+  ReqFa = 18, // Financial Advisor
+  ReplaceFa = 19, // Financial Advisor
+  ReqHistoricalData = 20,
   ExerciseOptions = 21,
-  RequestScannerSubscription = 22,
+  ReqScannerSubscription = 22,
   CancelScannerSubscription = 23,
-  RequestScannerParameters = 24,
+  ReqScannerParameters = 24,
   CancelHistoricalData = 25,
-  RequestCurrentTime = 49,
-  RequestRealTimeBars = 50,
+  ReqCurrentTime = 49,
+  ReqRealTimeBars = 50,
   CancelRealTimeBars = 51,
-  RequestFundamentalData = 52,
+  ReqFundamentalData = 52,
   CancelFundamentalData = 53,
-  RequestCalcImpliedVolat = 54,
-  RequestCalcOptionPrice = 55,
+  ReqCalcImpliedVolat = 54,
+  ReqCalcOptionPrice = 55,
   CancelCalcImpliedVolat = 56,
   CancelCalcOptionPrice = 57,
-  RequestGlobalCancel = 58,
-  RequestMarketDataType = 59,
-  RequestPositions = 61,
-  RequestAccountSummary = 62,
+  ReqGlobalCancel = 58,
+  ReqMarketDataType = 59,
+  ReqPositions = 61,
+  ReqAccountSummary = 62,
   CancelAccountSummary = 63,
   CancelPositions = 64,
   VerifyRequest = 65,
@@ -65,37 +65,37 @@ pub enum OutgoingMessageType {
   StartApi = 71,
   VerifyAndAuthRequest = 72,
   VerifyAndAuthMessage = 73,
-  RequestPositionsMulti = 74,
+  ReqPositionsMulti = 74,
   CancelPositionsMulti = 75,
-  RequestAccountUpdatesMulti = 76,
+  ReqAccountUpdatesMulti = 76,
   CancelAccountUpdatesMulti = 77,
-  RequestSecDefOptParams = 78,
-  RequestSoftDollarTiers = 79,
-  RequestFamilyCodes = 80,
-  RequestMatchingSymbols = 81,
-  RequestMktDepthExchanges = 82,
-  RequestSmartComponents = 83,
-  RequestNewsArticle = 84,
-  RequestNewsProviders = 85,
-  RequestHistoricalNews = 86,
-  RequestHeadTimestamp = 87,
-  RequestHistogramData = 88,
+  ReqSecDefOptParams = 78,
+  ReqSoftDollarTiers = 79,
+  ReqFamilyCodes = 80,
+  ReqMatchingSymbols = 81,
+  ReqMktDepthExchanges = 82,
+  ReqSmartComponents = 83,
+  ReqNewsArticle = 84,
+  ReqNewsProviders = 85,
+  ReqHistoricalNews = 86,
+  ReqHeadTimestamp = 87,
+  ReqHistogramData = 88,
   CancelHistogramData = 89,
   CancelHeadTimestamp = 90,
-  RequestMarketRule = 91,
-  RequestPnL = 92,
-  CancelPnL = 93,
-  RequestPnLSingle = 94,
-  CancelPnLSingle = 95,
-  RequestHistoricalTicks = 96,
-  RequestTickByTickData = 97,
+  ReqMarketRule = 91,
+  ReqPnl = 92,
+  CancelPnl = 93,
+  ReqPnlSingle = 94,
+  CancelPnlSingle = 95,
+  ReqHistoricalTicks = 96,
+  ReqTickByTickData = 97,
   CancelTickByTickData = 98,
-  RequestCompletedOrders = 99,
-  RequestWshMetaData = 100,
+  ReqCompletedOrders = 99,
+  ReqWshMetaData = 100,
   CancelWshMetaData = 101,
-  RequestWshEventData = 102,
+  ReqWshEventData = 102,
   CancelWshEventData = 103,
-  RequestUserInfo = 104,
+  ReqUserInfo = 104,
 }
 
 /// Identifies an outgoing message type based on its raw byte payload prefix.
@@ -137,44 +137,44 @@ pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
 
   // Map the integer ID to a static string name using the OutgoingMessageType enum
   match OutgoingMessageType::try_from(type_id) {
-    Ok(OutgoingMessageType::RequestMarketData) => Some("REQ_MKT_DATA"),
-    Ok(OutgoingMessageType::CancelMarketData) => Some("CANCEL_MKT_DATA"),
+    Ok(OutgoingMessageType::ReqMktData) => Some("REQ_MKT_DATA"),
+    Ok(OutgoingMessageType::CancelMktData) => Some("CANCEL_MKT_DATA"),
     Ok(OutgoingMessageType::PlaceOrder) => Some("PLACE_ORDER"),
     Ok(OutgoingMessageType::CancelOrder) => Some("CANCEL_ORDER"),
-    Ok(OutgoingMessageType::RequestOpenOrders) => Some("REQ_OPEN_ORDERS"),
-    Ok(OutgoingMessageType::RequestAccountData) => Some("REQ_ACCOUNT_DATA"),
-    Ok(OutgoingMessageType::RequestExecutions) => Some("REQ_EXECUTIONS"),
-    Ok(OutgoingMessageType::RequestIds) => Some("REQ_IDS"),
-    Ok(OutgoingMessageType::RequestContractData) => Some("REQ_CONTRACT_DATA"),
-    Ok(OutgoingMessageType::RequestMarketDepth) => Some("REQ_MKT_DEPTH"),
-    Ok(OutgoingMessageType::CancelMarketDepth) => Some("CANCEL_MKT_DEPTH"),
-    Ok(OutgoingMessageType::RequestNewsBulletins) => Some("REQ_NEWS_BULLETINS"),
+    Ok(OutgoingMessageType::ReqOpenOrders) => Some("REQ_OPEN_ORDERS"),
+    Ok(OutgoingMessageType::ReqAccountData) => Some("REQ_ACCOUNT_DATA"),
+    Ok(OutgoingMessageType::ReqExecutions) => Some("REQ_EXECUTIONS"),
+    Ok(OutgoingMessageType::ReqIds) => Some("REQ_IDS"),
+    Ok(OutgoingMessageType::ReqContractData) => Some("REQ_CONTRACT_DATA"),
+    Ok(OutgoingMessageType::ReqMktDepth) => Some("REQ_MKT_DEPTH"),
+    Ok(OutgoingMessageType::CancelMktDepth) => Some("CANCEL_MKT_DEPTH"),
+    Ok(OutgoingMessageType::ReqNewsBulletins) => Some("REQ_NEWS_BULLETINS"),
     Ok(OutgoingMessageType::CancelNewsBulletins) => Some("CANCEL_NEWS_BULLETINS"),
-    Ok(OutgoingMessageType::SetServerLogLevel) => Some("SET_SERVER_LOGLEVEL"),
-    Ok(OutgoingMessageType::RequestAutoOpenOrders) => Some("REQ_AUTO_OPEN_ORDERS"),
-    Ok(OutgoingMessageType::RequestAllOpenOrders) => Some("REQ_ALL_OPEN_ORDERS"),
-    Ok(OutgoingMessageType::RequestManagedAccts) => Some("REQ_MANAGED_ACCTS"),
-    Ok(OutgoingMessageType::RequestFinancialAdvisor) => Some("REQ_FA"),
-    Ok(OutgoingMessageType::ReplaceFinancialAdvisor) => Some("REPLACE_FA"),
-    Ok(OutgoingMessageType::RequestHistoricalData) => Some("REQ_HISTORICAL_DATA"),
+    Ok(OutgoingMessageType::SetServerLoglevel) => Some("SET_SERVER_LOGLEVEL"),
+    Ok(OutgoingMessageType::ReqAutoOpenOrders) => Some("REQ_AUTO_OPEN_ORDERS"),
+    Ok(OutgoingMessageType::ReqAllOpenOrders) => Some("REQ_ALL_OPEN_ORDERS"),
+    Ok(OutgoingMessageType::ReqManagedAccts) => Some("REQ_MANAGED_ACCTS"),
+    Ok(OutgoingMessageType::ReqFa) => Some("REQ_FA"),
+    Ok(OutgoingMessageType::ReplaceFa) => Some("REPLACE_FA"),
+    Ok(OutgoingMessageType::ReqHistoricalData) => Some("REQ_HISTORICAL_DATA"),
     Ok(OutgoingMessageType::ExerciseOptions) => Some("EXERCISE_OPTIONS"),
-    Ok(OutgoingMessageType::RequestScannerSubscription) => Some("REQ_SCANNER_SUBSCRIPTION"),
+    Ok(OutgoingMessageType::ReqScannerSubscription) => Some("REQ_SCANNER_SUBSCRIPTION"),
     Ok(OutgoingMessageType::CancelScannerSubscription) => Some("CANCEL_SCANNER_SUBSCRIPTION"),
-    Ok(OutgoingMessageType::RequestScannerParameters) => Some("REQ_SCANNER_PARAMETERS"),
+    Ok(OutgoingMessageType::ReqScannerParameters) => Some("REQ_SCANNER_PARAMETERS"),
     Ok(OutgoingMessageType::CancelHistoricalData) => Some("CANCEL_HISTORICAL_DATA"),
-    Ok(OutgoingMessageType::RequestCurrentTime) => Some("REQ_CURRENT_TIME"),
-    Ok(OutgoingMessageType::RequestRealTimeBars) => Some("REQ_REAL_TIME_BARS"),
+    Ok(OutgoingMessageType::ReqCurrentTime) => Some("REQ_CURRENT_TIME"),
+    Ok(OutgoingMessageType::ReqRealTimeBars) => Some("REQ_REAL_TIME_BARS"),
     Ok(OutgoingMessageType::CancelRealTimeBars) => Some("CANCEL_REAL_TIME_BARS"),
-    Ok(OutgoingMessageType::RequestFundamentalData) => Some("REQ_FUNDAMENTAL_DATA"),
+    Ok(OutgoingMessageType::ReqFundamentalData) => Some("REQ_FUNDAMENTAL_DATA"),
     Ok(OutgoingMessageType::CancelFundamentalData) => Some("CANCEL_FUNDAMENTAL_DATA"),
-    Ok(OutgoingMessageType::RequestCalcImpliedVolat) => Some("REQ_CALC_IMPLIED_VOLAT"),
-    Ok(OutgoingMessageType::RequestCalcOptionPrice) => Some("REQ_CALC_OPTION_PRICE"),
+    Ok(OutgoingMessageType::ReqCalcImpliedVolat) => Some("REQ_CALC_IMPLIED_VOLAT"),
+    Ok(OutgoingMessageType::ReqCalcOptionPrice) => Some("REQ_CALC_OPTION_PRICE"),
     Ok(OutgoingMessageType::CancelCalcImpliedVolat) => Some("CANCEL_CALC_IMPLIED_VOLAT"),
     Ok(OutgoingMessageType::CancelCalcOptionPrice) => Some("CANCEL_CALC_OPTION_PRICE"),
-    Ok(OutgoingMessageType::RequestGlobalCancel) => Some("REQ_GLOBAL_CANCEL"),
-    Ok(OutgoingMessageType::RequestMarketDataType) => Some("REQ_MARKET_DATA_TYPE"),
-    Ok(OutgoingMessageType::RequestPositions) => Some("REQ_POSITIONS"),
-    Ok(OutgoingMessageType::RequestAccountSummary) => Some("REQ_ACCOUNT_SUMMARY"),
+    Ok(OutgoingMessageType::ReqGlobalCancel) => Some("REQ_GLOBAL_CANCEL"),
+    Ok(OutgoingMessageType::ReqMarketDataType) => Some("REQ_MARKET_DATA_TYPE"),
+    Ok(OutgoingMessageType::ReqPositions) => Some("REQ_POSITIONS"),
+    Ok(OutgoingMessageType::ReqAccountSummary) => Some("REQ_ACCOUNT_SUMMARY"),
     Ok(OutgoingMessageType::CancelAccountSummary) => Some("CANCEL_ACCOUNT_SUMMARY"),
     Ok(OutgoingMessageType::CancelPositions) => Some("CANCEL_POSITIONS"),
     Ok(OutgoingMessageType::VerifyRequest) => Some("VERIFY_REQUEST"),
@@ -183,41 +183,40 @@ pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
     Ok(OutgoingMessageType::SubscribeToGroupEvents) => Some("SUBSCRIBE_TO_GROUP_EVENTS"),
     Ok(OutgoingMessageType::UpdateDisplayGroup) => Some("UPDATE_DISPLAY_GROUP"),
     Ok(OutgoingMessageType::UnsubscribeFromGroupEvents) => Some("UNSUBSCRIBE_FROM_GROUP_EVENTS"),
-    Ok(OutgoingMessageType::StartApi) => Some("H3_START_API"), // Use H3 alias
+    Ok(OutgoingMessageType::StartApi) => Some("START_API"), // Changed from H3_START_API
     Ok(OutgoingMessageType::VerifyAndAuthRequest) => Some("VERIFY_AND_AUTH_REQUEST"),
     Ok(OutgoingMessageType::VerifyAndAuthMessage) => Some("VERIFY_AND_AUTH_MESSAGE"),
-    Ok(OutgoingMessageType::RequestPositionsMulti) => Some("REQ_POSITIONS_MULTI"),
+    Ok(OutgoingMessageType::ReqPositionsMulti) => Some("REQ_POSITIONS_MULTI"),
     Ok(OutgoingMessageType::CancelPositionsMulti) => Some("CANCEL_POSITIONS_MULTI"),
-    Ok(OutgoingMessageType::RequestAccountUpdatesMulti) => Some("REQ_ACCOUNT_UPDATES_MULTI"),
+    Ok(OutgoingMessageType::ReqAccountUpdatesMulti) => Some("REQ_ACCOUNT_UPDATES_MULTI"),
     Ok(OutgoingMessageType::CancelAccountUpdatesMulti) => Some("CANCEL_ACCOUNT_UPDATES_MULTI"),
-    Ok(OutgoingMessageType::RequestSecDefOptParams) => Some("REQ_SEC_DEF_OPT_PARAMS"),
-    Ok(OutgoingMessageType::RequestSoftDollarTiers) => Some("REQ_SOFT_DOLLAR_TIERS"),
-    Ok(OutgoingMessageType::RequestFamilyCodes) => Some("REQ_FAMILY_CODES"),
-    Ok(OutgoingMessageType::RequestMatchingSymbols) => Some("REQ_MATCHING_SYMBOLS"),
-    Ok(OutgoingMessageType::RequestMktDepthExchanges) => Some("REQ_MKT_DEPTH_EXCHANGES"),
-    Ok(OutgoingMessageType::RequestSmartComponents) => Some("REQ_SMART_COMPONENTS"),
-    Ok(OutgoingMessageType::RequestNewsArticle) => Some("REQ_NEWS_ARTICLE"),
-    Ok(OutgoingMessageType::RequestNewsProviders) => Some("REQ_NEWS_PROVIDERS"),
-    Ok(OutgoingMessageType::RequestHistoricalNews) => Some("REQ_HISTORICAL_NEWS"),
-    Ok(OutgoingMessageType::RequestHeadTimestamp) => Some("REQ_HEAD_TIMESTAMP"),
-    Ok(OutgoingMessageType::RequestHistogramData) => Some("REQ_HISTOGRAM_DATA"),
+    Ok(OutgoingMessageType::ReqSecDefOptParams) => Some("REQ_SEC_DEF_OPT_PARAMS"),
+    Ok(OutgoingMessageType::ReqSoftDollarTiers) => Some("REQ_SOFT_DOLLAR_TIERS"),
+    Ok(OutgoingMessageType::ReqFamilyCodes) => Some("REQ_FAMILY_CODES"),
+    Ok(OutgoingMessageType::ReqMatchingSymbols) => Some("REQ_MATCHING_SYMBOLS"),
+    Ok(OutgoingMessageType::ReqMktDepthExchanges) => Some("REQ_MKT_DEPTH_EXCHANGES"),
+    Ok(OutgoingMessageType::ReqSmartComponents) => Some("REQ_SMART_COMPONENTS"),
+    Ok(OutgoingMessageType::ReqNewsArticle) => Some("REQ_NEWS_ARTICLE"),
+    Ok(OutgoingMessageType::ReqNewsProviders) => Some("REQ_NEWS_PROVIDERS"),
+    Ok(OutgoingMessageType::ReqHistoricalNews) => Some("REQ_HISTORICAL_NEWS"),
+    Ok(OutgoingMessageType::ReqHeadTimestamp) => Some("REQ_HEAD_TIMESTAMP"),
+    Ok(OutgoingMessageType::ReqHistogramData) => Some("REQ_HISTOGRAM_DATA"),
     Ok(OutgoingMessageType::CancelHistogramData) => Some("CANCEL_HISTOGRAM_DATA"),
     Ok(OutgoingMessageType::CancelHeadTimestamp) => Some("CANCEL_HEAD_TIMESTAMP"),
-    Ok(OutgoingMessageType::RequestMarketRule) => Some("REQ_MARKET_RULE"),
-    Ok(OutgoingMessageType::RequestPnL) => Some("REQ_PNL"),
-    Ok(OutgoingMessageType::CancelPnL) => Some("CANCEL_PNL"),
-    Ok(OutgoingMessageType::RequestPnLSingle) => Some("REQ_PNL_SINGLE"),
-    Ok(OutgoingMessageType::CancelPnLSingle) => Some("CANCEL_PNL_SINGLE"),
-    Ok(OutgoingMessageType::RequestHistoricalTicks) => Some("REQ_HISTORICAL_TICKS"),
-    Ok(OutgoingMessageType::RequestTickByTickData) => Some("REQ_TICK_BY_TICK_DATA"),
+    Ok(OutgoingMessageType::ReqMarketRule) => Some("REQ_MARKET_RULE"),
+    Ok(OutgoingMessageType::ReqPnl) => Some("REQ_PNL"),
+    Ok(OutgoingMessageType::CancelPnl) => Some("CANCEL_PNL"),
+    Ok(OutgoingMessageType::ReqPnlSingle) => Some("REQ_PNL_SINGLE"),
+    Ok(OutgoingMessageType::CancelPnlSingle) => Some("CANCEL_PNL_SINGLE"),
+    Ok(OutgoingMessageType::ReqHistoricalTicks) => Some("REQ_HISTORICAL_TICKS"),
+    Ok(OutgoingMessageType::ReqTickByTickData) => Some("REQ_TICK_BY_TICK_DATA"),
     Ok(OutgoingMessageType::CancelTickByTickData) => Some("CANCEL_TICK_BY_TICK_DATA"),
-    Ok(OutgoingMessageType::RequestCompletedOrders) => Some("REQ_COMPLETED_ORDERS"),
-    Ok(OutgoingMessageType::RequestWshMetaData) => Some("REQ_WSH_META_DATA"),
+    Ok(OutgoingMessageType::ReqCompletedOrders) => Some("REQ_COMPLETED_ORDERS"),
+    Ok(OutgoingMessageType::ReqWshMetaData) => Some("REQ_WSH_META_DATA"),
     Ok(OutgoingMessageType::CancelWshMetaData) => Some("CANCEL_WSH_META_DATA"),
-    Ok(OutgoingMessageType::RequestWshEventData) => Some("REQ_WSH_EVENT_DATA"),
+    Ok(OutgoingMessageType::ReqWshEventData) => Some("REQ_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::CancelWshEventData) => Some("CANCEL_WSH_EVENT_DATA"),
-    Ok(OutgoingMessageType::RequestUserInfo) => Some("REQ_USER_INFO"),
-    // Add any missing outgoing message IDs here
+    Ok(OutgoingMessageType::ReqUserInfo) => Some("REQ_USER_INFO"),
     Err(_) => None, // Unknown type ID
   }
 }
@@ -228,44 +227,44 @@ impl TryFrom<i32> for OutgoingMessageType {
 
   fn try_from(v: i32) -> Result<Self, Self::Error> {
     match v {
-      x if x == OutgoingMessageType::RequestMarketData as i32 => Ok(OutgoingMessageType::RequestMarketData),
-      x if x == OutgoingMessageType::CancelMarketData as i32 => Ok(OutgoingMessageType::CancelMarketData),
+      x if x == OutgoingMessageType::ReqMktData as i32 => Ok(OutgoingMessageType::ReqMktData),
+      x if x == OutgoingMessageType::CancelMktData as i32 => Ok(OutgoingMessageType::CancelMktData),
       x if x == OutgoingMessageType::PlaceOrder as i32 => Ok(OutgoingMessageType::PlaceOrder),
       x if x == OutgoingMessageType::CancelOrder as i32 => Ok(OutgoingMessageType::CancelOrder),
-      x if x == OutgoingMessageType::RequestOpenOrders as i32 => Ok(OutgoingMessageType::RequestOpenOrders),
-      x if x == OutgoingMessageType::RequestAccountData as i32 => Ok(OutgoingMessageType::RequestAccountData),
-      x if x == OutgoingMessageType::RequestExecutions as i32 => Ok(OutgoingMessageType::RequestExecutions),
-      x if x == OutgoingMessageType::RequestIds as i32 => Ok(OutgoingMessageType::RequestIds),
-      x if x == OutgoingMessageType::RequestContractData as i32 => Ok(OutgoingMessageType::RequestContractData),
-      x if x == OutgoingMessageType::RequestMarketDepth as i32 => Ok(OutgoingMessageType::RequestMarketDepth),
-      x if x == OutgoingMessageType::CancelMarketDepth as i32 => Ok(OutgoingMessageType::CancelMarketDepth),
-      x if x == OutgoingMessageType::RequestNewsBulletins as i32 => Ok(OutgoingMessageType::RequestNewsBulletins),
+      x if x == OutgoingMessageType::ReqOpenOrders as i32 => Ok(OutgoingMessageType::ReqOpenOrders),
+      x if x == OutgoingMessageType::ReqAccountData as i32 => Ok(OutgoingMessageType::ReqAccountData),
+      x if x == OutgoingMessageType::ReqExecutions as i32 => Ok(OutgoingMessageType::ReqExecutions),
+      x if x == OutgoingMessageType::ReqIds as i32 => Ok(OutgoingMessageType::ReqIds),
+      x if x == OutgoingMessageType::ReqContractData as i32 => Ok(OutgoingMessageType::ReqContractData),
+      x if x == OutgoingMessageType::ReqMktDepth as i32 => Ok(OutgoingMessageType::ReqMktDepth),
+      x if x == OutgoingMessageType::CancelMktDepth as i32 => Ok(OutgoingMessageType::CancelMktDepth),
+      x if x == OutgoingMessageType::ReqNewsBulletins as i32 => Ok(OutgoingMessageType::ReqNewsBulletins),
       x if x == OutgoingMessageType::CancelNewsBulletins as i32 => Ok(OutgoingMessageType::CancelNewsBulletins),
-      x if x == OutgoingMessageType::SetServerLogLevel as i32 => Ok(OutgoingMessageType::SetServerLogLevel),
-      x if x == OutgoingMessageType::RequestAutoOpenOrders as i32 => Ok(OutgoingMessageType::RequestAutoOpenOrders),
-      x if x == OutgoingMessageType::RequestAllOpenOrders as i32 => Ok(OutgoingMessageType::RequestAllOpenOrders),
-      x if x == OutgoingMessageType::RequestManagedAccts as i32 => Ok(OutgoingMessageType::RequestManagedAccts),
-      x if x == OutgoingMessageType::RequestFinancialAdvisor as i32 => Ok(OutgoingMessageType::RequestFinancialAdvisor),
-      x if x == OutgoingMessageType::ReplaceFinancialAdvisor as i32 => Ok(OutgoingMessageType::ReplaceFinancialAdvisor),
-      x if x == OutgoingMessageType::RequestHistoricalData as i32 => Ok(OutgoingMessageType::RequestHistoricalData),
+      x if x == OutgoingMessageType::SetServerLoglevel as i32 => Ok(OutgoingMessageType::SetServerLoglevel),
+      x if x == OutgoingMessageType::ReqAutoOpenOrders as i32 => Ok(OutgoingMessageType::ReqAutoOpenOrders),
+      x if x == OutgoingMessageType::ReqAllOpenOrders as i32 => Ok(OutgoingMessageType::ReqAllOpenOrders),
+      x if x == OutgoingMessageType::ReqManagedAccts as i32 => Ok(OutgoingMessageType::ReqManagedAccts),
+      x if x == OutgoingMessageType::ReqFa as i32 => Ok(OutgoingMessageType::ReqFa),
+      x if x == OutgoingMessageType::ReplaceFa as i32 => Ok(OutgoingMessageType::ReplaceFa),
+      x if x == OutgoingMessageType::ReqHistoricalData as i32 => Ok(OutgoingMessageType::ReqHistoricalData),
       x if x == OutgoingMessageType::ExerciseOptions as i32 => Ok(OutgoingMessageType::ExerciseOptions),
-      x if x == OutgoingMessageType::RequestScannerSubscription as i32 => Ok(OutgoingMessageType::RequestScannerSubscription),
+      x if x == OutgoingMessageType::ReqScannerSubscription as i32 => Ok(OutgoingMessageType::ReqScannerSubscription),
       x if x == OutgoingMessageType::CancelScannerSubscription as i32 => Ok(OutgoingMessageType::CancelScannerSubscription),
-      x if x == OutgoingMessageType::RequestScannerParameters as i32 => Ok(OutgoingMessageType::RequestScannerParameters),
+      x if x == OutgoingMessageType::ReqScannerParameters as i32 => Ok(OutgoingMessageType::ReqScannerParameters),
       x if x == OutgoingMessageType::CancelHistoricalData as i32 => Ok(OutgoingMessageType::CancelHistoricalData),
-      x if x == OutgoingMessageType::RequestCurrentTime as i32 => Ok(OutgoingMessageType::RequestCurrentTime),
-      x if x == OutgoingMessageType::RequestRealTimeBars as i32 => Ok(OutgoingMessageType::RequestRealTimeBars),
+      x if x == OutgoingMessageType::ReqCurrentTime as i32 => Ok(OutgoingMessageType::ReqCurrentTime),
+      x if x == OutgoingMessageType::ReqRealTimeBars as i32 => Ok(OutgoingMessageType::ReqRealTimeBars),
       x if x == OutgoingMessageType::CancelRealTimeBars as i32 => Ok(OutgoingMessageType::CancelRealTimeBars),
-      x if x == OutgoingMessageType::RequestFundamentalData as i32 => Ok(OutgoingMessageType::RequestFundamentalData),
+      x if x == OutgoingMessageType::ReqFundamentalData as i32 => Ok(OutgoingMessageType::ReqFundamentalData),
       x if x == OutgoingMessageType::CancelFundamentalData as i32 => Ok(OutgoingMessageType::CancelFundamentalData),
-      x if x == OutgoingMessageType::RequestCalcImpliedVolat as i32 => Ok(OutgoingMessageType::RequestCalcImpliedVolat),
-      x if x == OutgoingMessageType::RequestCalcOptionPrice as i32 => Ok(OutgoingMessageType::RequestCalcOptionPrice),
+      x if x == OutgoingMessageType::ReqCalcImpliedVolat as i32 => Ok(OutgoingMessageType::ReqCalcImpliedVolat),
+      x if x == OutgoingMessageType::ReqCalcOptionPrice as i32 => Ok(OutgoingMessageType::ReqCalcOptionPrice),
       x if x == OutgoingMessageType::CancelCalcImpliedVolat as i32 => Ok(OutgoingMessageType::CancelCalcImpliedVolat),
       x if x == OutgoingMessageType::CancelCalcOptionPrice as i32 => Ok(OutgoingMessageType::CancelCalcOptionPrice),
-      x if x == OutgoingMessageType::RequestGlobalCancel as i32 => Ok(OutgoingMessageType::RequestGlobalCancel),
-      x if x == OutgoingMessageType::RequestMarketDataType as i32 => Ok(OutgoingMessageType::RequestMarketDataType),
-      x if x == OutgoingMessageType::RequestPositions as i32 => Ok(OutgoingMessageType::RequestPositions),
-      x if x == OutgoingMessageType::RequestAccountSummary as i32 => Ok(OutgoingMessageType::RequestAccountSummary),
+      x if x == OutgoingMessageType::ReqGlobalCancel as i32 => Ok(OutgoingMessageType::ReqGlobalCancel),
+      x if x == OutgoingMessageType::ReqMarketDataType as i32 => Ok(OutgoingMessageType::ReqMarketDataType),
+      x if x == OutgoingMessageType::ReqPositions as i32 => Ok(OutgoingMessageType::ReqPositions),
+      x if x == OutgoingMessageType::ReqAccountSummary as i32 => Ok(OutgoingMessageType::ReqAccountSummary),
       x if x == OutgoingMessageType::CancelAccountSummary as i32 => Ok(OutgoingMessageType::CancelAccountSummary),
       x if x == OutgoingMessageType::CancelPositions as i32 => Ok(OutgoingMessageType::CancelPositions),
       x if x == OutgoingMessageType::VerifyRequest as i32 => Ok(OutgoingMessageType::VerifyRequest),
@@ -277,37 +276,37 @@ impl TryFrom<i32> for OutgoingMessageType {
       x if x == OutgoingMessageType::StartApi as i32 => Ok(OutgoingMessageType::StartApi),
       x if x == OutgoingMessageType::VerifyAndAuthRequest as i32 => Ok(OutgoingMessageType::VerifyAndAuthRequest),
       x if x == OutgoingMessageType::VerifyAndAuthMessage as i32 => Ok(OutgoingMessageType::VerifyAndAuthMessage),
-      x if x == OutgoingMessageType::RequestPositionsMulti as i32 => Ok(OutgoingMessageType::RequestPositionsMulti),
+      x if x == OutgoingMessageType::ReqPositionsMulti as i32 => Ok(OutgoingMessageType::ReqPositionsMulti),
       x if x == OutgoingMessageType::CancelPositionsMulti as i32 => Ok(OutgoingMessageType::CancelPositionsMulti),
-      x if x == OutgoingMessageType::RequestAccountUpdatesMulti as i32 => Ok(OutgoingMessageType::RequestAccountUpdatesMulti),
+      x if x == OutgoingMessageType::ReqAccountUpdatesMulti as i32 => Ok(OutgoingMessageType::ReqAccountUpdatesMulti),
       x if x == OutgoingMessageType::CancelAccountUpdatesMulti as i32 => Ok(OutgoingMessageType::CancelAccountUpdatesMulti),
-      x if x == OutgoingMessageType::RequestSecDefOptParams as i32 => Ok(OutgoingMessageType::RequestSecDefOptParams),
-      x if x == OutgoingMessageType::RequestSoftDollarTiers as i32 => Ok(OutgoingMessageType::RequestSoftDollarTiers),
-      x if x == OutgoingMessageType::RequestFamilyCodes as i32 => Ok(OutgoingMessageType::RequestFamilyCodes),
-      x if x == OutgoingMessageType::RequestMatchingSymbols as i32 => Ok(OutgoingMessageType::RequestMatchingSymbols),
-      x if x == OutgoingMessageType::RequestMktDepthExchanges as i32 => Ok(OutgoingMessageType::RequestMktDepthExchanges),
-      x if x == OutgoingMessageType::RequestSmartComponents as i32 => Ok(OutgoingMessageType::RequestSmartComponents),
-      x if x == OutgoingMessageType::RequestNewsArticle as i32 => Ok(OutgoingMessageType::RequestNewsArticle),
-      x if x == OutgoingMessageType::RequestNewsProviders as i32 => Ok(OutgoingMessageType::RequestNewsProviders),
-      x if x == OutgoingMessageType::RequestHistoricalNews as i32 => Ok(OutgoingMessageType::RequestHistoricalNews),
-      x if x == OutgoingMessageType::RequestHeadTimestamp as i32 => Ok(OutgoingMessageType::RequestHeadTimestamp),
-      x if x == OutgoingMessageType::RequestHistogramData as i32 => Ok(OutgoingMessageType::RequestHistogramData),
+      x if x == OutgoingMessageType::ReqSecDefOptParams as i32 => Ok(OutgoingMessageType::ReqSecDefOptParams),
+      x if x == OutgoingMessageType::ReqSoftDollarTiers as i32 => Ok(OutgoingMessageType::ReqSoftDollarTiers),
+      x if x == OutgoingMessageType::ReqFamilyCodes as i32 => Ok(OutgoingMessageType::ReqFamilyCodes),
+      x if x == OutgoingMessageType::ReqMatchingSymbols as i32 => Ok(OutgoingMessageType::ReqMatchingSymbols),
+      x if x == OutgoingMessageType::ReqMktDepthExchanges as i32 => Ok(OutgoingMessageType::ReqMktDepthExchanges),
+      x if x == OutgoingMessageType::ReqSmartComponents as i32 => Ok(OutgoingMessageType::ReqSmartComponents),
+      x if x == OutgoingMessageType::ReqNewsArticle as i32 => Ok(OutgoingMessageType::ReqNewsArticle),
+      x if x == OutgoingMessageType::ReqNewsProviders as i32 => Ok(OutgoingMessageType::ReqNewsProviders),
+      x if x == OutgoingMessageType::ReqHistoricalNews as i32 => Ok(OutgoingMessageType::ReqHistoricalNews),
+      x if x == OutgoingMessageType::ReqHeadTimestamp as i32 => Ok(OutgoingMessageType::ReqHeadTimestamp),
+      x if x == OutgoingMessageType::ReqHistogramData as i32 => Ok(OutgoingMessageType::ReqHistogramData),
       x if x == OutgoingMessageType::CancelHistogramData as i32 => Ok(OutgoingMessageType::CancelHistogramData),
       x if x == OutgoingMessageType::CancelHeadTimestamp as i32 => Ok(OutgoingMessageType::CancelHeadTimestamp),
-      x if x == OutgoingMessageType::RequestMarketRule as i32 => Ok(OutgoingMessageType::RequestMarketRule),
-      x if x == OutgoingMessageType::RequestPnL as i32 => Ok(OutgoingMessageType::RequestPnL),
-      x if x == OutgoingMessageType::CancelPnL as i32 => Ok(OutgoingMessageType::CancelPnL),
-      x if x == OutgoingMessageType::RequestPnLSingle as i32 => Ok(OutgoingMessageType::RequestPnLSingle),
-      x if x == OutgoingMessageType::CancelPnLSingle as i32 => Ok(OutgoingMessageType::CancelPnLSingle),
-      x if x == OutgoingMessageType::RequestHistoricalTicks as i32 => Ok(OutgoingMessageType::RequestHistoricalTicks),
-      x if x == OutgoingMessageType::RequestTickByTickData as i32 => Ok(OutgoingMessageType::RequestTickByTickData),
+      x if x == OutgoingMessageType::ReqMarketRule as i32 => Ok(OutgoingMessageType::ReqMarketRule),
+      x if x == OutgoingMessageType::ReqPnl as i32 => Ok(OutgoingMessageType::ReqPnl),
+      x if x == OutgoingMessageType::CancelPnl as i32 => Ok(OutgoingMessageType::CancelPnl),
+      x if x == OutgoingMessageType::ReqPnlSingle as i32 => Ok(OutgoingMessageType::ReqPnlSingle),
+      x if x == OutgoingMessageType::CancelPnlSingle as i32 => Ok(OutgoingMessageType::CancelPnlSingle),
+      x if x == OutgoingMessageType::ReqHistoricalTicks as i32 => Ok(OutgoingMessageType::ReqHistoricalTicks),
+      x if x == OutgoingMessageType::ReqTickByTickData as i32 => Ok(OutgoingMessageType::ReqTickByTickData),
       x if x == OutgoingMessageType::CancelTickByTickData as i32 => Ok(OutgoingMessageType::CancelTickByTickData),
-      x if x == OutgoingMessageType::RequestCompletedOrders as i32 => Ok(OutgoingMessageType::RequestCompletedOrders),
-      x if x == OutgoingMessageType::RequestWshMetaData as i32 => Ok(OutgoingMessageType::RequestWshMetaData),
+      x if x == OutgoingMessageType::ReqCompletedOrders as i32 => Ok(OutgoingMessageType::ReqCompletedOrders),
+      x if x == OutgoingMessageType::ReqWshMetaData as i32 => Ok(OutgoingMessageType::ReqWshMetaData),
       x if x == OutgoingMessageType::CancelWshMetaData as i32 => Ok(OutgoingMessageType::CancelWshMetaData),
-      x if x == OutgoingMessageType::RequestWshEventData as i32 => Ok(OutgoingMessageType::RequestWshEventData),
+      x if x == OutgoingMessageType::ReqWshEventData as i32 => Ok(OutgoingMessageType::ReqWshEventData),
       x if x == OutgoingMessageType::CancelWshEventData as i32 => Ok(OutgoingMessageType::CancelWshEventData),
-      x if x == OutgoingMessageType::RequestUserInfo as i32 => Ok(OutgoingMessageType::RequestUserInfo),
+      x if x == OutgoingMessageType::ReqUserInfo as i32 => Ok(OutgoingMessageType::ReqUserInfo),
       _ => Err(()),
     }
   }
@@ -358,17 +357,21 @@ impl Encoder {
     self.write_str_to_cursor(cursor, &val.to_string())
   }
 
+  /// Writes an optional integer, sending an empty string if None or i32::MAX.
   fn write_optional_int_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<i32>) -> Result<(), IBKRError> {
-    self.write_int_to_cursor(cursor, val.unwrap_or(0))
-  }
-
-  fn write_optional_i64_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<i64>) -> Result<(), IBKRError> {
     match val {
-      Some(v) => self.write_str_to_cursor(cursor, &v.to_string()),
-      None => self.write_str_to_cursor(cursor, "0"), // Or empty string ""? Check TWS behavior for optional longs
+      Some(v) if v != i32::MAX => self.write_int_to_cursor(cursor, v),
+      _ => self.write_str_to_cursor(cursor, ""), // Send empty string for None or MAX_VALUE
     }
   }
 
+  /// Writes an optional i64, sending "0" if None.
+  fn write_optional_i64_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<i64>) -> Result<(), IBKRError> {
+    match val {
+      Some(v) => self.write_str_to_cursor(cursor, &v.to_string()),
+      None => self.write_str_to_cursor(cursor, "0"), // Default for parentId seems to be 0
+    }
+  }
 
   fn write_double_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: f64) -> Result<(), IBKRError> {
     if val.is_nan() {
@@ -377,33 +380,18 @@ impl Encoder {
     } else if val.is_infinite() {
       // TWS uses Double.MAX_VALUE for infinity in many cases
       warn!("Attempting to encode infinite double value. Sending MAX_VALUE string.");
-      self.write_double_max_to_cursor(cursor, None) // Send MAX_VALUE representation
+      self.write_optional_double_to_cursor(cursor, None) // Send MAX_VALUE representation
     } else {
       self.write_str_to_cursor(cursor, &val.to_string())
     }
   }
 
   fn write_optional_double_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<f64>) -> Result<(), IBKRError> {
-    self.write_double_to_cursor(cursor, val.unwrap_or(0.0))
-  }
-
-  fn write_double_max_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<f64>) -> Result<(), IBKRError> {
-    const UNSET_STR: &str = ""; // String representation of f64::MAX
     match val {
-      Some(value) if value.is_finite() && value != f64::MAX => {
-        self.write_double_to_cursor(cursor, value) // Use regular double writing for valid numbers
-      }
-      _ => { // Handles None, MAX, INFINITY, -INFINITY
-        trace!("Encoding optional double as empty string.");
-        self.write_str_to_cursor(cursor, UNSET_STR)
-      }
+      Some(v) if v != f64::MAX => self.write_double_to_cursor(cursor, v),
+      _ => self.write_double_to_cursor(cursor, 0.0), // Send 0.0 for None or MAX_VALUE
     }
   }
-
-  fn write_optional_double_max_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<f64>) -> Result<(), IBKRError> {
-    self.write_double_max_to_cursor(cursor, val) // Logic is the same
-  }
-
 
   fn write_bool_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: bool) -> Result<(), IBKRError> {
     self.write_int_to_cursor(cursor, if val { 1 } else { 0 })
@@ -443,7 +431,7 @@ impl Encoder {
   // --- encode_request_ids, etc. ---
   pub fn _encode_request_ids(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request IDs message");
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestIds as i32)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqIds as i32)?;
     self.write_int_to_cursor(&mut cursor, 1)?; // Version
     Ok(self.finish_encoding(cursor))
   }
@@ -452,86 +440,114 @@ impl Encoder {
     &self,
     req_id: i32,
     group: &str,
-    tags: &str,
+    tags: &str, // Comma separated list: "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage"
   ) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request account summary message: ReqID={}, Group={}, Tags={}", req_id, group, tags);
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestAccountSummary as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // Version
+    if self.server_version < min_server_ver::ACCT_SUMMARY {
+      return Err(IBKRError::Unsupported("Server version does not support account summary requests.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqAccountSummary as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
-    self.write_str_to_cursor(&mut cursor, group)?;
+    self.write_str_to_cursor(&mut cursor, group)?; // "All" for all accounts, specific group name, or comma-separated list of account IDs
     self.write_str_to_cursor(&mut cursor, tags)?;
     Ok(self.finish_encoding(cursor))
   }
 
   pub fn encode_request_executions(&self, req_id: i32, filter: &ExecutionFilter) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request executions: ReqID={}, Filter={:?}", req_id, filter);
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestExecutions as i32)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqExecutions as i32)?;
     let version = 3; // Version supporting filter fields
 
     self.write_int_to_cursor(&mut cursor, version)?;
-    // Version 2 field (reqId) is only present if version >= 3 in this specific message
-    if version >= 3 {
+
+    // reqId field introduced in version 3 for this message, different from others
+    if self.server_version >= min_server_ver::EXECUTION_DATA_CHAIN {
       self.write_int_to_cursor(&mut cursor, req_id)?;
     }
 
-    // Write filter fields (version 3)
-    // Use defaults (0 or "") if Option is None, as per TWS API conventions
-    self.write_int_to_cursor(&mut cursor, filter.client_id.unwrap_or(0))?;
-    self.write_str_to_cursor(&mut cursor, filter.acct_code.as_deref().unwrap_or(""))?;
-    // Time format: "yyyymmdd hh:mm:ss" (TWS docs mention single space usually)
-    self.write_str_to_cursor(&mut cursor, filter.time.as_deref().unwrap_or(""))?;
-    self.write_str_to_cursor(&mut cursor, filter.symbol.as_deref().unwrap_or(""))?;
-    self.write_str_to_cursor(&mut cursor, filter.sec_type.as_deref().unwrap_or(""))?;
-    self.write_str_to_cursor(&mut cursor, filter.exchange.as_deref().unwrap_or(""))?;
-    self.write_str_to_cursor(&mut cursor, filter.side.as_deref().unwrap_or(""))?;
+    // Filter fields (introduced in version 3 / server_version 9)
+    // Use defaults (0 or "") if Option is None
+    if self.server_version >= 9 {
+      self.write_int_to_cursor(&mut cursor, filter.client_id.unwrap_or(0))?;
+      self.write_str_to_cursor(&mut cursor, filter.acct_code.as_deref().unwrap_or(""))?;
+      // Time format: "yyyyMMdd-HH:mm:ss" (UTC) or "yyyyMMdd HH:mm:ss timezone"
+      self.write_str_to_cursor(&mut cursor, filter.time.as_deref().unwrap_or(""))?;
+      self.write_str_to_cursor(&mut cursor, filter.symbol.as_deref().unwrap_or(""))?;
+      self.write_str_to_cursor(&mut cursor, filter.sec_type.as_deref().unwrap_or(""))?;
+      self.write_str_to_cursor(&mut cursor, filter.exchange.as_deref().unwrap_or(""))?;
+      self.write_str_to_cursor(&mut cursor, filter.side.as_deref().unwrap_or(""))?;
+    }
 
     Ok(self.finish_encoding(cursor))
   }
 
   pub fn encode_request_positions(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request positions message");
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestPositions as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // Version
+    if self.server_version < min_server_ver::ACCT_SUMMARY {
+      return Err(IBKRError::Unsupported("Server version does not support position requests.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqPositions as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     Ok(self.finish_encoding(cursor))
   }
 
   // --- cancel account summary / positions ---
   pub fn encode_cancel_account_summary(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel account summary: ReqID={}", req_id);
+    if self.server_version < min_server_ver::ACCT_SUMMARY {
+      return Err(IBKRError::Unsupported("Server version does not support account summary cancellation.".to_string()));
+    }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelAccountSummary as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // version
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
 
   pub fn encode_cancel_positions(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel positions");
+    if self.server_version < min_server_ver::ACCT_SUMMARY {
+      return Err(IBKRError::Unsupported("Server version does not support position cancellation.".to_string()));
+    }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelPositions as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // version
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     Ok(self.finish_encoding(cursor))
   }
 
   // --- cancel order ---
-  pub fn encode_cancel_order(&self, order_id: i32) -> Result<Vec<u8>, IBKRError> {
-    debug!("Encoding cancel order message for order ID {}", order_id);
+  pub fn encode_cancel_order(&self, order_id: i32, order_cancel: &OrderCancel) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel order message for order ID {}, CancelParams: {:?}", order_id, order_cancel);
+
+    if self.server_version < min_server_ver::MANUAL_ORDER_TIME {
+      if order_cancel.manual_order_cancel_time.is_some() {
+        return Err(IBKRError::Unsupported("Server version does not support manual order cancel time attribute".to_string()));
+      }
+    }
+    if self.server_version < min_server_ver::RFQ_FIELDS {
+      if order_cancel.ext_operator.is_some() || order_cancel.external_user_id.is_some() || order_cancel.manual_order_indicator.is_some() {
+        return Err(IBKRError::Unsupported("Server version does not support ext operator, external user id and manual order indicator parameters".to_string()));
+      }
+    }
+
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelOrder as i32)?;
-    // Version 1 (implicit by field count before MANUAL_ORDER_TIME)
     let version = 1;
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, order_id)?;
 
+    // manualOrderCancelTime added in MANUAL_ORDER_TIME
     if self.server_version >= min_server_ver::MANUAL_ORDER_TIME {
-      let manual_cancel_order_time = "";
-      self.write_str_to_cursor(&mut cursor, manual_cancel_order_time)?;
+      self.write_optional_str_to_cursor(&mut cursor, order_cancel.manual_order_cancel_time.as_deref())?;
     }
 
+    // RFQ fields added in RFQ_FIELDS
     if self.server_version >= min_server_ver::RFQ_FIELDS {
-      let ext_operator = "";
-      self.write_str_to_cursor(&mut cursor, ext_operator)?;
-      let exteral_user_id = "";
-      self.write_str_to_cursor(&mut cursor, external_user_id)?;
-      let manual_order_indicator = "";
-      self.write_str_to_cursor(&mut cursor, manual_order_indicator)?;
+      self.write_optional_str_to_cursor(&mut cursor, order_cancel.ext_operator.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, order_cancel.external_user_id.as_deref())?;
+      self.write_optional_int_to_cursor(&mut cursor, order_cancel.manual_order_indicator)?;
     }
 
     Ok(self.finish_encoding(cursor))
@@ -542,7 +558,6 @@ impl Encoder {
   pub fn encode_place_order(&self, id: i32, contract: &Contract, request: &OrderRequest) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding place order message: ID={}, Contract={:?}, Request={:?}", id, contract, request);
 
-    // --- Pre-Checks (Matching Java Implementation) ---
     if self.server_version < min_server_ver::SCALE_ORDERS {
       if request.scale_init_level_size.is_some() || request.scale_price_increment.is_some() {
         return Err(IBKRError::Unsupported(
@@ -612,7 +627,7 @@ impl Encoder {
     }
     // SSHORTX check for Order.exemptCode
     if self.server_version < min_server_ver::SSHORTX {
-      // Use the -1 sentinel check like Java for this specific version cutoff if needed
+      // Use the -1 sentinel check
       if request.exempt_code.is_some() && request.exempt_code != Some(-1) {
         return Err(IBKRError::Unsupported(
           "Server version does not support exemptCode parameter.".to_string(),
@@ -623,7 +638,7 @@ impl Encoder {
     if self.server_version < min_server_ver::SSHORTX {
       if !contract.combo_legs.is_empty() {
         for leg in &contract.combo_legs {
-          if leg.exempt_code != -1 { // Java checks against -1
+          if leg.exempt_code != -1 {
             return Err(IBKRError::Unsupported(
               "Server version does not support exemptCode parameter for combo legs.".to_string(),
             ));
@@ -828,7 +843,14 @@ impl Encoder {
 
 
     // --- Start Encoding ---
+    let version = if self.server_version < min_server_ver::NOT_HELD { 27 } else { 45 };
+
     let mut cursor = self.start_encoding(OutgoingMessageType::PlaceOrder as i32)?;
+
+    // Send version only if server < ORDER_CONTAINER
+    if self.server_version < min_server_ver::ORDER_CONTAINER {
+      self.write_int_to_cursor(&mut cursor, version)?;
+    }
 
     // --- Write Order ID ---
     self.write_int_to_cursor(&mut cursor, id)?;
@@ -877,12 +899,12 @@ impl Encoder {
     if self.server_version < min_server_ver::ORDER_COMBO_LEGS_PRICE {
       self.write_optional_double_to_cursor(&mut cursor, request.limit_price)?;
     } else {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.limit_price)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.limit_price)?;
     }
     if self.server_version < min_server_ver::TRAILING_PERCENT {
       self.write_optional_double_to_cursor(&mut cursor, request.aux_price)?;
     } else {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.aux_price)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.aux_price)?;
     }
 
     // --- Write Extended Order Fields (In Order) ---
@@ -912,20 +934,30 @@ impl Encoder {
     if self.server_version >= min_server_ver::ORDER_COMBO_LEGS_PRICE && contract.sec_type == SecType::Combo {
       self.write_int_to_cursor(&mut cursor, request.order_combo_legs.len() as i32)?;
       for leg_price in &request.order_combo_legs {
-        self.write_optional_double_max_to_cursor(&mut cursor, *leg_price)?;
+        self.write_optional_double_to_cursor(&mut cursor, *leg_price)?;
       }
     }
 
-    // --- Smart Combo Routing Params ---
+    // --- Smart Combo Routing Params - Sent for BAG secType ---
     if self.server_version >= min_server_ver::SMART_COMBO_ROUTING_PARAMS && contract.sec_type == SecType::Combo {
-      self.write_tag_value_list(&mut cursor, &request.smart_combo_routing_params)?;
+      self.write_int_to_cursor(&mut cursor, request.smart_combo_routing_params.len() as i32)?;
+      if !request.smart_combo_routing_params.is_empty() {
+        for (tag, value) in &request.smart_combo_routing_params {
+          self.write_str_to_cursor(&mut cursor, tag)?;
+          self.write_str_to_cursor(&mut cursor, value)?;
+        }
+      }
     }
 
     // --- Deprecated Shares Allocation ---
-    if self.server_version >= 9 { self.write_str_to_cursor(&mut cursor, "")?; }
+    if self.server_version >= 9 {
+      self.write_str_to_cursor(&mut cursor, "")?;
+    }
 
     // --- Discretionary Amount ---
-    if self.server_version >= 10 { self.write_optional_double_to_cursor(&mut cursor, request.discretionary_amt)?; }
+    if self.server_version >= 10 {
+      self.write_optional_double_to_cursor(&mut cursor, request.discretionary_amt)?;
+    }
 
     // --- Good After Time ---
     if self.server_version >= 11 {
@@ -945,6 +977,7 @@ impl Encoder {
       self.write_optional_str_to_cursor(&mut cursor, request.fa_group.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, request.fa_method.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, request.fa_percentage.as_deref())?;
+      // Deprecated faProfile field
       if self.server_version < min_server_ver::FA_PROFILE_DESUPPORT {
         self.write_str_to_cursor(&mut cursor, "")?;
       }
@@ -960,35 +993,36 @@ impl Encoder {
       self.write_optional_int_to_cursor(&mut cursor, request.short_sale_slot)?;
       self.write_optional_str_to_cursor(&mut cursor, request.designated_location.as_deref())?;
     }
+    // Exempt Code
     if self.server_version >= min_server_ver::SSHORTX_OLD {
-      // Handle -1 sentinel according to Java ref for SSHORTX_OLD
-      let exempt_code_to_send = request.exempt_code.unwrap_or(0); // Default to 0 if None
-      if exempt_code_to_send == -1 {
-        self.write_int_to_cursor(&mut cursor, 0)?;
-      } else {
-        self.write_int_to_cursor(&mut cursor, exempt_code_to_send)?;
-      }
+      let exempt_code_val = request.exempt_code.unwrap_or(-1); // Use -1 sentinel if None
+      self.write_int_to_cursor(&mut cursor, if exempt_code_val == -1 { 0 } else { exempt_code_val })?;
     }
 
-    // --- OCA Type, Rule 80A etc. ---
+    // --- OCA Type, Rule 80A etc. (Starting server version 19) ---
     if self.server_version >= 19 {
       self.write_optional_int_to_cursor(&mut cursor, request.oca_type)?;
+      // RTH Only deprecated in 38, handled earlier
+      // if self.server_version < 38 { self.write_bool_to_cursor(&mut cursor, false)?; } // Deprecated rthOnly
       self.write_optional_str_to_cursor(&mut cursor, request.rule_80a.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, request.settling_firm.as_deref())?;
       self.write_bool_to_cursor(&mut cursor, request.all_or_none)?;
       self.write_optional_int_to_cursor(&mut cursor, request.min_quantity)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.percent_offset)?;
-      self.write_bool_to_cursor(&mut cursor, false)?; // deprecated eTradeOnly
-      self.write_bool_to_cursor(&mut cursor, false)?; // deprecated firmQuoteOnly
-      self.write_optional_double_max_to_cursor(&mut cursor, None)?; // deprecated nbboPriceCap
+      self.write_optional_double_to_cursor(&mut cursor, request.percent_offset)?;
+      self.write_bool_to_cursor(&mut cursor, false)?; // Deprecated eTradeOnly
+      self.write_bool_to_cursor(&mut cursor, false)?; // Deprecated firmQuoteOnly
+      self.write_optional_double_to_cursor(&mut cursor, None)?; // Deprecated nbboPriceCap
       self.write_optional_int_to_cursor(&mut cursor, request.auction_strategy)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.starting_price)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.stock_ref_price)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.delta)?;
-      let lower = if self.server_version == 26 && request.order_type == OrderType::Volatility { None } else { request.stock_range_lower };
-      let upper = if self.server_version == 26 && request.order_type == OrderType::Volatility { None } else { request.stock_range_upper };
-      self.write_optional_double_max_to_cursor(&mut cursor, lower)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, upper)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.starting_price)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.stock_ref_price)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.delta)?;
+      let (lower, upper) = if self.server_version == 26 && request.order_type == OrderType::Volatility {
+        (request.stock_range_lower, request.stock_range_upper) // Send actual values only in this specific case
+      } else {
+        (None, None) // Otherwise, treat as unset (will send "" via sendMax)
+      };
+      self.write_optional_double_to_cursor(&mut cursor, lower)?;
+      self.write_optional_double_to_cursor(&mut cursor, upper)?;
     }
 
     // --- Override Percentage Constraints ---
@@ -996,23 +1030,26 @@ impl Encoder {
       self.write_bool_to_cursor(&mut cursor, request.override_percentage_constraints)?;
     }
 
-    // --- Volatility Orders ---
+    // --- Volatility Orders (Starting server version 26) ---
     if self.server_version >= 26 {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.volatility)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.volatility)?;
       self.write_optional_int_to_cursor(&mut cursor, request.volatility_type)?;
+      // Delta Neutral Order Type Handling
       if self.server_version < 28 {
         let is_delta_neutral_mkt = request.delta_neutral_order_type.as_deref().map_or(false, |s| s.eq_ignore_ascii_case("MKT"));
         self.write_bool_to_cursor(&mut cursor, is_delta_neutral_mkt)?;
       } else {
         self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_order_type.as_deref())?;
-        self.write_optional_double_max_to_cursor(&mut cursor, request.delta_neutral_aux_price)?;
+        self.write_optional_double_to_cursor(&mut cursor, request.delta_neutral_aux_price)?;
 
+        // Delta Neutral Contract Fields (sent only if type is not empty)
         if self.server_version >= min_server_ver::DELTA_NEUTRAL_CONID && !Encoder::is_empty(request.delta_neutral_order_type.as_deref()) {
           self.write_optional_int_to_cursor(&mut cursor, request.delta_neutral_con_id)?;
           self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_settling_firm.as_deref())?;
           self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_clearing_account.as_deref())?;
           self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_clearing_intent.as_deref())?;
         }
+        // Delta Neutral Open/Close Fields (sent only if type is not empty)
         if self.server_version >= min_server_ver::DELTA_NEUTRAL_OPEN_CLOSE && !Encoder::is_empty(request.delta_neutral_order_type.as_deref()) {
           self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_open_close.as_deref())?;
           self.write_bool_to_cursor(&mut cursor, request.delta_neutral_short_sale)?;
@@ -1020,59 +1057,66 @@ impl Encoder {
           self.write_optional_str_to_cursor(&mut cursor, request.delta_neutral_designated_location.as_deref())?;
         }
       }
+      // Continuous Update
       self.write_bool_to_cursor(&mut cursor, request.continuous_update.unwrap_or(0) != 0)?;
+      // Stock Range Lower/Upper (Resent only for server=26 and VOL order)
       if self.server_version == 26 {
-        let lower = if request.order_type == OrderType::Volatility { request.stock_range_lower } else { None };
-        let upper = if request.order_type == OrderType::Volatility { request.stock_range_upper } else { None };
-        self.write_optional_double_max_to_cursor(&mut cursor, lower)?;
-        self.write_optional_double_max_to_cursor(&mut cursor, upper)?;
+        let (lower, upper) = if request.order_type == OrderType::Volatility {
+          (request.stock_range_lower, request.stock_range_upper)
+        } else {
+          (None, None) // Treat as unset for non-VOL orders on server 26
+        };
+        self.write_optional_double_to_cursor(&mut cursor, lower)?;
+        self.write_optional_double_to_cursor(&mut cursor, upper)?;
       }
+      // Reference Price Type
       self.write_optional_int_to_cursor(&mut cursor, request.reference_price_type)?;
     }
 
-    // --- Trail Stop Price ---
+    // --- Trail Stop Price (Server version 30+) ---
     if self.server_version >= 30 {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.trailing_stop_price)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.trailing_stop_price)?;
     }
 
-    // --- Trailing Percent ---
+    // --- Trailing Percent (Server version TRAILING_PERCENT+) ---
     if self.server_version >= min_server_ver::TRAILING_PERCENT {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.trailing_percent)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.trailing_percent)?;
     }
 
-    // --- Scale Orders ---
+    // --- Scale Orders (Starting server version SCALE_ORDERS) ---
     if self.server_version >= min_server_ver::SCALE_ORDERS {
       if self.server_version >= min_server_ver::SCALE_ORDERS2 {
         self.write_optional_int_to_cursor(&mut cursor, request.scale_init_level_size)?;
         self.write_optional_int_to_cursor(&mut cursor, request.scale_subs_level_size)?;
       } else {
-        self.write_str_to_cursor(&mut cursor, "")?;
+        // Older versions had different fields
+        self.write_str_to_cursor(&mut cursor, "")?; // Deprecated field
         self.write_optional_int_to_cursor(&mut cursor, request.scale_init_level_size)?;
       }
-      self.write_optional_double_max_to_cursor(&mut cursor, request.scale_price_increment)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.scale_price_increment)?;
     }
+    // Scale Order Part 2 (Starting server version SCALE_ORDERS3) - conditional on valid price increment
     let scale_price_increment_valid = request.scale_price_increment.map_or(false, |p| p > 0.0 && p != f64::MAX);
     if self.server_version >= min_server_ver::SCALE_ORDERS3 && scale_price_increment_valid {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.scale_price_adjust_value)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.scale_price_adjust_value)?;
       self.write_optional_int_to_cursor(&mut cursor, request.scale_price_adjust_interval)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.scale_profit_offset)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.scale_profit_offset)?;
       self.write_bool_to_cursor(&mut cursor, request.scale_auto_reset)?;
       self.write_optional_int_to_cursor(&mut cursor, request.scale_init_position)?;
       self.write_optional_int_to_cursor(&mut cursor, request.scale_init_fill_qty)?;
       self.write_bool_to_cursor(&mut cursor, request.scale_random_percent)?;
     }
 
-    // --- Scale Table ---
+    // --- Scale Table (Server version SCALE_TABLE+) ---
     if self.server_version >= min_server_ver::SCALE_TABLE {
       self.write_optional_str_to_cursor(&mut cursor, request.scale_table.as_deref())?;
-      // Format DateTime fields
       let start_time_str = self.format_datetime_tws(request.active_start_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
       let stop_time_str = self.format_datetime_tws(request.active_stop_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
       self.write_str_to_cursor(&mut cursor, &start_time_str)?;
       self.write_str_to_cursor(&mut cursor, &stop_time_str)?;
     }
 
-    // --- Hedge Orders ---
+    // --- Hedge Orders (Server version HEDGE_ORDERS+) ---
     if self.server_version >= min_server_ver::HEDGE_ORDERS {
       self.write_optional_str_to_cursor(&mut cursor, request.hedge_type.as_deref())?;
       if !Encoder::is_empty(request.hedge_type.as_deref()) {
@@ -1080,23 +1124,23 @@ impl Encoder {
       }
     }
 
-    // --- Opt Out Smart Routing ---
+    // --- Opt Out Smart Routing (Server version OPT_OUT_SMART_ROUTING+) ---
     if self.server_version >= min_server_ver::OPT_OUT_SMART_ROUTING {
       self.write_bool_to_cursor(&mut cursor, request.opt_out_smart_routing)?;
     }
 
-    // --- Clearing Params ---
+    // --- Clearing Params (Server version PTA_ORDERS+) ---
     if self.server_version >= min_server_ver::PTA_ORDERS {
       self.write_optional_str_to_cursor(&mut cursor, request.clearing_account.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, request.clearing_intent.as_deref())?;
     }
 
-    // --- Not Held ---
+    // --- Not Held (Server version NOT_HELD+) ---
     if self.server_version >= min_server_ver::NOT_HELD {
       self.write_bool_to_cursor(&mut cursor, request.not_held)?;
     }
 
-    // --- Contract Delta Neutral ---
+    // --- Contract Delta Neutral (Server version DELTA_NEUTRAL+) ---
     if self.server_version >= min_server_ver::DELTA_NEUTRAL {
       if let Some(dn) = &contract.delta_neutral_contract {
         self.write_bool_to_cursor(&mut cursor, true)?;
@@ -1108,56 +1152,50 @@ impl Encoder {
       }
     }
 
-    // --- Algo Orders ---
+    // --- Algo Orders (Server version ALGO_ORDERS+) ---
     if self.server_version >= min_server_ver::ALGO_ORDERS {
       self.write_optional_str_to_cursor(&mut cursor, request.algo_strategy.as_deref())?;
       if !Encoder::is_empty(request.algo_strategy.as_deref()) {
-        self.write_tag_value_list(&mut cursor, &request.algo_params)?;
+        // Oddly, this tag-value is sent as fields, not as a tag value.
+        self.write_int_to_cursor(&mut cursor, request.algo_params.len() as i32)?;
+        if !request.algo_params.is_empty() {
+          for (tag, value) in &request.algo_params {
+            self.write_str_to_cursor(&mut cursor, tag)?;
+            self.write_str_to_cursor(&mut cursor, value)?;
+          }
+        }
       }
     }
+    // Algo ID (Server version ALGO_ID+)
     if self.server_version >= min_server_ver::ALGO_ID {
       self.write_optional_str_to_cursor(&mut cursor, request.algo_id.as_deref())?;
     }
 
-    // --- What If Flag ---
+    // --- What If Flag (Server version WHAT_IF_ORDERS+) ---
     if self.server_version >= min_server_ver::WHAT_IF_ORDERS {
       self.write_bool_to_cursor(&mut cursor, request.what_if)?;
     }
 
-    // --- Order Misc Options ---
+    // --- Order Misc Options (Server version LINKING+) ---
     if self.server_version >= min_server_ver::LINKING {
-      let misc_options_str = if request.order_misc_options.is_empty() {
-        // If the vector is empty, send an empty string (which results in just '\0')
-        String::new()
-      } else {
-        // If not empty, format as Key=Value pairs joined by semicolons
-        request.order_misc_options
-          .iter()
-          .map(|(key, value)| format!("{key}={value}"))
-          .collect::<Vec<String>>()
-          .join(";") // Use semicolon separator
-      };
-
-      // Write the resulting string (empty or joined) followed by null terminator
-      self.write_str_to_cursor(&mut cursor, &misc_options_str)?;
+      self.write_tag_value_list(&mut cursor, &request.order_misc_options)?;
     }
 
-    // --- Solicited Flag ---
+    // --- Solicited Flag (Server version ORDER_SOLICITED+) ---
     if self.server_version >= min_server_ver::ORDER_SOLICITED {
       self.write_bool_to_cursor(&mut cursor, request.solicited)?;
     }
 
-    // --- Randomize Size/Price Flags ---
+    // --- Randomize Size/Price Flags (Server version RANDOMIZE_SIZE_AND_PRICE+) ---
     if self.server_version >= min_server_ver::RANDOMIZE_SIZE_AND_PRICE {
       self.write_bool_to_cursor(&mut cursor, request.randomize_size)?;
       self.write_bool_to_cursor(&mut cursor, request.randomize_price)?;
     }
 
-    // --- Pegged To Benchmark Orders & Conditions ---
+    // --- Pegged To Benchmark Orders & Conditions (Server version PEGGED_TO_BENCHMARK+) ---
     if self.server_version >= min_server_ver::PEGGED_TO_BENCHMARK {
       let is_peg_bench = matches!(request.order_type,
-                                  OrderType::PeggedToBenchmark | OrderType::PeggedBest | OrderType::PeggedPrimary
-      );
+                                  OrderType::PeggedToBenchmark | OrderType::PeggedBest | OrderType::PeggedPrimary);
       if is_peg_bench {
         self.write_optional_int_to_cursor(&mut cursor, request.reference_contract_id)?;
         self.write_bool_to_cursor(&mut cursor, request.is_pegged_change_amount_decrease)?;
@@ -1166,11 +1204,15 @@ impl Encoder {
         self.write_optional_str_to_cursor(&mut cursor, request.reference_exchange_id.as_deref())?;
       }
 
-      // Conditions (Stubbed)
+      // Conditions
       self.write_int_to_cursor(&mut cursor, request.conditions.len() as i32)?;
       if !request.conditions.is_empty() {
         warn!("Order condition encoding is not fully implemented. Sending count only.");
-        // TODO: Implement full condition encoding
+        // TODO: Implement full condition encoding.
+        // for item in &request.conditions {
+        //     self.write_int_to_cursor(&mut cursor, item.type().val())?; // Assuming type() and val() exist
+        //     item.write_to(cursor)?; // Assuming write_to exists
+        // }
         self.write_bool_to_cursor(&mut cursor, request.conditions_ignore_rth)?;
         self.write_bool_to_cursor(&mut cursor, request.conditions_cancel_order)?;
       }
@@ -1178,32 +1220,32 @@ impl Encoder {
       // Adjusted Order fields
       let adj_ord_type_str = request.adjusted_order_type.map(|t| t.to_string());
       self.write_optional_str_to_cursor(&mut cursor, adj_ord_type_str.as_deref())?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.trigger_price)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.lmt_price_offset)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.adjusted_stop_price)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.adjusted_stop_limit_price)?;
-      self.write_optional_double_max_to_cursor(&mut cursor, request.adjusted_trailing_amount)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.trigger_price)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.lmt_price_offset)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.adjusted_stop_price)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.adjusted_stop_limit_price)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.adjusted_trailing_amount)?;
       self.write_optional_int_to_cursor(&mut cursor, request.adjustable_trailing_unit)?;
     }
 
-    // --- Ext Operator ---
+    // --- Ext Operator (Server version EXT_OPERATOR+) ---
     if self.server_version >= min_server_ver::EXT_OPERATOR {
       self.write_optional_str_to_cursor(&mut cursor, request.ext_operator.as_deref())?;
     }
 
-    // --- Soft Dollar Tier ---
+    // --- Soft Dollar Tier (Server version SOFT_DOLLAR_TIER+) ---
     if self.server_version >= min_server_ver::SOFT_DOLLAR_TIER {
       let (name, value) = request.soft_dollar_tier.as_ref().map(|(n, v)| (n.as_str(), v.as_str())).unwrap_or(("", ""));
       self.write_str_to_cursor(&mut cursor, name)?;
       self.write_str_to_cursor(&mut cursor, value)?;
     }
 
-    // --- Cash Quantity ---
+    // --- Cash Quantity (Server version CASH_QTY+) ---
     if self.server_version >= min_server_ver::CASH_QTY {
-      self.write_optional_double_max_to_cursor(&mut cursor, request.cash_qty)?;
+      self.write_optional_double_to_cursor(&mut cursor, request.cash_qty)?;
     }
 
-    // --- MiFID Fields ---
+    // --- MiFID Fields (Decision Maker: DECISION_MAKER+, Execution: MIFID_EXECUTION+) ---
     if self.server_version >= min_server_ver::DECISION_MAKER {
       self.write_optional_str_to_cursor(&mut cursor, request.mifid2_decision_maker.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, request.mifid2_decision_algo.as_deref())?;
@@ -1213,58 +1255,60 @@ impl Encoder {
       self.write_optional_str_to_cursor(&mut cursor, request.mifid2_execution_algo.as_deref())?;
     }
 
-    // --- Auto Price for Hedge ---
+    // --- Auto Price for Hedge (Server version AUTO_PRICE_FOR_HEDGE+) ---
     if self.server_version >= min_server_ver::AUTO_PRICE_FOR_HEDGE {
       self.write_bool_to_cursor(&mut cursor, request.dont_use_auto_price_for_hedge)?;
     }
 
-    // --- OMS Container ---
+    // --- OMS Container (Server version ORDER_CONTAINER+) ---
     if self.server_version >= min_server_ver::ORDER_CONTAINER {
       self.write_bool_to_cursor(&mut cursor, request.is_oms_container)?;
     }
 
-    // --- Discretionary Up To Limit Price ---
+    // --- Discretionary Up To Limit Price (Server version D_PEG_ORDERS+) ---
     if self.server_version >= min_server_ver::D_PEG_ORDERS {
       self.write_bool_to_cursor(&mut cursor, request.discretionary_up_to_limit_price)?;
     }
 
-    // --- Use Price Mgmt Algo ---
+    // --- Use Price Mgmt Algo (Server version PRICE_MGMT_ALGO+) ---
     if self.server_version >= min_server_ver::PRICE_MGMT_ALGO {
+      // Our write_optional_bool sends false (0) for None.
       self.write_optional_bool_to_cursor(&mut cursor, request.use_price_mgmt_algo)?;
     }
 
-    // --- Duration ---
+    // --- Duration (Server version DURATION+) ---
     if self.server_version >= min_server_ver::DURATION {
       self.write_optional_int_to_cursor(&mut cursor, request.duration)?;
     }
 
-    // --- Post To ATS ---
+    // --- Post To ATS (Server version POST_TO_ATS+) ---
     if self.server_version >= min_server_ver::POST_TO_ATS {
       self.write_optional_int_to_cursor(&mut cursor, request.post_to_ats)?;
     }
 
-    // --- Auto Cancel Parent ---
+    // --- Auto Cancel Parent (Server version AUTO_CANCEL_PARENT+) ---
     if self.server_version >= min_server_ver::AUTO_CANCEL_PARENT {
       self.write_bool_to_cursor(&mut cursor, request.auto_cancel_parent)?;
     }
 
-    // --- Advanced Error Override ---
+    // --- Advanced Error Override (Server version ADVANCED_ORDER_REJECT+) ---
     if self.server_version >= min_server_ver::ADVANCED_ORDER_REJECT {
       self.write_optional_str_to_cursor(&mut cursor, request.advanced_error_override.as_deref())?;
     }
 
-    // --- Manual Order Time ---
+    // --- Manual Order Time (Server version MANUAL_ORDER_TIME+) ---
     if self.server_version >= min_server_ver::MANUAL_ORDER_TIME {
-      // Format DateTime to "YYYYMMDD-HH:MM:SS" (No TZ suffix expected)
       let mot_str = self.format_datetime_tws(request.manual_order_time, "%Y%m%d-%H:%M:%S", None);
       self.write_str_to_cursor(&mut cursor, &mot_str)?;
     }
 
-    // --- Peg Best/Mid Offsets ---
+    // --- Peg Best/Mid Offsets (Server version PEGBEST_PEGMID_OFFSETS+) ---
     if self.server_version >= min_server_ver::PEGBEST_PEGMID_OFFSETS {
+      // minTradeQty sent only if exchange is IBKRATS
       if contract.exchange.eq_ignore_ascii_case("IBKRATS") {
         self.write_optional_int_to_cursor(&mut cursor, request.min_trade_qty)?;
       }
+      // Check order type
       let is_peg_best = request.order_type == OrderType::PeggedBest;
       let is_peg_mid = request.order_type == OrderType::PeggedToMidpoint;
       let mut send_mid_offsets = false;
@@ -1272,33 +1316,34 @@ impl Encoder {
       if is_peg_best {
         self.write_optional_int_to_cursor(&mut cursor, request.min_compete_size)?;
         let offset_val = request.compete_against_best_offset;
-        if offset_val == Some(f64::INFINITY) { // Check sentinel
-          self.write_optional_double_max_to_cursor(&mut cursor, None)?; // Send "" for UpToMid
+        // Check if offset_val is the sentinel value (f64::MAX in Rust)
+        if offset_val == Some(f64::MAX) {
+          self.write_optional_double_to_cursor(&mut cursor, None)?; // Send "" for UpToMid
           send_mid_offsets = true;
         } else {
-          self.write_optional_double_max_to_cursor(&mut cursor, offset_val)?;
+          self.write_optional_double_to_cursor(&mut cursor, offset_val)?; // Send actual offset
         }
       } else if is_peg_mid {
         send_mid_offsets = true;
       }
 
       if send_mid_offsets {
-        self.write_optional_double_max_to_cursor(&mut cursor, request.mid_offset_at_whole)?;
-        self.write_optional_double_max_to_cursor(&mut cursor, request.mid_offset_at_half)?;
+        self.write_optional_double_to_cursor(&mut cursor, request.mid_offset_at_whole)?;
+        self.write_optional_double_to_cursor(&mut cursor, request.mid_offset_at_half)?;
       }
     }
 
-    // --- Customer Account ---
+    // --- Customer Account (Server version CUSTOMER_ACCOUNT+) ---
     if self.server_version >= min_server_ver::CUSTOMER_ACCOUNT {
       self.write_optional_str_to_cursor(&mut cursor, request.customer_account.as_deref())?;
     }
 
-    // --- Professional Customer ---
+    // --- Professional Customer (Server version PROFESSIONAL_CUSTOMER+) ---
     if self.server_version >= min_server_ver::PROFESSIONAL_CUSTOMER {
       self.write_bool_to_cursor(&mut cursor, request.professional_customer)?;
     }
 
-    // --- RFQ Fields ---
+    // --- RFQ Fields (Server version RFQ_FIELDS+) ---
     if self.server_version >= min_server_ver::RFQ_FIELDS {
       self.write_optional_str_to_cursor(&mut cursor, request.external_user_id.as_deref())?;
       self.write_optional_int_to_cursor(&mut cursor, request.manual_order_indicator)?;
@@ -1309,39 +1354,27 @@ impl Encoder {
   }
 
 
-  // --- Helper to encode contract combo legs (Unchanged from previous version) ---
+  // --- Helper to encode contract combo legs for placeOrder ---
   fn encode_combo_legs(&self, cursor: &mut Cursor<Vec<u8>>, legs: &[ComboLeg]) -> Result<(), IBKRError> {
-    // Check if server supports combo legs fields required in placeOrder (version 8+)
-    // Version checks for SSHORT_COMBO_LEGS / SSHORTX_OLD are done inside the loop
-    if self.server_version >= 8 {
-      self.write_int_to_cursor(cursor, legs.len() as i32)?;
-      for leg in legs {
-        self.write_int_to_cursor(cursor, leg.con_id)?;
-        self.write_int_to_cursor(cursor, leg.ratio)?;
-        self.write_str_to_cursor(cursor, &leg.action)?; // BUY/SELL/SSHORT
-        self.write_str_to_cursor(cursor, &leg.exchange)?;
-        self.write_int_to_cursor(cursor, leg.open_close)?; // 0=Same, 1=Open, 2=Close, 3=Unknown
+    // This helper is called within placeOrder, which already checks server_version >= 8
+    self.write_int_to_cursor(cursor, legs.len() as i32)?;
+    for leg in legs {
+      self.write_int_to_cursor(cursor, leg.con_id)?;
+      self.write_int_to_cursor(cursor, leg.ratio)?;
+      self.write_str_to_cursor(cursor, &leg.action)?; // BUY/SELL/SSHORT
+      self.write_str_to_cursor(cursor, &leg.exchange)?;
+      self.write_int_to_cursor(cursor, leg.open_close)?; // 0=Same, 1=Open, 2=Close, 3=Unknown
 
-        if self.server_version >= min_server_ver::SSHORT_COMBO_LEGS {
-          self.write_int_to_cursor(cursor, leg.short_sale_slot)?; // 0=Default, 1=Retail, 2=Inst
-          // Only send designatedLocation if it's not empty
-          self.write_optional_str_to_cursor(cursor, Some(leg.designated_location.as_str()).filter(|s| !s.is_empty()))?;
-        }
-        // Use SSHORTX_OLD version for placeOrder exemptCode based on Java reference
-        if self.server_version >= min_server_ver::SSHORTX_OLD {
-          // Java sends int, uses -1 sentinel. We send 0 if None or -1.
-          let code_to_send = leg.exempt_code;
-          if code_to_send == -1 {
-            self.write_int_to_cursor(cursor, 0)?;
-          } else {
-            self.write_int_to_cursor(cursor, code_to_send)?;
-          }
-        }
+      // Short Sale Slot fields (Server version SSHORT_COMBO_LEGS+)
+      if self.server_version >= min_server_ver::SSHORT_COMBO_LEGS {
+        self.write_int_to_cursor(cursor, leg.short_sale_slot)?; // 0=Default, 1=Retail, 2=Inst
+        self.write_optional_str_to_cursor(cursor, Some(&leg.designated_location).filter(|s| !s.is_empty()).map(|s| s.as_str()))?;
       }
-    } else if !legs.is_empty() {
-      // Only warn if combo legs are present but server doesn't support them here
-      warn!("Combo legs provided but server version {} does not support them in placeOrder message context", self.server_version);
-      // Note: Unlike Java pre-check, don't error here, just don't send the fields.
+      // Exempt Code (Server version SSHORTX_OLD+)
+      if self.server_version >= min_server_ver::SSHORTX_OLD {
+        let exempt_code_val = leg.exempt_code; // Assuming exempt_code is i32
+        self.write_int_to_cursor(cursor, if exempt_code_val == -1 { 0 } else { exempt_code_val })?;
+      }
     }
     Ok(())
   }
@@ -1357,7 +1390,6 @@ impl Encoder {
   ) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request market data message for contract {}: ReqID={}", contract.symbol, req_id);
 
-    // --- Pre-Checks (Matching Java Implementation) ---
     if self.server_version < min_server_ver::SNAPSHOT_MKT_DATA && snapshot {
       return Err(IBKRError::UpdateTws(
         "Server version does not support snapshot market data requests.".to_string(),
@@ -1396,13 +1428,13 @@ impl Encoder {
     }
 
     // --- Start Encoding ---
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketData as i32)?;
-    let version = 11; // Hardcoded version from Java reference for this message
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqMktData as i32)?;
+    let version = 11;
 
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
-    // --- Encode Contract Fields (Order matches Java) ---
+    // --- Encode Contract Fields ---
     if self.server_version >= min_server_ver::REQ_MKT_DATA_CONID {
       self.write_int_to_cursor(&mut cursor, contract.con_id)?;
     }
@@ -1426,24 +1458,19 @@ impl Encoder {
       self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
     }
 
-    // --- Encode Combo Legs (Inline, matches Java) ---
-    if self.server_version >= 8 && contract.sec_type == SecType::Combo { // Java uses BAG, Rust uses Combo
+    // --- Encode Combo Legs (Sent for BAG secType, Server version 8+) ---
+    if self.server_version >= 8 && contract.sec_type == SecType::Combo {
       self.write_int_to_cursor(&mut cursor, contract.combo_legs.len() as i32)?;
       for leg in &contract.combo_legs {
         self.write_int_to_cursor(&mut cursor, leg.con_id)?;
         self.write_int_to_cursor(&mut cursor, leg.ratio)?;
         self.write_str_to_cursor(&mut cursor, &leg.action)?; // BUY/SELL/SSHORT
         self.write_str_to_cursor(&mut cursor, &leg.exchange)?;
-        // Note: ComboLeg fields like openClose, shortSaleSlot, designatedLocation, exemptCode
-        // are NOT sent in reqMktData according to Java reference, only in placeOrder.
+        // Note: Other ComboLeg fields are NOT sent in reqMktData
       }
     }
-    // NOTE: Unlike the Rust code's previous interpretation, the Java reference
-    // does NOT send a 0 count here if the contract is not a combo, even if server_version >= 8.
-    // The absence of the field implies 0 legs for non-combo contracts in this message.
 
-
-    // --- Encode Delta Neutral Contract (matches Java) ---
+    // --- Encode Delta Neutral Contract (Server version DELTA_NEUTRAL+) ---
     if self.server_version >= min_server_ver::DELTA_NEUTRAL {
       if let Some(dn) = &contract.delta_neutral_contract {
         self.write_bool_to_cursor(&mut cursor, true)?;
@@ -1455,24 +1482,24 @@ impl Encoder {
       }
     }
 
-    // --- Generic Tick List (matches Java) ---
+    // --- Generic Tick List (Server version 31+) ---
     if self.server_version >= 31 {
       self.write_str_to_cursor(&mut cursor, generic_tick_list)?;
     }
 
-    // --- Snapshot (matches Java) ---
+    // --- Snapshot (Server version SNAPSHOT_MKT_DATA+) ---
     if self.server_version >= min_server_ver::SNAPSHOT_MKT_DATA {
       self.write_bool_to_cursor(&mut cursor, snapshot)?;
     }
 
-    // --- Regulatory Snapshot (matches Java) ---
+    // --- Regulatory Snapshot (Server version REQ_SMART_COMPONENTS+) ---
     if self.server_version >= min_server_ver::REQ_SMART_COMPONENTS {
       self.write_bool_to_cursor(&mut cursor, regulatory_snapshot)?;
     }
 
-    // --- Market Data Options (matches Java) ---
+    // --- Market Data Options (Server version LINKING+) ---
     if self.server_version >= min_server_ver::LINKING {
-      self.write_tag_value_list(&mut cursor, mkt_data_options)?;
+      self.write_tag_value_list(&mut cursor, mkt_data_options)?; // Old logic
     }
 
     Ok(self.finish_encoding(cursor))
@@ -1481,47 +1508,72 @@ impl Encoder {
 
   pub fn encode_cancel_market_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel market data: ReqID={}", req_id);
-    let mut cursor = self.start_encoding(OutgoingMessageType::CancelMarketData as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // Version
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelMktData as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
 
   pub fn encode_request_all_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request all open orders");
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestAllOpenOrders as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // Version
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqAllOpenOrders as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     Ok(self.finish_encoding(cursor))
   }
 
   pub fn _encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request open orders");
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestOpenOrders as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // Version
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqOpenOrders as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     Ok(self.finish_encoding(cursor))
   }
 
   pub fn encode_request_account_data(&self, subscribe: bool, account_code: &str) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request account data: Subscribe={}, Account={}", subscribe, account_code);
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestAccountData as i32)?;
-    self.write_int_to_cursor(&mut cursor, 2)?; // Version 2 supports account code
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqAccountData as i32)?;
+    let version = 2;
+    self.write_int_to_cursor(&mut cursor, version)?;
     self.write_bool_to_cursor(&mut cursor, subscribe)?;
-    self.write_str_to_cursor(&mut cursor, account_code)?; // Can be empty for default
+    // Account code field added in version 2 / server version 9
+    if self.server_version >= 9 {
+      self.write_str_to_cursor(&mut cursor, account_code)?; // Can be empty for default
+    }
     Ok(self.finish_encoding(cursor))
   }
   pub fn encode_request_contract_data(&self, req_id: i32, contract: &Contract) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request contract data: ReqID={}", req_id);
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestContractData as i32)?;
-    // Determine version based on fields used (e.g., SecIdType, IssuerId)
-    let version = if self.server_version >= min_server_ver::BOND_ISSUERID { 8 }
-    else if self.server_version >= min_server_ver::SEC_ID_TYPE { 7 }
-    else { 6 }; // Base version
+    if self.server_version < 4 {
+      return Err(IBKRError::Unsupported("Server version does not support reqContractDetails.".to_string()));
+    }
+    if self.server_version < min_server_ver::SEC_ID_TYPE && (!contract.sec_id_type.is_none() || !contract.sec_id.is_none()) {
+      return Err(IBKRError::Unsupported("Server version does not support secIdType and secId parameters.".to_string()));
+    }
+    if self.server_version < min_server_ver::TRADING_CLASS && !contract.trading_class.is_none() {
+      return Err(IBKRError::Unsupported("Server version does not support tradingClass parameter in reqContractDetails.".to_string()));
+    }
+    if self.server_version < min_server_ver::LINKING && !contract.primary_exchange.is_none() {
+      return Err(IBKRError::Unsupported("Server version does not support primaryExchange parameter in reqContractDetails.".to_string()));
+    }
+    if self.server_version < min_server_ver::BOND_ISSUERID && !contract.issuer_id.is_none() {
+      return Err(IBKRError::Unsupported("Server version does not support issuerId parameter in reqContractDetails.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqContractData as i32)?;
+    let version = 8;
     self.write_int_to_cursor(&mut cursor, version)?;
-    if version >= 3 {
+
+    // reqId field added in CONTRACT_DATA_CHAIN
+    if self.server_version >= min_server_ver::CONTRACT_DATA_CHAIN {
       self.write_int_to_cursor(&mut cursor, req_id)?;
     }
-    // Write contract fields relevant for lookup
-    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+
+    // Write contract fields
+    if self.server_version >= min_server_ver::CONTRACT_CONID {
+      self.write_int_to_cursor(&mut cursor, contract.con_id)?;
+    }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
@@ -1530,20 +1582,38 @@ impl Encoder {
     if version >= 2 {
       self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
     }
-    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+
+    // Exchange / PrimaryExchange handling
+    if self.server_version >= min_server_ver::PRIMARYEXCH {
+      self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+      self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    } else if self.server_version >= min_server_ver::LINKING {
+      if let Some(primary_exch) = contract.primary_exchange.as_ref() {
+        if !primary_exch.is_empty() && (contract.exchange == "BEST" || contract.exchange == "SMART") {
+          self.write_str_to_cursor(&mut cursor, &format!("{}:{}", contract.exchange, primary_exch))?;
+        } else {
+          self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+        }
+      } else {
+        self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+      }
+    } else {
+      self.write_str_to_cursor(&mut cursor, &contract.exchange)?; // Older versions just send exchange
+    }
+
     self.write_str_to_cursor(&mut cursor, &contract.currency)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
-    if version >= 4 {
+    if self.server_version >= min_server_ver::TRADING_CLASS {
       self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
     }
-    if version >= 5 {
-      self.write_bool_to_cursor(&mut cursor, contract.include_expired)?; // Add include_expired to Contract
+    if self.server_version >= 31 {
+      self.write_bool_to_cursor(&mut cursor, contract.include_expired)?;
     }
-    if version >= 7 {
+    if self.server_version >= min_server_ver::SEC_ID_TYPE {
       self.write_optional_str_to_cursor(&mut cursor, contract.sec_id_type.as_ref().map(|t| t.to_string()).as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, contract.sec_id.as_deref())?;
     }
-    if version >= 8 {
+    if self.server_version >= min_server_ver::BOND_ISSUERID {
       self.write_optional_str_to_cursor(&mut cursor, contract.issuer_id.as_deref())?;
     }
     Ok(self.finish_encoding(cursor))
@@ -1551,17 +1621,29 @@ impl Encoder {
 
   pub fn encode_request_historical_data(&self, req_id: i32, contract: &Contract, end_date_time: Option<DateTime<Utc>>, duration_str: &str, bar_size_setting: &str, what_to_show: &str, use_rth: bool, format_date: i32, keep_up_to_date: bool, chart_options: &[(String, String)]) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request historical data: ReqID={}", req_id);
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestHistoricalData as i32)?;
+    if self.server_version < 16 {
+      return Err(IBKRError::Unsupported("Server version does not support historical data backfill.".to_string()));
+    }
+    if self.server_version < min_server_ver::TRADING_CLASS && (!contract.trading_class.is_none() || contract.con_id > 0) {
+      return Err(IBKRError::Unsupported("Server version does not support conId and tradingClass parameters in reqHistoricalData.".to_string()));
+    }
+    if self.server_version < min_server_ver::HISTORICAL_SCHEDULE && what_to_show.eq_ignore_ascii_case("SCHEDULE") {
+      return Err(IBKRError::Unsupported("Server version does not support requesting historical schedule.".to_string()));
+    }
 
-    const VERSION: i32 = 6;
 
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqHistoricalData as i32)?;
+    let version = 6;
+
+    // Version field sent only if server < SYNT_REALTIME_BARS
     if self.server_version < min_server_ver::SYNT_REALTIME_BARS {
-      self.write_int_to_cursor(&mut cursor, VERSION)?;
+      self.write_int_to_cursor(&mut cursor, version)?;
     }
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
+    // Contract fields
     if self.server_version >= min_server_ver::TRADING_CLASS {
-      self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+      self.write_int_to_cursor(&mut cursor, contract.con_id)?;
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
@@ -1577,29 +1659,32 @@ impl Encoder {
       self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
     }
     if self.server_version >= 31 {
-      self.write_int_to_cursor(&mut cursor, if contract.include_expired { 1 } else { 0 })?;
+      self.write_bool_to_cursor(&mut cursor, contract.include_expired)?;
     }
+
+    // Date/Time and Bar parameters (Server version 20+)
     if self.server_version >= 20 {
-      let end_date_time_str = self.format_datetime_tws(end_date_time, "%Y%m%d %H:%M:%S", None); // No TZ suffix
+      let end_date_time_str = self.format_datetime_tws(end_date_time, "%Y%m%d %H:%M:%S", Some(" UTC")); // Use UTC suffix for clarity
       self.write_str_to_cursor(&mut cursor, &end_date_time_str)?;
-      // e.g., "1 day", "30 mins", "1 secs"
+      // Bar size setting (e.g., "1 day", "30 mins", "1 secs")
       self.write_str_to_cursor(&mut cursor, bar_size_setting)?;
     }
 
-    // e.g., "1 Y", "3 M", "60 D", "3600 S"
+    // Duration string (e.g., "1 Y", "3 M", "60 D", "3600 S")
     self.write_str_to_cursor(&mut cursor, duration_str)?;
 
-    // 1=RTH only, 0=All data
-    self.write_bool_to_cursor(&mut cursor, use_rth)?;
+    // Use RTH (1=RTH only, 0=All data)
+    self.write_int_to_cursor(&mut cursor, if use_rth { 1 } else { 0 })?;
 
-    // e.g., "TRADES", "MIDPOINT", "BID", "ASK"
+    // What to show (e.g., "TRADES", "MIDPOINT", "BID", "ASK")
     self.write_str_to_cursor(&mut cursor, what_to_show)?;
 
+    // Format date (1=yyyyMMdd{ }hh:mm:ss, 2=epoch seconds)
     if self.server_version > 16 {
-      // 1=yyyyMMdd{ }hh:mm:ss, 2=epoch seconds
       self.write_int_to_cursor(&mut cursor, format_date)?;
     }
 
+    // Combo Legs (Sent for BAG secType)
     if contract.sec_type == SecType::Combo {
       self.write_int_to_cursor(&mut cursor, contract.combo_legs.len() as i32)?;
       for leg in &contract.combo_legs {
@@ -1610,13 +1695,14 @@ impl Encoder {
       }
     }
 
-    // keepUpToDate (bool) - Conditional on server version
-    if self.server_version >= min_server_ver::SYNT_REALTIME_BARS { // Use correct min_server_ver
+    // Keep up to date (Server version SYNT_REALTIME_BARS+)
+    if self.server_version >= min_server_ver::SYNT_REALTIME_BARS {
       self.write_bool_to_cursor(&mut cursor, keep_up_to_date)?;
     }
 
+    // Chart options (Server version LINKING+)
     if self.server_version >= min_server_ver::LINKING {
-      self.write_tag_value_list(&mut cursor, chart_options)?;
+      self.write_tag_value_list(&mut cursor, chart_options)?; // Old logic
     }
 
     Ok(self.finish_encoding(cursor))
@@ -1624,15 +1710,20 @@ impl Encoder {
 
   pub fn _encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request managed accounts");
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestManagedAccts as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // Version
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqManagedAccts as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     Ok(self.finish_encoding(cursor))
   }
 
   pub fn encode_request_current_time(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request current time message");
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestCurrentTime as i32)?;
-    self.write_int_to_cursor(&mut cursor, 1)?; // Version field
+    if self.server_version < 33 {
+      return Err(IBKRError::Unsupported("Server version does not support current time requests.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqCurrentTime as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
     Ok(self.finish_encoding(cursor))
   }
 
@@ -1652,11 +1743,11 @@ impl Encoder {
       return Err(IBKRError::Unsupported("Server version does not support security definition option parameters request.".to_string()));
     }
 
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestSecDefOptParams as i32)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqSecDefOptParams as i32)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     self.write_str_to_cursor(&mut cursor, underlying_symbol)?;
-    self.write_str_to_cursor(&mut cursor, fut_fop_exchange)?; // FUTURES_SEC_TYPE? No, just exchange or ""
-    self.write_str_to_cursor(&mut cursor, &underlying_sec_type.to_string())?;
+    self.write_str_to_cursor(&mut cursor, fut_fop_exchange)?; // Exchange (usually empty for options)
+    self.write_str_to_cursor(&mut cursor, &underlying_sec_type.to_string())?; // Typically STK
     self.write_int_to_cursor(&mut cursor, underlying_con_id)?;
 
     Ok(self.finish_encoding(cursor))
@@ -1668,7 +1759,7 @@ impl Encoder {
     if self.server_version < min_server_ver::SOFT_DOLLAR_TIER {
       return Err(IBKRError::Unsupported("Server version does not support soft dollar tier requests.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestSoftDollarTiers as i32)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqSoftDollarTiers as i32)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
@@ -1679,8 +1770,7 @@ impl Encoder {
     if self.server_version < min_server_ver::REQ_FAMILY_CODES {
       return Err(IBKRError::Unsupported("Server version does not support family codes request.".to_string()));
     }
-    let cursor = self.start_encoding(OutgoingMessageType::RequestFamilyCodes as i32)?;
-    // No version field according to Java client
+    let cursor = self.start_encoding(OutgoingMessageType::ReqFamilyCodes as i32)?;
     Ok(self.finish_encoding(cursor))
   }
 
@@ -1690,7 +1780,7 @@ impl Encoder {
     if self.server_version < min_server_ver::REQ_MATCHING_SYMBOLS {
       return Err(IBKRError::Unsupported("Server version does not support matching symbols request.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMatchingSymbols as i32)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqMatchingSymbols as i32)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     self.write_str_to_cursor(&mut cursor, pattern)?;
     Ok(self.finish_encoding(cursor))
@@ -1702,8 +1792,7 @@ impl Encoder {
     if self.server_version < min_server_ver::REQ_MKT_DEPTH_EXCHANGES {
       return Err(IBKRError::Unsupported("Server version does not support market depth exchanges request.".to_string()));
     }
-    let cursor = self.start_encoding(OutgoingMessageType::RequestMktDepthExchanges as i32)?;
-    // No version field according to Java client
+    let cursor = self.start_encoding(OutgoingMessageType::ReqMktDepthExchanges as i32)?;
     Ok(self.finish_encoding(cursor))
   }
 
@@ -1713,7 +1802,7 @@ impl Encoder {
     if self.server_version < min_server_ver::REQ_SMART_COMPONENTS {
       return Err(IBKRError::Unsupported("Server version does not support smart components request.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestSmartComponents as i32)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqSmartComponents as i32)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     self.write_str_to_cursor(&mut cursor, bbo_exchange)?; // Name of BBO exchange (e.g., ISLAND)
     Ok(self.finish_encoding(cursor))
@@ -1725,7 +1814,7 @@ impl Encoder {
     if self.server_version < min_server_ver::MARKET_RULES {
       return Err(IBKRError::Unsupported("Server version does not support market rule requests.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketRule as i32)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqMarketRule as i32)?;
     self.write_int_to_cursor(&mut cursor, market_rule_id)?;
     Ok(self.finish_encoding(cursor))
   }
@@ -1746,20 +1835,26 @@ impl Encoder {
     if self.server_version < min_server_ver::REAL_TIME_BARS {
       return Err(IBKRError::Unsupported("Server version does not support real time bars.".to_string()));
     }
+    if self.server_version < min_server_ver::TRADING_CLASS && (!contract.trading_class.is_none() || contract.con_id > 0) {
+      return Err(IBKRError::Unsupported("Server version does not support conId and tradingClass parameters in reqRealTimeBars.".to_string()));
+    }
+
     // Bar size validation (API currently only supports 5 seconds)
     if bar_size != 5 {
       warn!("Requesting real-time bars with size {}. API currently only supports 5 seconds.", bar_size);
       // Proceed anyway, TWS might handle it or return error
     }
 
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestRealTimeBars as i32)?;
-    let version = 3; // Version supporting options
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqRealTimeBars as i32)?;
+    let version = 3;
 
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
-    // Encode contract fields (minimal set needed for real time bars)
-    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+    // Encode contract fields
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_int_to_cursor(&mut cursor, contract.con_id)?;
+    }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
@@ -1770,16 +1865,18 @@ impl Encoder {
     self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
     self.write_str_to_cursor(&mut cursor, &contract.currency)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    }
 
     // Bar parameters
-    self.write_int_to_cursor(&mut cursor, bar_size)?; // Currently only 5 is supported
+    self.write_int_to_cursor(&mut cursor, bar_size)?;
     self.write_str_to_cursor(&mut cursor, what_to_show)?;
     self.write_bool_to_cursor(&mut cursor, use_rth)?;
 
     // Real time bar options (TagValue list)
-    if version >= 2 {
-      self.write_tag_value_list(&mut cursor, real_time_bars_options)?;
+    if self.server_version >= min_server_ver::LINKING { // Explicit check for clarity
+      self.write_tag_value_list(&mut cursor, real_time_bars_options)?; // Old logic
     }
 
     Ok(self.finish_encoding(cursor))
@@ -1789,7 +1886,7 @@ impl Encoder {
   pub fn encode_cancel_real_time_bars(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel real time bars: ReqID={}", req_id);
     if self.server_version < min_server_ver::REAL_TIME_BARS {
-      return Err(IBKRError::Unsupported("Server version does not support real time bars cancellation.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support realtime bar data query cancellation.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelRealTimeBars as i32)?;
     let version = 1;
@@ -1811,22 +1908,20 @@ impl Encoder {
            req_id, contract.symbol, tick_type, number_of_ticks, ignore_size);
 
     if self.server_version < min_server_ver::TICK_BY_TICK {
-      return Err(IBKRError::Unsupported("Server version does not support tick-by-tick data.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support tick-by-tick data requests.".to_string()));
     }
-    if number_of_ticks != 0 && self.server_version < min_server_ver::TICK_BY_TICK_IGNORE_SIZE {
-      return Err(IBKRError::Unsupported("Server version does not support historical tick-by-tick data.".to_string()));
-    }
-    if ignore_size && self.server_version < min_server_ver::TICK_BY_TICK_IGNORE_SIZE {
-      return Err(IBKRError::Unsupported("Server version does not support ignoreSize parameter for tick-by-tick data.".to_string()));
+    if self.server_version < min_server_ver::TICK_BY_TICK_IGNORE_SIZE {
+      if number_of_ticks != 0 || ignore_size {
+        return Err(IBKRError::Unsupported("Server version does not support ignoreSize and numberOfTicks parameters in tick-by-tick data requests.".to_string()));
+      }
     }
 
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestTickByTickData as i32)?;
-    // No explicit version field for this message in Java EClient
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqTickByTickData as i32)?;
 
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
-    // Contract fields (minimal needed)
-    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+    // Contract fields
+    self.write_int_to_cursor(&mut cursor, contract.con_id)?;
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
@@ -1840,10 +1935,11 @@ impl Encoder {
     self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
 
     // Tick-by-tick parameters
-    self.write_str_to_cursor(&mut cursor, tick_type)?;
+    self.write_str_to_cursor(&mut cursor, tick_type)?; // "Last", "AllLast", "BidAsk", "MidPoint"
 
+    // numberOfTicks and ignoreSize added in TICK_BY_TICK_IGNORE_SIZE
     if self.server_version >= min_server_ver::TICK_BY_TICK_IGNORE_SIZE {
-      self.write_int_to_cursor(&mut cursor, number_of_ticks)?; // 0 for streaming
+      self.write_int_to_cursor(&mut cursor, number_of_ticks)?; // 0 for streaming, >0 for historical
       self.write_bool_to_cursor(&mut cursor, ignore_size)?;
     }
 
@@ -1854,10 +1950,9 @@ impl Encoder {
   pub fn encode_cancel_tick_by_tick_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel tick-by-tick data: ReqID={}", req_id);
     if self.server_version < min_server_ver::TICK_BY_TICK {
-      return Err(IBKRError::Unsupported("Server version does not support tick-by-tick data cancellation.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support tick-by-tick data cancels.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelTickByTickData as i32)?;
-    // No explicit version field
     self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
@@ -1874,43 +1969,64 @@ impl Encoder {
     debug!("Encoding request market depth: ReqID={}, Contract={}, Rows={}, Smart={}",
            req_id, contract.symbol, num_rows, is_smart_depth);
 
-    if self.server_version < min_server_ver::REQ_MKT_DEPTH_EXCHANGES {
-      // Although REQ_MKT_DEPTH is older, options require newer version
-      if !mkt_depth_options.is_empty() {
-        return Err(IBKRError::Unsupported("Server version does not support market depth options. ".to_string()));
-      }
+    if self.server_version < 6 { // Base support for reqMktDepth
+      return Err(IBKRError::Unsupported("Server version does not support reqMktDepth.".to_string()));
     }
-    if is_smart_depth && self.server_version < min_server_ver::SMART_DEPTH {
-      return Err(IBKRError::Unsupported("Server version does not support SMART depth.".to_string()));
+    if self.server_version < min_server_ver::TRADING_CLASS && (!contract.trading_class.is_none() || contract.con_id > 0) {
+      return Err(IBKRError::Unsupported("Server version does not support conId and tradingClass parameters in reqMktDepth.".to_string()));
+    }
+    if self.server_version < min_server_ver::SMART_DEPTH && is_smart_depth {
+      return Err(IBKRError::Unsupported("Server version does not support SMART depth request.".to_string()));
+    }
+    if self.server_version < min_server_ver::MKT_DEPTH_PRIM_EXCHANGE && !contract.primary_exchange.is_none() {
+      return Err(IBKRError::Unsupported("Server version does not support primaryExch parameter in reqMktDepth.".to_string()));
+    }
+    // Market depth options require LINKING (70)
+    if self.server_version < min_server_ver::LINKING && !mkt_depth_options.is_empty() {
+      return Err(IBKRError::Unsupported("Server version does not support market depth options.".to_string()));
     }
 
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestMarketDepth as i32)?;
-    let version = 5; // Version supporting isSmartDepth and options
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqMktDepth as i32)?;
+    let version = 5;
 
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
     // Contract fields
-    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?;
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_int_to_cursor(&mut cursor, contract.con_id)?;
+    }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    if self.server_version >= 15 {
+      self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    }
     self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    if self.server_version >= min_server_ver::MKT_DEPTH_PRIM_EXCHANGE {
+      self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    }
     self.write_str_to_cursor(&mut cursor, &contract.currency)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    }
 
     // Depth parameters
-    self.write_int_to_cursor(&mut cursor, num_rows)?;
+    if self.server_version >= 19 {
+      self.write_int_to_cursor(&mut cursor, num_rows)?;
+    }
 
-    if version >= 4 { // isSmartDepth introduced in v4
+    // isSmartDepth added in v4 / SMART_DEPTH
+    if self.server_version >= min_server_ver::SMART_DEPTH {
       self.write_bool_to_cursor(&mut cursor, is_smart_depth)?;
     }
 
-    if version >= 5 { // mktDepthOptions introduced in v5
+    // mktDepthOptions added in v5 / LINKING
+    if self.server_version >= min_server_ver::LINKING {
       self.write_tag_value_list(&mut cursor, mkt_depth_options)?;
     }
 
@@ -1921,17 +2037,21 @@ impl Encoder {
   pub fn encode_cancel_market_depth(&self, req_id: i32, is_smart_depth: bool) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel market depth: ReqID={}, Smart={}", req_id, is_smart_depth);
 
-    if is_smart_depth && self.server_version < min_server_ver::SMART_DEPTH {
-      return Err(IBKRError::Unsupported("Server version does not support SMART depth cancellation.".to_string()));
+    if self.server_version < 6 { // Base support
+      return Err(IBKRError::Unsupported("Server version does not support cancelMktDepth.".to_string()));
+    }
+    if self.server_version < min_server_ver::SMART_DEPTH && is_smart_depth {
+      return Err(IBKRError::Unsupported("Server version does not support SMART depth cancel.".to_string()));
     }
 
-    let mut cursor = self.start_encoding(OutgoingMessageType::CancelMarketDepth as i32)?;
-    let version = 1; // Version supporting isSmartDepth
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelMktDepth as i32)?;
+    let version = 1;
 
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
-    if version >= 1 { // isSmartDepth added in v1 of cancel msg
+    // isSmartDepth added in v1 / SMART_DEPTH
+    if self.server_version >= min_server_ver::SMART_DEPTH {
       self.write_bool_to_cursor(&mut cursor, is_smart_depth)?;
     }
 
@@ -1941,8 +2061,8 @@ impl Encoder {
   /// Encodes a request to cancel historical data.
   pub fn encode_cancel_historical_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel historical data: ReqID={}", req_id);
-    if self.server_version < 24 { // Version check from Java EClientSocket
-      return Err(IBKRError::Unsupported("Server version does not support historical data cancellation.".to_string()));
+    if self.server_version < 24 {
+      return Err(IBKRError::Unsupported("Server version does not support historical data query cancellation.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelHistoricalData as i32)?;
     let version = 1;
@@ -1957,10 +2077,9 @@ impl Encoder {
   pub fn encode_request_news_providers(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request news providers");
     if self.server_version < min_server_ver::REQ_NEWS_PROVIDERS {
-      return Err(IBKRError::Unsupported("Server version does not support news provider requests.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support news providers request.".to_string()));
     }
-    let cursor = self.start_encoding(OutgoingMessageType::RequestNewsProviders as i32)?;
-    // No version or parameters for this message
+    let cursor = self.start_encoding(OutgoingMessageType::ReqNewsProviders as i32)?;
     Ok(self.finish_encoding(cursor))
   }
 
@@ -1974,17 +2093,16 @@ impl Encoder {
   ) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request news article: ReqID={}, Provider={}, ArticleID={}", req_id, provider_code, article_id);
     if self.server_version < min_server_ver::REQ_NEWS_ARTICLE {
-      return Err(IBKRError::Unsupported("Server version does not support news article requests.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support news article request.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestNewsArticle as i32)?;
-    let version = 1; // Version supporting options
-    self.write_int_to_cursor(&mut cursor, version)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqNewsArticle as i32)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     self.write_str_to_cursor(&mut cursor, provider_code)?;
     self.write_str_to_cursor(&mut cursor, article_id)?;
 
+    // newsArticleOptions added in NEWS_QUERY_ORIGINS
     if self.server_version >= min_server_ver::NEWS_QUERY_ORIGINS {
-      self.write_tag_value_list(&mut cursor, news_article_options)?;
+      self.write_tag_value_list(&mut cursor, &news_article_options)?;
     }
 
     Ok(self.finish_encoding(cursor))
@@ -2003,21 +2121,19 @@ impl Encoder {
   ) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request historical news: ReqID={}, ConID={}, Providers={}", req_id, con_id, provider_codes);
     if self.server_version < min_server_ver::REQ_HISTORICAL_NEWS {
-      return Err(IBKRError::Unsupported("Server version does not support historical news requests.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support historical news request.".to_string()));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestHistoricalNews as i32)?;
-    let version = 1; // Version supporting options
-    self.write_int_to_cursor(&mut cursor, version)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqHistoricalNews as i32)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     self.write_int_to_cursor(&mut cursor, con_id)?;
     self.write_str_to_cursor(&mut cursor, provider_codes)?;
-    // Format dates as "yyyy-MM-dd HH:mm:ss.fff"
-    let start_str = start_date_time.map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true)).unwrap_or_default();
-    let end_str = end_date_time.map(|dt| dt.to_rfc3339_opts(SecondsFormat::Millis, true)).unwrap_or_default();
+    let start_str = self.format_datetime_tws(start_date_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
+    let end_str = self.format_datetime_tws(end_date_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
     self.write_str_to_cursor(&mut cursor, &start_str)?;
     self.write_str_to_cursor(&mut cursor, &end_str)?;
     self.write_int_to_cursor(&mut cursor, total_results)?;
 
+    // historicalNewsOptions added in NEWS_QUERY_ORIGINS
     if self.server_version >= min_server_ver::NEWS_QUERY_ORIGINS {
       self.write_tag_value_list(&mut cursor, historical_news_options)?;
     }
@@ -2028,7 +2144,7 @@ impl Encoder {
   /// Encodes a request to subscribe to news bulletins.
   pub fn encode_request_news_bulletins(&self, all_msgs: bool) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request news bulletins: AllMsgs={}", all_msgs);
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestNewsBulletins as i32)?;
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqNewsBulletins as i32)?;
     let version = 1;
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_bool_to_cursor(&mut cursor, all_msgs)?; // true = all bulletins, false = only new bulletins
@@ -2059,18 +2175,23 @@ impl Encoder {
     if self.server_version < min_server_ver::FUNDAMENTAL_DATA {
       return Err(IBKRError::Unsupported("Server version does not support fundamental data requests.".to_string()));
     }
-    let version = if self.server_version >= min_server_ver::FUND_DATA_FIELDS { 3 } else { 2 }; // Version 3 adds options
-    if version < 3 && !fundamental_data_options.is_empty() {
-      warn!("Fundamental data options provided but server version {} does not support them (requires v{} / FUND_DATA_FIELDS). Options ignored.", self.server_version, min_server_ver::FUND_DATA_FIELDS);
+    if self.server_version < min_server_ver::TRADING_CLASS && contract.con_id > 0 {
+      return Err(IBKRError::Unsupported("Server version does not support conId parameter in reqFundamentalData.".to_string()));
+    }
+    // Options require LINKING (70)
+    if self.server_version < min_server_ver::LINKING && !fundamental_data_options.is_empty() {
+      return Err(IBKRError::Unsupported("Server version does not support fundamental data options.".to_string()));
     }
 
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestFundamentalData as i32)?;
-
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqFundamentalData as i32)?;
+    // Let's stick to version 2 for simplicity, as options are handled by LINKING check anyway.
+    let version = 2;
     self.write_int_to_cursor(&mut cursor, version)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
-    // Contract fields (minimal set needed, match Java client)
-    self.write_optional_int_to_cursor(&mut cursor, Some(contract.con_id))?; // Version 2+ requires conId
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_int_to_cursor(&mut cursor, contract.con_id)?;
+    }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
     self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
@@ -2081,8 +2202,8 @@ impl Encoder {
     // Report type
     self.write_str_to_cursor(&mut cursor, report_type)?;
 
-    // Fundamental data options (TagValue list - Added in version 3)
-    if version >= 3 {
+    // Fundamental data options (TagValue list - Added server version LINKING)
+    if self.server_version >= min_server_ver::LINKING {
       self.write_tag_value_list(&mut cursor, fundamental_data_options)?;
     }
 
@@ -2093,7 +2214,7 @@ impl Encoder {
   pub fn encode_cancel_fundamental_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel fundamental data: ReqID={}", req_id);
     if self.server_version < min_server_ver::FUNDAMENTAL_DATA {
-      return Err(IBKRError::Unsupported("Server version does not support fundamental data cancellation.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support fundamental data requests.".to_string())); // Message adjusted
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelFundamentalData as i32)?;
     let version = 1;
@@ -2109,12 +2230,11 @@ impl Encoder {
     debug!("Encoding request WSH metadata: ReqID={}", req_id);
     if self.server_version < min_server_ver::WSHE_CALENDAR {
       return Err(IBKRError::UpdateTws(format!(
-        "It does not support WSHE Calendar API. Server version {}, requires {}",
+        "Server version {} does not support WSHE Calendar API (requires {}).", // Adjusted message
         self.server_version, min_server_ver::WSHE_CALENDAR
       )));
     }
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestWshMetaData as i32)?;
-    // No version field
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqWshMetaData as i32)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
@@ -2124,12 +2244,11 @@ impl Encoder {
     debug!("Encoding cancel WSH metadata: ReqID={}", req_id);
     if self.server_version < min_server_ver::WSHE_CALENDAR {
       return Err(IBKRError::UpdateTws(format!(
-        "It does not support WSHE Calendar API. Server version {}, requires {}",
+        "Server version {} does not support WSHE Calendar API (requires {}).", // Adjusted message
         self.server_version, min_server_ver::WSHE_CALENDAR
       )));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelWshMetaData as i32)?;
-    // No version field
     self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
@@ -2144,42 +2263,36 @@ impl Encoder {
 
     if self.server_version < min_server_ver::WSHE_CALENDAR {
       return Err(IBKRError::UpdateTws(format!(
-        "It does not support WSHE Calendar API. Server version {}, requires {}",
+        "Server version {} does not support WSHE Calendar API (requires {}).", // Adjusted message
         self.server_version, min_server_ver::WSHE_CALENDAR
       )));
     }
-
-    // Check filter support based on version
     if self.server_version < min_server_ver::WSH_EVENT_DATA_FILTERS {
       if wsh_event_data.filter.is_some() || wsh_event_data.fill_watchlist || wsh_event_data.fill_portfolio || wsh_event_data.fill_competitors {
         return Err(IBKRError::UpdateTws(format!(
-          "It does not support WSH event data filters. Server version {}, requires {}",
+          "Server version {} does not support WSH event data filters (requires {}).", // Adjusted message
           self.server_version, min_server_ver::WSH_EVENT_DATA_FILTERS
         )));
       }
     }
-
     if self.server_version < min_server_ver::WSH_EVENT_DATA_FILTERS_DATE {
       if wsh_event_data.start_date.is_some() || wsh_event_data.end_date.is_some() || wsh_event_data.total_limit != Some(i32::MAX) {
-        // Note: Java checks against Integer.MAX_VALUE. We check against Some(i32::MAX).
-        // If total_limit is None, it's equivalent to MAX_VALUE not being sent.
-        // Let's adjust the check slightly: allow None or Some(i32::MAX) if version < FILTERS_DATE
+        // Allow None total_limit, as it implies MAX_VALUE wasn't sent
         if wsh_event_data.start_date.is_some() || wsh_event_data.end_date.is_some() || (wsh_event_data.total_limit.is_some() && wsh_event_data.total_limit != Some(i32::MAX)) {
           return Err(IBKRError::UpdateTws(format!(
-            "It does not support WSH event data date filters. Server version {}, requires {}",
+            "Server version {} does not support WSH event data date filters (requires {}).", // Adjusted message
             self.server_version, min_server_ver::WSH_EVENT_DATA_FILTERS_DATE
           )));
         }
       }
     }
 
-    let mut cursor = self.start_encoding(OutgoingMessageType::RequestWshEventData as i32)?;
-    // No explicit version field sent
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqWshEventData as i32)?;
 
     self.write_int_to_cursor(&mut cursor, req_id)?;
-    // Send conId, default to 0 if None
     self.write_int_to_cursor(&mut cursor, wsh_event_data.con_id.unwrap_or(0))?;
 
+    // Filters added in WSH_EVENT_DATA_FILTERS
     if self.server_version >= min_server_ver::WSH_EVENT_DATA_FILTERS {
       self.write_optional_str_to_cursor(&mut cursor, wsh_event_data.filter.as_deref())?;
       self.write_bool_to_cursor(&mut cursor, wsh_event_data.fill_watchlist)?;
@@ -2187,10 +2300,10 @@ impl Encoder {
       self.write_bool_to_cursor(&mut cursor, wsh_event_data.fill_competitors)?;
     }
 
+    // Date filters added in WSH_EVENT_DATA_FILTERS_DATE
     if self.server_version >= min_server_ver::WSH_EVENT_DATA_FILTERS_DATE {
       self.write_optional_str_to_cursor(&mut cursor, wsh_event_data.start_date.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, wsh_event_data.end_date.as_deref())?;
-      // Send totalLimit, default to i32::MAX if None (matching Java MAX_VALUE behavior)
       self.write_int_to_cursor(&mut cursor, wsh_event_data.total_limit.unwrap_or(i32::MAX))?;
     }
 
@@ -2202,12 +2315,11 @@ impl Encoder {
     debug!("Encoding cancel WSH event data: ReqID={}", req_id);
     if self.server_version < min_server_ver::WSHE_CALENDAR {
       return Err(IBKRError::UpdateTws(format!(
-        "It does not support WSHE Calendar API. Server version {}, requires {}",
+        "Server version {} does not support WSHE Calendar API (requires {}).", // Adjusted message
         self.server_version, min_server_ver::WSHE_CALENDAR
       )));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelWshEventData as i32)?;
-    // No version field
     self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }

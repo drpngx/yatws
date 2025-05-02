@@ -390,6 +390,15 @@ impl Default for OrderRequest {
   }
 }
 
+/// Represents parameters for cancelling an order, mirroring Java's OrderCancel.
+#[derive(Debug, Clone, Default)]
+pub struct OrderCancel {
+  pub manual_order_cancel_time: Option<String>, // Format: "YYYYMMDD-HH:MM:SS"
+  pub ext_operator: Option<String>,
+  pub external_user_id: Option<String>,
+  pub manual_order_indicator: Option<i32>, // Use i32::MAX for unset
+}
+
 /// Order state - reflects the live status received from TWS messages like `openOrder` and `orderStatus`.
 /// Note that fields like filled quantity, remaining quantity, avg fill price, last fill price,
 /// and why held primarily come from the `orderStatus` message, while margin values,

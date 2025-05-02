@@ -371,7 +371,7 @@ impl PartialEq for Contract {
       return false;
     }
 
-    // This is unordered comparison, as in the Java code
+    // Unordered comparison of combo legs
     for leg in &self.combo_legs {
       if !other.combo_legs.iter().any(|other_leg| other_leg == leg) {
         return false;
@@ -401,7 +401,7 @@ impl Eq for Contract {}
 
 impl Hash for Contract {
   fn hash<H: Hasher>(&self, state: &mut H) {
-    // Use a few fields only as a compromise between performance and hashCode quality.
+    // Use a few key fields for hashing
     self.con_id.hash(state);
     if !self.symbol.is_empty() {
       self.symbol.hash(state);

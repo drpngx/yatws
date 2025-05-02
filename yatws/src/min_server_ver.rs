@@ -132,8 +132,72 @@ pub mod min_server_ver {
   pub const PROFESSIONAL_CUSTOMER: i32 = 184;
   pub const BOND_ACCRUED_INTEREST: i32 = 185;
   pub const INELIGIBILITY_REASONS: i32 = 186;
-  pub const RFQ_FIELDS: i32 = 187;
+  pub const RFQ_FIELDS: i32 = 187; // Added
+
+  // ---- TWS versions ----
+  // TWS sends the current time as the first message upon connection. The time format is YYYYMMDD{ }hh:mm:ss{ }zzz. Requires TWS v40+.
+  pub const SERVER_VERSION_TIME_MSG: i32 = 20;
+  // TWS sends support for Hedging orders. Requires TWS v87+.
+  pub const SERVER_VERSION_HEDGE_ORDERS: i32 = 54;
+  // TWS can receive Financial Advisor data. Requires TWS v89+.
+  pub const SERVER_VERSION_FINANCIAL_ADVISOR: i32 = 18;
+  // TWS supports the reqMktDataStream request. Requires TWS v90+.
+  pub const SERVER_VERSION_MARKET_DATA_STREAMING: i32 = 59; // Corresponds to REQ_MARKET_DATA_TYPE
+  // TWS supports requesting market depth data. Requires TWS v6.05+.
+  pub const SERVER_VERSION_MARKET_DEPTH: i32 = 10;
+  // TWS supports requesting news bulletins. Requires TWS v??+.
+  pub const SERVER_VERSION_NEWS_BULLETINS: i32 = 12;
+  // TWS supports requesting auto open orders. Requires TWS v??+.
+  pub const SERVER_VERSION_AUTO_OPEN_ORDERS: i32 = 15;
+  // TWS supports requesting all open orders. Requires TWS v??+.
+  pub const SERVER_VERSION_ALL_OPEN_ORDERS: i32 = 16;
+  // TWS supports requesting managed accounts. Requires TWS v??+.
+  pub const SERVER_VERSION_MANAGED_ACCOUNTS: i32 = 17;
+  // TWS supports replacing FA data. Requires TWS v??+.
+  pub const SERVER_VERSION_REPLACE_FA: i32 = 19;
+  // TWS supports exercising options. Requires TWS v21+.
+  pub const SERVER_VERSION_EXERCISE_OPTIONS: i32 = 21;
+  // TWS supports scanner subscriptions. Requires TWS v24+.
+  pub const SERVER_VERSION_SCANNER_SUBSCRIPTION: i32 = 22;
+  // TWS supports requesting scanner parameters. Requires TWS v24+.
+  pub const SERVER_VERSION_SCANNER_PARAMETERS: i32 = 24;
+  // TWS supports canceling historical data requests. Requires TWS v24+.
+  pub const SERVER_VERSION_CANCEL_HISTORICAL_DATA: i32 = 25;
+  // TWS supports requesting current time. Requires TWS v33+.
+  pub const SERVER_VERSION_CURRENT_TIME: i32 = 49;
+  // TWS supports canceling real time bars. Requires TWS v34+.
+  pub const SERVER_VERSION_CANCEL_REAL_TIME_BARS: i32 = 51;
+  // TWS supports canceling fundamental data requests. Requires TWS v40+.
+  pub const SERVER_VERSION_CANCEL_FUNDAMENTAL_DATA: i32 = 53;
+  // TWS supports requesting positions multi. Requires TWS v103+.
+  pub const SERVER_VERSION_REQ_POSITIONS_MULTI: i32 = 74;
+  // TWS supports canceling positions multi. Requires TWS v103+.
+  pub const SERVER_VERSION_CANCEL_POSITIONS_MULTI: i32 = 75;
+  // TWS supports requesting account updates multi. Requires TWS v103+.
+  pub const SERVER_VERSION_REQ_ACCOUNT_UPDATES_MULTI: i32 = 76;
+  // TWS supports canceling account updates multi. Requires TWS v103+.
+  pub const SERVER_VERSION_CANCEL_ACCOUNT_UPDATES_MULTI: i32 = 77;
+  // TWS supports verifying requests. Requires TWS v70+.
+  pub const SERVER_VERSION_VERIFY_REQUEST: i32 = 65;
+  // TWS supports verifying messages. Requires TWS v70+.
+  pub const SERVER_VERSION_VERIFY_MESSAGE: i32 = 66;
+  // TWS supports querying display groups. Requires TWS v70+.
+  pub const SERVER_VERSION_QUERY_DISPLAY_GROUPS: i32 = 67;
+  // TWS supports subscribing to group events. Requires TWS v70+.
+  pub const SERVER_VERSION_SUBSCRIBE_TO_GROUP_EVENTS: i32 = 68;
+  // TWS supports updating display groups. Requires TWS v70+.
+  pub const SERVER_VERSION_UPDATE_DISPLAY_GROUP: i32 = 69;
+  // TWS supports unsubscribing from group events. Requires TWS v70+.
+  pub const SERVER_VERSION_UNSUBSCRIBE_FROM_GROUP_EVENTS: i32 = 70;
+  // TWS supports verifying and authenticating requests. Requires TWS v74+.
+  pub const SERVER_VERSION_VERIFY_AND_AUTH_REQUEST: i32 = 72;
+  // TWS supports verifying and authenticating messages. Requires TWS v74+.
+  pub const SERVER_VERSION_VERIFY_AND_AUTH_MESSAGE: i32 = 73;
+  // TWS supports canceling histogram data requests. Requires TWS v119+.
+  pub const SERVER_VERSION_CANCEL_HISTOGRAM_DATA: i32 = 89;
+
 
   // If you add anything, please edit the MAX_SUPPORTED_VERSION.
+  // MAX_SUPPORTED_VERSION should match the highest constant defined above.
   pub const MAX_SUPPORTED_VERSION: i32 = 187;
 }

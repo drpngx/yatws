@@ -632,7 +632,7 @@ pub struct WshEventDataRequest {
   pub fill_watchlist: bool,
   pub fill_portfolio: bool,
   pub fill_competitors: bool,
-  pub start_date: Option<String>, // Format "yyyy-MM-dd" ? Check API docs
-  pub end_date: Option<String>,   // Format "yyyy-MM-dd" ? Check API docs
+  pub start_date: Option<String>, // Format "yyyy-MM-dd"
+  pub end_date: Option<String>,   // Format "yyyy-MM-dd"
   pub total_limit: Option<i32>, // Use i32::MAX for no limit
 }

@@ -5,7 +5,7 @@ use std::time::Duration;
 use chrono::Utc;
 use log::{debug, error, info, warn};
 
-use crate::order::{Order, OrderRequest, OrderUpdates, OrderState, OrderStatus};
+use crate::order::{Order, OrderRequest, OrderUpdates, OrderState, OrderStatus, OrderCancel};
 use crate::contract::Contract;
 use crate::conn::MessageBroker;
 use crate::base::IBKRError;
@@ -201,7 +201,7 @@ impl OrderManager {
 
     // Prepare and send message
     let encoder = Encoder::new(self.message_broker.get_server_version()?);
-    let cancel_msg = encoder.encode_cancel_order(order_id_int)?;
+    let cancel_msg = encoder.encode_cancel_order(order_id_int, &OrderCancel::default())?;
     self.message_broker.send_message(&cancel_msg)?;
 
     // We don't update the local state optimistically. We wait for orderStatus.
