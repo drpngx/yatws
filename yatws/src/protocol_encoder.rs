@@ -389,7 +389,7 @@ impl Encoder {
   fn write_optional_double_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<f64>) -> Result<(), IBKRError> {
     match val {
       Some(v) if v != f64::MAX => self.write_double_to_cursor(cursor, v),
-      _ => self.write_double_to_cursor(cursor, 0.0), // Send 0.0 for None or MAX_VALUE
+      _ => self.write_str_to_cursor(cursor, ""),
     }
   }
 
@@ -398,7 +398,11 @@ impl Encoder {
   }
 
   fn write_optional_bool_to_cursor(&self, cursor: &mut Cursor<Vec<u8>>, val: Option<bool>) -> Result<(), IBKRError> {
-    self.write_bool_to_cursor(cursor, val.unwrap_or(false))
+    if let Some(val) = val {
+      self.write_bool_to_cursor(cursor, val)
+    } else {
+      self.write_int_to_cursor(cursor, i32::MAX)
+    }
   }
 
   // Helper for TagValue lists

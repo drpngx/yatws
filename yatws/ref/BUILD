@@ -25,3 +25,9 @@ py_binary(
     srcs = ["broker_cleanup_orders.py"],
     deps = ["//:ibapi"],
 )
+
+py_binary(
+    name = "broker_order_market",
+    srcs = ["broker_order_market.py"],
+    deps = ["//:ibapi"],
+)
