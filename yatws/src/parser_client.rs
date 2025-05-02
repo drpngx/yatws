@@ -490,9 +490,6 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InvalidRequestTopic | // Placeholder, DDE specific
     ClientErrorCode::MaxApiPagesReached |
     ClientErrorCode::InvalidLogLevel | // Placeholder
-    ClientErrorCode::ServerErrorReadingApiClientRequest |
-    ClientErrorCode::ServerErrorValidatingApiClientRequest |
-    ClientErrorCode::ServerErrorProcessingApiClientRequest |
     ClientErrorCode::ServerErrorCause | // Placeholder
     ClientErrorCode::ServerErrorReadingDdeClientRequest | // DDE specific
     ClientErrorCode::ClientIdInUse |
@@ -503,6 +500,18 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::ApplicationLocked | // Deprecated
     ClientErrorCode::UnknownCode => { // Catch-all for explicitly unknown or default
       handler.client.handle_error(id, error_code, &error_msg);
+    }
+
+    ClientErrorCode::ServerErrorReadingApiClientRequest |
+    ClientErrorCode::ServerErrorValidatingApiClientRequest |
+    ClientErrorCode::ServerErrorProcessingApiClientRequest => {
+      // Manual routing:
+      match &error_msg {
+        msg if msg.contains("account summary requests") => {
+          handler.account.handle_error(id, error_code, msg);
+        },
+        _ => { handler.client.handle_error(id, error_code, &error_msg); }
+      }
     }
     // Catch-all for any codes missed in the above explicit routing.
     // This prevents compile errors if new codes are added to the enum
