@@ -203,9 +203,9 @@ impl AccountManager {
     // Prepare state for waiting
     let mut waiting_guard = self.manual_position_refresh_waiting.lock();
     if *waiting_guard {
-        // Another refresh is already in progress
-        warn!("list_open_positions called while another manual refresh is already in progress.");
-        return Err(IBKRError::AlreadyRunning("Manual position refresh already in progress".to_string()));
+      // Another refresh is already in progress
+      warn!("list_open_positions called while another manual refresh is already in progress.");
+      return Err(IBKRError::AlreadyRunning("Manual position refresh already in progress".to_string()));
     }
     *waiting_guard = true; // Mark as waiting
 
@@ -218,32 +218,32 @@ impl AccountManager {
     let start_time = std::time::Instant::now();
 
     while *waiting_guard && start_time.elapsed() < wait_timeout {
-        let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
-        let timeout_result = self.manual_position_refresh_cond.wait_for(&mut waiting_guard, remaining_timeout);
-        if timeout_result.timed_out() {
-            // Check again if the state changed right before timeout
-            if *waiting_guard { // Still waiting after timeout
-                warn!("Manual position refresh timed out waiting for PositionEnd.");
-                *waiting_guard = false; // Reset waiting flag on timeout
-                return Err(IBKRError::Timeout("Manual position refresh timed out".to_string()));
-            }
+      let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
+      let timeout_result = self.manual_position_refresh_cond.wait_for(&mut waiting_guard, remaining_timeout);
+      if timeout_result.timed_out() {
+        // Check again if the state changed right before timeout
+        if *waiting_guard { // Still waiting after timeout
+          warn!("Manual position refresh timed out waiting for PositionEnd.");
+          *waiting_guard = false; // Reset waiting flag on timeout
+          return Err(IBKRError::Timeout("Manual position refresh timed out".to_string()));
         }
-        // If woken up, the loop condition (*waiting_guard) will be checked again.
+      }
+      // If woken up, the loop condition (*waiting_guard) will be checked again.
     }
 
     // Check if we exited the loop because waiting became false (success)
     if !*waiting_guard {
-        debug!("Manual position refresh completed successfully.");
-        // Drop the lock explicitly before reading account state
-        drop(waiting_guard);
-        // Read the updated positions
-        let state = self.account_state.read();
-        Ok(state.portfolio.values().filter(|p| p.quantity != 0.0).cloned().collect())
+      debug!("Manual position refresh completed successfully.");
+      // Drop the lock explicitly before reading account state
+      drop(waiting_guard);
+      // Read the updated positions
+      let state = self.account_state.read();
+      Ok(state.portfolio.values().filter(|p| p.quantity != 0.0).cloned().collect())
     } else {
-        // Should not happen if timeout logic is correct, but handle defensively
-        error!("Manual position refresh loop ended unexpectedly while still marked as waiting.");
-        *waiting_guard = false; // Reset flag
-        Err(IBKRError::InternalError("Manual position refresh state inconsistency".to_string()))
+      // Should not happen if timeout logic is correct, but handle defensively
+      error!("Manual position refresh loop ended unexpectedly while still marked as waiting.");
+      *waiting_guard = false; // Reset flag
+      Err(IBKRError::InternalError("Manual position refresh state inconsistency".to_string()))
     }
   }
 
@@ -494,33 +494,33 @@ impl AccountManager {
         while (u_state.waiting_for_initial_summary_end || u_state.waiting_for_initial_position_end)
           && start_time.elapsed() < wait_timeout
         {
-            let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
-            let timeout_result = self.update_cond.wait_for(&mut u_state, remaining_timeout); // Wait
+          let remaining_timeout = wait_timeout.checked_sub(start_time.elapsed()).unwrap_or(Duration::from_millis(1));
+          let timeout_result = self.update_cond.wait_for(&mut u_state, remaining_timeout); // Wait
 
-            if timeout_result.timed_out() {
-              warn!("Initial account data fetch timed out (SummaryEnd: {}, PositionEnd: {}).",
-                    !u_state.waiting_for_initial_summary_end, !u_state.waiting_for_initial_position_end);
+          if timeout_result.timed_out() {
+            warn!("Initial account data fetch timed out (SummaryEnd: {}, PositionEnd: {}).",
+                  !u_state.waiting_for_initial_summary_end, !u_state.waiting_for_initial_position_end);
 
-              // Store the ID needed for cancellation later, outside the lock
-              if u_state.waiting_for_initial_summary_end {
-                cancel_req_id_on_timeout = u_state.current_summary_req_id;
-              }
-
-              // Set flag and reset state *within the lock*
-              timed_out = true;
-              u_state.is_initial_fetch_active = false;
-              u_state.waiting_for_initial_summary_end = false;
-              u_state.waiting_for_initial_position_end = false;
-              u_state.current_summary_req_id = None; // Clear ID on timeout
-
-              // Set error result
-              result = Err(IBKRError::Timeout("Initial account data fetch timed out".to_string()));
-              // No drop(u_state) here! Let the scope handle it.
-              break; // Exit wait loop
+            // Store the ID needed for cancellation later, outside the lock
+            if u_state.waiting_for_initial_summary_end {
+              cancel_req_id_on_timeout = u_state.current_summary_req_id;
             }
-            // If not timed out, log and continue loop
-            debug!("Initial fetch wait notified. Waiting flags: Summary={}, Position={}", u_state.waiting_for_initial_summary_end, u_state.waiting_for_initial_position_end);
-          } // End while loop
+
+            // Set flag and reset state *within the lock*
+            timed_out = true;
+            u_state.is_initial_fetch_active = false;
+            u_state.waiting_for_initial_summary_end = false;
+            u_state.waiting_for_initial_position_end = false;
+            u_state.current_summary_req_id = None; // Clear ID on timeout
+
+            // Set error result
+            result = Err(IBKRError::Timeout("Initial account data fetch timed out".to_string()));
+            // No drop(u_state) here! Let the scope handle it.
+            break; // Exit wait loop
+          }
+          // If not timed out, log and continue loop
+          debug!("Initial fetch wait notified. Waiting flags: Summary={}, Position={}", u_state.waiting_for_initial_summary_end, u_state.waiting_for_initial_position_end);
+        } // End while loop
 
         // After loop, check final state (still holding lock `u_state`)
         if !timed_out { // Only check consistency if timeout didn't happen inside the loop
@@ -528,14 +528,14 @@ impl AccountManager {
             // This means loop ended, but flags somehow still set (e.g., spurious wakeup?)
             // Or maybe timeout occurred *after* last check but before this block? Check elapsed time again.
             if start_time.elapsed() >= wait_timeout {
-               warn!("Initial fetch loop finished but flags not cleared and timeout elapsed. Resetting.");
-               timed_out = true; // Mark as timed out for logic below
-               result = Err(IBKRError::Timeout("Initial account fetch timed out (consistency check)".to_string()));
-               cancel_req_id_on_timeout = u_state.current_summary_req_id; // Store ID for cancellation
+              warn!("Initial fetch loop finished but flags not cleared and timeout elapsed. Resetting.");
+              timed_out = true; // Mark as timed out for logic below
+              result = Err(IBKRError::Timeout("Initial account fetch timed out (consistency check)".to_string()));
+              cancel_req_id_on_timeout = u_state.current_summary_req_id; // Store ID for cancellation
             } else {
-               // This path is less likely, maybe a race or spurious wakeup?
-               warn!("Initial fetch loop finished but flags not cleared (Summary={}, Position={}). Resetting.", u_state.waiting_for_initial_summary_end, u_state.waiting_for_initial_position_end);
-               result = Err(IBKRError::InternalError("Initial fetch state inconsistency after wait".to_string()));
+              // This path is less likely, maybe a race or spurious wakeup?
+              warn!("Initial fetch loop finished but flags not cleared (Summary={}, Position={}). Resetting.", u_state.waiting_for_initial_summary_end, u_state.waiting_for_initial_position_end);
+              result = Err(IBKRError::InternalError("Initial fetch state inconsistency after wait".to_string()));
             }
             // Reset state fully on any error discovered here
             u_state.is_initial_fetch_active = false;
@@ -556,12 +556,12 @@ impl AccountManager {
         }
         // If timed_out is true (either from loop or consistency check), ensure state is reset
         if timed_out {
-            u_state.is_initial_fetch_active = false;
-            u_state.waiting_for_initial_summary_end = false;
-            u_state.waiting_for_initial_position_end = false;
-            // current_summary_req_id should already be None if timeout occurred,
-            // but set it again just in case the consistency check path was taken.
-            u_state.current_summary_req_id = None;
+          u_state.is_initial_fetch_active = false;
+          u_state.waiting_for_initial_summary_end = false;
+          u_state.waiting_for_initial_position_end = false;
+          // current_summary_req_id should already be None if timeout occurred,
+          // but set it again just in case the consistency check path was taken.
+          u_state.current_summary_req_id = None;
         }
       } // Release lock (`u_state`) here
 
@@ -571,20 +571,20 @@ impl AccountManager {
 
       // --- Send cancellations outside the lock if a timeout occurred ---
       if timed_out {
-          if let Some(id) = cancel_req_id_on_timeout {
-              match encoder.encode_cancel_account_summary(id) {
-                  Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
-                  Err(e) => error!("Failed to encode cancel summary msg on timeout: {:?}", e),
-              }
+        if let Some(id) = cancel_req_id_on_timeout {
+          match encoder.encode_cancel_account_summary(id) {
+            Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
+            Err(e) => error!("Failed to encode cancel summary msg on timeout: {:?}", e),
           }
-          match encoder.encode_cancel_positions() {
-              Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
-              Err(e) => error!("Failed to encode cancel positions msg on timeout: {:?}", e),
-          }
+        }
+        match encoder.encode_cancel_positions() {
+          Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
+          Err(e) => error!("Failed to encode cancel positions msg on timeout: {:?}", e),
+        }
       } else if result.is_ok() {
-          // --- Notify observers on successful completion ---
-          info!("Initial fetch successful, triggering initial account notification.");
-          self.check_and_notify_account_update();
+        // --- Notify observers on successful completion ---
+        info!("Initial fetch successful, triggering initial account notification.");
+        self.check_and_notify_account_update();
       }
     } // End if initial_fetch_started
     log::debug!("Final return.");
@@ -702,8 +702,8 @@ impl AccountManager {
   fn check_and_notify_account_update(&self) {
     // Skip notification if initial fetch is still running to prevent re-entrance
     if self.is_initializing.load(Ordering::Relaxed) {
-        debug!("Skipping account notification during initialization.");
-        return;
+      debug!("Skipping account notification during initialization.");
+      return;
     }
 
     match self.get_account_info() {
@@ -896,35 +896,35 @@ impl AccountHandler for AccountManager {
 
     // --- Check for Manual Refresh Completion ---
     { // Scope for manual refresh lock
-        let mut waiting_guard = self.manual_position_refresh_waiting.lock();
-        if *waiting_guard {
-            info!("PositionEnd received, completing manual position refresh.");
-            *waiting_guard = false; // Clear the flag
-            self.manual_position_refresh_cond.notify_all(); // Notify the waiting list_open_positions call
-            // We assume PositionEnd is only for one thing at a time (either initial or manual)
-            // If it could be for both, logic would need adjustment.
-            return; // Handled as manual refresh completion
-        }
-        // else: Not waiting for a manual refresh, proceed to check initial fetch.
+      let mut waiting_guard = self.manual_position_refresh_waiting.lock();
+      if *waiting_guard {
+        info!("PositionEnd received, completing manual position refresh.");
+        *waiting_guard = false; // Clear the flag
+        self.manual_position_refresh_cond.notify_all(); // Notify the waiting list_open_positions call
+        // We assume PositionEnd is only for one thing at a time (either initial or manual)
+        // If it could be for both, logic would need adjustment.
+        return; // Handled as manual refresh completion
+      }
+      // else: Not waiting for a manual refresh, proceed to check initial fetch.
     } // Release manual refresh lock
 
     // --- Check for Initial Fetch Completion ---
     { // Scope for initial fetch lock
-        let mut u_state = self.update_state.lock();
-        if u_state.is_initial_fetch_active && u_state.waiting_for_initial_position_end {
-            info!("PositionEnd received during initial fetch, marking positions as complete.");
-            u_state.waiting_for_initial_position_end = false;
-            // Check if this was the *last* thing we were waiting for during initial fetch
-            if !u_state.waiting_for_initial_summary_end {
-                info!("PositionEnd: Initial fetch complete. Notifying waiter.");
-                self.update_cond.notify_all();
-            } else {
-                info!("PositionEnd: Still waiting for initial SummaryEnd.");
-            }
+      let mut u_state = self.update_state.lock();
+      if u_state.is_initial_fetch_active && u_state.waiting_for_initial_position_end {
+        info!("PositionEnd received during initial fetch, marking positions as complete.");
+        u_state.waiting_for_initial_position_end = false;
+        // Check if this was the *last* thing we were waiting for during initial fetch
+        if !u_state.waiting_for_initial_summary_end {
+          info!("PositionEnd: Initial fetch complete. Notifying waiter.");
+          self.update_cond.notify_all();
         } else {
-            // Received during continuous updates or when not actively fetching/refreshing
-            debug!("PositionEnd received outside of initial fetch or manual refresh.");
+          info!("PositionEnd: Still waiting for initial SummaryEnd.");
         }
+      } else {
+        // Received during continuous updates or when not actively fetching/refreshing
+        debug!("PositionEnd received outside of initial fetch or manual refresh.");
+      }
     } // Release initial fetch lock
   }
 
