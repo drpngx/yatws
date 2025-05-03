@@ -470,6 +470,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::AccountUpdateSubscriptionRejected | // Could be Account
     ClientErrorCode::OrderModificationRejectedProcessing | // Could be Order
     ClientErrorCode::MarketDataFarmDisconnected | // Could be Market Data
+    ClientErrorCode::MarketDataFarmConnecting | // Could be Market Data
     ClientErrorCode::MarketDataFarmConnected | // Could be Market Data
     ClientErrorCode::HistoricalDataFarmDisconnected | // Could be Market Data
     ClientErrorCode::HistoricalDataFarmConnected | // Could be Market Data

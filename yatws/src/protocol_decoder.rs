@@ -308,6 +308,8 @@ pub enum ClientErrorCode {
   OutsideRthAttributeIgnored = 2109,
   /// Connectivity between TWS and server is broken. It will be restored automatically.
   TwsToServerConnectionBroken = 2110,
+  ///
+  MarketDataFarmConnecting = 2119,
   /// Cross Side Warning
   CrossSideWarning = 2137,
   /// Sec-def data farm connection is OK
@@ -997,6 +999,7 @@ impl fmt::Display for ClientErrorCode {
       ClientErrorCode::OrderModificationRejectedProcessing => "Unable to modify this order as it is still being processed.",
       ClientErrorCode::MarketDataFarmDisconnected => "A market data farm is disconnected.",
       ClientErrorCode::MarketDataFarmConnected => "Market data farm connection is OK",
+      ClientErrorCode::MarketDataFarmConnecting => "Connecting to market data farm.",
       ClientErrorCode::HistoricalDataFarmDisconnected => "A historical data farm is disconnected.",
       ClientErrorCode::HistoricalDataFarmConnected => "A historical data farm is connected.",
       ClientErrorCode::HistoricalDataFarmInactive => "A historical data farm connection has become inactive but should be available upon demand.",
