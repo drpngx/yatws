@@ -50,6 +50,7 @@ pub struct AccountManager {
   executions_state: Mutex<HashMap<i32, ExecutionRequestState>>, // State for execution requests (ReqID -> State)
   executions_cond: Condvar, // Condvar for execution requests
   is_subscribed: AtomicBool, // Track if continuous updates are active
+  is_initializing: AtomicBool, // Track if subscribe_account_updates initial fetch is running
   // State for manual position refresh
   manual_position_refresh_waiting: Mutex<bool>,
   manual_position_refresh_cond: Condvar,
@@ -71,6 +72,7 @@ impl AccountManager {
       executions_state: Mutex::new(HashMap::new()),
       executions_cond: Condvar::new(),
       is_subscribed: AtomicBool::new(false),
+      is_initializing: AtomicBool::new(false), // Initialize the new flag
       manual_position_refresh_waiting: Mutex::new(false),
       manual_position_refresh_cond: Condvar::new(),
     })
@@ -193,7 +195,7 @@ impl AccountManager {
   pub fn list_open_positions(&self) -> Result<Vec<Position>, IBKRError> {
     self.ensure_subscribed()?; // Ensure basic account info is likely present
 
-    info!("Requesting manual position refresh.");
+    debug!("Requesting manual position refresh.");
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
     let request_msg = encoder.encode_request_positions()?;
@@ -209,7 +211,7 @@ impl AccountManager {
 
     // Send the request *after* marking as waiting but *before* starting the wait loop
     self.message_broker.send_message(&request_msg)?;
-    info!("Manual position request sent. Waiting for PositionEnd...");
+    debug!("Manual position request sent. Waiting for PositionEnd...");
 
     // Wait for position_end to signal completion
     let wait_timeout = Duration::from_secs(15); // Adjust timeout as needed
@@ -231,7 +233,7 @@ impl AccountManager {
 
     // Check if we exited the loop because waiting became false (success)
     if !*waiting_guard {
-        info!("Manual position refresh completed successfully.");
+        debug!("Manual position refresh completed successfully.");
         // Drop the lock explicitly before reading account state
         drop(waiting_guard);
         // Read the updated positions
@@ -416,10 +418,7 @@ impl AccountManager {
       }
       if u_state.is_initial_fetch_active {
         warn!("Initial fetch already in progress, returning.");
-        // Another thread is handling it, consider this call successful conceptually
-        // Or return AlreadyRunning if strict single-entry is desired.
-        return Ok(());
-        // return Err(IBKRError::AlreadyRunning("Initial fetch already in progress".to_string()));
+        return Err(IBKRError::AlreadyRunning("Initial fetch already in progress".to_string()));
       }
 
       // Mark initial fetch as active *within the lock*
@@ -428,6 +427,7 @@ impl AccountManager {
       u_state.waiting_for_initial_summary_end = true;
       u_state.waiting_for_initial_position_end = true;
       initial_fetch_started = true; // Mark that *this* thread initiated the fetch
+      self.is_initializing.store(true, Ordering::SeqCst); // Set initializing flag
 
       // Prepare messages
       // Request a comprehensive set of tags, including PnL
@@ -565,6 +565,10 @@ impl AccountManager {
         }
       } // Release lock (`u_state`) here
 
+      // --- Clear initializing flag ---
+      // Do this *after* releasing the lock and *before* potential notification
+      self.is_initializing.store(false, Ordering::SeqCst);
+
       // --- Send cancellations outside the lock if a timeout occurred ---
       if timed_out {
           if let Some(id) = cancel_req_id_on_timeout {
@@ -577,8 +581,13 @@ impl AccountManager {
               Ok(cancel_msg) => { let _ = self.message_broker.send_message(&cancel_msg); },
               Err(e) => error!("Failed to encode cancel positions msg on timeout: {:?}", e),
           }
+      } else if result.is_ok() {
+          // --- Notify observers on successful completion ---
+          info!("Initial fetch successful, triggering initial account notification.");
+          self.check_and_notify_account_update();
       }
     } // End if initial_fetch_started
+    log::debug!("Final return.");
 
     result // Return Ok(()) on success, or Err(IBKRError::Timeout/InternalError) on failure
   } // End subscribe_account_updates function
@@ -691,6 +700,12 @@ impl AccountManager {
   }
 
   fn check_and_notify_account_update(&self) {
+    // Skip notification if initial fetch is still running to prevent re-entrance
+    if self.is_initializing.load(Ordering::Relaxed) {
+        debug!("Skipping account notification during initialization.");
+        return;
+    }
+
     match self.get_account_info() {
       Ok(info) => self.notify_account_update(&info),
       Err(e) => {
