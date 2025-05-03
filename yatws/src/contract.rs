@@ -518,8 +518,29 @@ pub struct ContractDetails {
   pub fund_name: Option<String>,
   pub fund_family: Option<String>,
   pub fund_type: Option<String>,
-  pub ineligibility_reason_list: Vec<(String, String)>,
+  pub fund_front_load: Option<String>,
+  pub fund_back_load: Option<String>,
+  pub fund_back_load_time_interval: Option<String>,
+  pub fund_management_fee: Option<String>,
+  pub fund_closed: Option<bool>,
+  pub fund_closed_for_new_investors: Option<bool>,
+  pub fund_closed_for_new_money: Option<bool>,
+  pub fund_notify_amount: Option<String>,
+  pub fund_minimum_initial_purchase: Option<String>,
+  pub fund_subsequent_minimum_purchase: Option<String>,
+  pub fund_blue_sky_states: Option<String>,
+  pub fund_blue_sky_territories: Option<String>,
+  pub fund_distribution_policy_indicator: Option<String>, // Consider enum later
+  pub fund_asset_type: Option<String>, // Consider enum later
+  pub ineligibility_reason_list: Vec<IneligibilityReason>,
   pub bond_details: Option<BondDetails>,
+}
+
+/// Represents a reason why a contract might be ineligible for certain actions.
+#[derive(Debug, Clone, Default)]
+pub struct IneligibilityReason {
+    pub id: String,
+    pub description: String,
 }
 
 /// Bond-specific details
@@ -577,6 +598,20 @@ impl Default for ContractDetails {
       fund_name: None,
       fund_family: None,
       fund_type: None,
+      fund_front_load: None,
+      fund_back_load: None,
+      fund_back_load_time_interval: None,
+      fund_management_fee: None,
+      fund_closed: None,
+      fund_closed_for_new_investors: None,
+      fund_closed_for_new_money: None,
+      fund_notify_amount: None,
+      fund_minimum_initial_purchase: None,
+      fund_subsequent_minimum_purchase: None,
+      fund_blue_sky_states: None,
+      fund_blue_sky_territories: None,
+      fund_distribution_policy_indicator: None,
+      fund_asset_type: None,
       ineligibility_reason_list: Vec::new(),
     }
   }

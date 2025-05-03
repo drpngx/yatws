@@ -8,7 +8,7 @@ use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time};
 use crate::contract::{
   BondDetails, Contract, ContractDetails, SecType, OptionRight, SoftDollarTier, FamilyCode,
   ContractDescription, DepthMktDataDescription, PriceIncrement,
-  HistoricalSession, TagValue
+  HistoricalSession, TagValue, IneligibilityReason
 };
 use crate::min_server_ver::min_server_ver;
 use log::{debug, warn};
@@ -345,7 +345,6 @@ pub fn process_historical_schedule(handler: &Arc<dyn ReferenceDataHandler>, pars
 
 /// Process contract data message
 pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
-  log::debug!("CONTRACT DATA 0");
   // Determine version based on server version (matching Java EDecoder logic)
   let version = if server_version < min_server_ver::SIZE_RULES { parser.read_int()? } else { 8 }; // Default to 8 for newer servers
 
@@ -440,29 +439,36 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
     contract_details.suggested_size_increment = parser.read_decimal_max()?.unwrap_or(0.);
   }
   if server_version >= min_server_ver::FUND_DATA_FIELDS && contract_details.contract.sec_type == SecType::Fund {
-    // Add parsing for fund fields if needed
-    warn!("Parsing FUND specific fields in contract details not implemented yet.");
-    let _fund_name = parser.read_string()?;
-    let _fund_family = parser.read_string()?;
-    // ... skip other fund fields for now ...
-    let _ = parser.read_string()?; // type
-    let _ = parser.read_string()?; // front load
-    let _ = parser.read_string()?; // back load
-    let _ = parser.read_string()?; // back load time interval
-    let _ = parser.read_string()?; // management fee
-    let _ = parser.read_bool()?; // closed
-    let _ = parser.read_bool()?; // closed for new investors
-    let _ = parser.read_bool()?; // closed for new money
-    let _ = parser.read_string()?; // notify amount
-    let _ = parser.read_string()?; // min initial purchase
-    let _ = parser.read_string()?; // subsequent min purchase
-    let _ = parser.read_string()?; // blue sky states
-    let _ = parser.read_string()?; // blue sky territories
-    let _ = parser.read_string()?; // distribution policy
-    let _ = parser.read_string()?; // asset type
+    contract_details.fund_name = parser.read_string_opt()?;
+    contract_details.fund_family = parser.read_string_opt()?;
+    contract_details.fund_type = parser.read_string_opt()?;
+    contract_details.fund_front_load = parser.read_string_opt()?;
+    contract_details.fund_back_load = parser.read_string_opt()?;
+    contract_details.fund_back_load_time_interval = parser.read_string_opt()?;
+    contract_details.fund_management_fee = parser.read_string_opt()?;
+    contract_details.fund_closed = parser.read_bool_opt()?;
+    contract_details.fund_closed_for_new_investors = parser.read_bool_opt()?;
+    contract_details.fund_closed_for_new_money = parser.read_bool_opt()?;
+    contract_details.fund_notify_amount = parser.read_string_opt()?;
+    contract_details.fund_minimum_initial_purchase = parser.read_string_opt()?;
+    contract_details.fund_subsequent_minimum_purchase = parser.read_string_opt()?;
+    contract_details.fund_blue_sky_states = parser.read_string_opt()?;
+    contract_details.fund_blue_sky_territories = parser.read_string_opt()?;
+    contract_details.fund_distribution_policy_indicator = parser.read_string_opt()?;
+    contract_details.fund_asset_type = parser.read_string_opt()?;
   }
-  if server_version >= min_server_ver::BOND_ISSUERID { // Issuer ID can apply to non-bonds too (rare)
-    contract_details.contract.issuer_id = parser.read_string_opt()?;
+  if server_version >= min_server_ver::INELIGIBILITY_REASONS {
+    let count = parser.read_int()?;
+    if count > 0 {
+      let mut reasons = Vec::with_capacity(count as usize);
+      for _ in 0..count {
+        reasons.push(IneligibilityReason {
+          id: parser.read_string()?,
+          description: parser.read_string()?,
+        });
+      }
+      contract_details.ineligibility_reason_list = reasons;
+    }
   }
 
   debug!("Contract Data: ReqID={}, Symbol={}, SecType={}, Exchange={}, ConID={}",

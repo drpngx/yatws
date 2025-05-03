@@ -100,7 +100,6 @@ pub fn parse_tws_date_time(time_str: &str) -> Result<DateTime<Utc>, IBKRError> {
 
 pub struct FieldParser<'a> {
   data: &'a [u8],
-  pos: usize,
   fields: Vec<(usize, usize)>, // (start, end) indices for each field
   current_field: usize,
 }
@@ -110,7 +109,6 @@ impl<'a> FieldParser<'a> {
   pub fn new(data: &'a [u8]) -> Self {
     let mut parser = Self {
       data,
-      pos: 0,
       fields: Vec::new(),
       current_field: 0,
     };
@@ -134,7 +132,10 @@ impl<'a> FieldParser<'a> {
   }
 
   #[allow(dead_code)]
-  pub fn curpos(&self) -> usize { self.pos }
+  pub fn curpos(&self) -> usize { self.current_field }
+
+  #[allow(dead_code)]
+  pub fn num(&self) -> usize { self.fields.len() }
 
   /// Read a string field
   pub fn read_string(&mut self) -> Result<String, IBKRError> {
@@ -261,6 +262,15 @@ impl<'a> FieldParser<'a> {
   pub fn read_bool(&mut self) -> Result<bool, IBKRError> {
     let val = self.read_int()?;
     Ok(val != 0)
+  }
+
+  pub fn read_bool_opt(&mut self) -> Result<Option<bool>, IBKRError> {
+    if self.peek_string()?.is_empty() {
+      Ok(None)
+    } else {
+      let val = self.read_int()?;
+      Ok(Some(val != 0))
+    }
   }
 
   /// Peek at the next string without advancing the cursor

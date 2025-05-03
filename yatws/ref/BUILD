@@ -3,6 +3,12 @@
 package(default_visibility = ["//visibility:public"])
 
 py_binary(
+    name = "parse_message",
+    srcs = ["parse_message.py"],
+    deps = ["//:ibapi"],
+)
+
+py_binary(
     name = "single_quote",
     srcs = ["single_quote.py"],
     deps = ["//:ibapi"],
