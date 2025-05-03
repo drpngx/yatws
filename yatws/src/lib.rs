@@ -28,7 +28,7 @@ mod parser_data_market;
 mod parser_data_fin;
 mod parser_data_news;
 mod order_builder;
-mod options_strategy_builder; // Add new module
+mod options_strategy_builder;
 mod conn_log;
 mod conn_mock;
 pub mod data;

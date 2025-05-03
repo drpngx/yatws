@@ -15,9 +15,10 @@ use yatws::{
   IBKRError,
   client::IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
-  OrderBuilder,
-  contract::Contract,
+  OrderBuilder, OptionsStrategyBuilder,
+  contract::{Contract, SecType},
 };
+use chrono::{Utc, Duration as ChronoDuration, NaiveDate};
 
 // --- Test Definition Infrastructure ---
 
@@ -808,7 +809,7 @@ mod test_cases {
                 first_bar.time.format("%Y-%m-%d %H:%M:%S"), first_bar.open, first_bar.high, first_bar.low, first_bar.close, first_bar.volume);
         }
         if let Some(last_bar) = bars.last() {
-           info!("  Last Bar:  Time={}, O={}, H={}, L={}, C={}, Vol={}",
+          info!("  Last Bar:  Time={}, O={}, H={}, L={}, C={}, Vol={}",
                 last_bar.time.format("%Y-%m-%d %H:%M:%S"), last_bar.open, last_bar.high, last_bar.low, last_bar.close, last_bar.volume);
         }
         // Basic validation: Check if we received *some* bars. The exact number can vary.
@@ -824,6 +825,169 @@ mod test_cases {
       }
     }
   }
+
+
+  pub(super) fn box_spread_yield_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Box Spread Yield Calculation ---");
+    let data_market = client.data_market();
+    let data_ref = client.data_ref(); // Need this for the builder
+
+    // Define underlyings and parameters - Use Futures now
+    let underlyings = [
+        ("ES", SecType::Future, "CME", 5000.0), // Symbol, SecType, Exchange, Approx Price
+        // ("RTY", SecType::Future, "CME", 2000.0), // Example: Russell 2000 E-mini (adjust symbol/price)
+    ];
+    let strike_diffs = [50.0, 100.0]; // Adjust strike diffs for futures scale
+    let expiry_offsets_days = [30, 60, 90]; // Approx days from today
+
+    let today = Utc::now().date_naive();
+    let target_expiries: Vec<NaiveDate> = expiry_offsets_days
+      .iter()
+      .map(|&days| today + ChronoDuration::days(days))
+      .collect();
+
+    let mut overall_success = true;
+
+    for (symbol, sec_type, _exchange, placeholder_price) in underlyings {
+      info!("--- Testing Underlying: {} ({}) ---", symbol, sec_type);
+
+      // Use placeholder price from array
+      let placeholder_underlying_price = placeholder_price;
+      if placeholder_underlying_price <= 0.0 {
+          warn!("Invalid placeholder price ({}) for {}, strike selection might be inaccurate.", placeholder_underlying_price, symbol);
+      }
+
+
+      for target_expiry in &target_expiries {
+        for &strike_diff in &strike_diffs {
+          // Target strikes around the placeholder price
+          let target_strike1 = placeholder_underlying_price - strike_diff / 2.0;
+          let target_strike2 = placeholder_underlying_price + strike_diff / 2.0;
+
+          info!("Attempting Box for {} Exp~{}, Strikes~{:.2}/{:.2}",
+                symbol, target_expiry.format("%Y-%m-%d"), target_strike1, target_strike2);
+
+          // Use OptionsStrategyBuilder to define the box
+          let builder_result = OptionsStrategyBuilder::new(
+            data_ref.clone(), // Clone Arc
+            symbol,
+            placeholder_underlying_price,
+            1.0, // Quantity = 1 box
+            sec_type.clone(),
+          )?
+            .box_spread_nearest_expiry(*target_expiry, target_strike1, target_strike2);
+
+          let builder = match builder_result {
+            Ok(b) => b,
+            Err(e) => {
+              error!("Failed to define box strategy for {} Exp~{}: {:?}", symbol, target_expiry, e);
+              overall_success = false;
+              continue; // Try next parameters
+            }
+          };
+
+          // Build the combo contract
+          let (combo_contract, _order_request) = match builder.build() {
+            Ok(result) => result,
+            Err(e) => {
+              error!("Failed to build combo contract for {} Exp~{}: {:?}", symbol, target_expiry, e);
+              overall_success = false;
+              continue;
+            }
+          };
+
+          // Extract actual strikes and expiry from the built contract for yield calculation
+          // This requires parsing the combo legs or relying on the builder's internal state (which isn't exposed)
+          // Let's re-extract from combo legs for robustness
+          let mut strikes = Vec::new();
+          let mut expiry_str = None;
+          for leg in &combo_contract.combo_legs {
+            // Fetch full contract details for the leg to get strike/expiry
+            // This is inefficient but necessary if builder doesn't expose details
+            let leg_contract_spec = Contract { con_id: leg.con_id, ..Default::default() };
+            match data_ref.get_contract_details(&leg_contract_spec) {
+              Ok(details_list) if !details_list.is_empty() => {
+                let leg_details = &details_list[0].contract;
+                if let Some(s) = leg_details.strike { strikes.push(s); }
+                if expiry_str.is_none() { expiry_str = leg_details.last_trade_date_or_contract_month.clone(); }
+              },
+              Ok(_) => { error!("Leg contract details not found for conId {}", leg.con_id); overall_success = false; break; },
+              Err(e) => { error!("Error fetching leg details for conId {}: {:?}", leg.con_id, e); overall_success = false; break; },
+            }
+          }
+          if !overall_success { continue; } // Skip if leg details failed
+
+          strikes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+          strikes.dedup();
+          if strikes.len() != 2 {
+            error!("Could not determine unique strike pair from combo legs: {:?}", strikes);
+            overall_success = false;
+            continue;
+          }
+          let actual_strike1 = strikes[0];
+          let actual_strike2 = strikes[1];
+          let actual_strike_diff = actual_strike2 - actual_strike1;
+
+          let actual_expiry_date = match expiry_str.as_deref().and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok()) {
+            Some(date) => date,
+            None => {
+              error!("Could not determine expiry date from combo legs.");
+              overall_success = false;
+              continue;
+            }
+          };
+
+          info!("  Actual Box: Exp={}, Strikes={:.2}/{:.2} (Diff={:.2})",
+                actual_expiry_date.format("%Y%m%d"), actual_strike1, actual_strike2, actual_strike_diff);
+
+          // Get quote for the combo contract
+          let quote_timeout = Duration::from_secs(20);
+          match data_market.get_quote(&combo_contract, quote_timeout) {
+            Ok((Some(bid), Some(ask), _last)) => {
+              let mid_price = (bid + ask) / 2.0;
+              info!("  Quote: Bid={:.4}, Ask={:.4}, Mid={:.4}", bid, ask, mid_price);
+
+              // Calculate yield
+              let days_to_expiry = (actual_expiry_date - today).num_days();
+              if days_to_expiry <= 0 {
+                warn!("  Expiry date {} is not in the future. Cannot calculate yield.", actual_expiry_date);
+                continue;
+              }
+              let time_to_expiry_years = days_to_expiry as f64 / 365.0;
+
+              if mid_price <= 0.0 || mid_price >= actual_strike_diff {
+                warn!("  Mid price ({:.4}) is invalid relative to strike difference ({:.2}). Cannot calculate yield.", mid_price, actual_strike_diff);
+                continue;
+              }
+
+              let ratio = mid_price / actual_strike_diff;
+              let yield_pct = -ratio.ln() / time_to_expiry_years * 100.0;
+              info!("  => Calculated Annual Yield: {:.4}%", yield_pct);
+
+            }
+            Ok((bid, ask, _)) => {
+              error!("  Failed to get valid Bid/Ask quote for combo. Bid: {:?}, Ask: {:?}", bid, ask);
+              overall_success = false;
+            }
+            Err(e) => {
+              error!("  Error getting quote for combo: {:?}", e);
+              overall_success = false;
+            }
+          }
+          // Add a small delay to avoid pacing violations, especially in live mode
+          std::thread::sleep(Duration::from_secs(2));
+        }
+      }
+    }
+
+    if overall_success {
+      info!("Box spread yield test completed successfully (individual quote checks passed/failed as logged).");
+      Ok(())
+    } else {
+      Err(anyhow!("One or more errors occurred during box spread yield test."))
+    }
+  }
+
 } // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
@@ -841,6 +1005,7 @@ inventory::submit! { TestDefinition { name: "tick-by-tick-blocking", func: test_
 inventory::submit! { TestDefinition { name: "market-depth-blocking", func: test_cases::market_depth_blocking_impl } }
 inventory::submit! { TestDefinition { name: "historical-data", func: test_cases::historical_data_impl } }
 inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
+inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 
 

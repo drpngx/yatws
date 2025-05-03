@@ -118,11 +118,17 @@ impl OptionsStrategyBuilder {
       "Fetching underlying details for {} ({})",
       self.underlying_symbol, self.underlying_sec_type
     );
+    // Use SMART for Stocks, but leave empty for Futures to let TWS resolve exchange
+    let initial_exchange = match self.underlying_sec_type {
+        SecType::Stock => "SMART".to_string(),
+        SecType::Future => String::new(), // Let TWS find the exchange for Futures
+        _ => return Err(IBKRError::InvalidContract("Unsupported underlying type for fetching details".to_string())),
+    };
     let underlying_contract_spec = Contract {
       symbol: self.underlying_symbol.clone(),
       sec_type: self.underlying_sec_type.clone(),
-      exchange: "SMART".to_string(), // Use SMART to find primary exchange
-      currency: "".to_string(),      // Allow API to determine currency
+      exchange: initial_exchange,
+      currency: String::new(),      // Allow API to determine currency
       ..Default::default()
     };
 
@@ -248,20 +254,22 @@ impl OptionsStrategyBuilder {
         expiry_str, strike, right, self.underlying_con_id.unwrap()
       );
 
-      // We need the option exchange. Assume SMART for now, or use underlying_exchange?
-      // Let's use SMART initially, might need refinement.
-      let option_exchange = "SMART";
+      // Determine option secType and exchange based on underlying
+      let (option_sec_type, option_exchange) = match self.underlying_sec_type {
+          SecType::Stock => (SecType::Option, "SMART".to_string()), // Use SMART for stock options
+          SecType::Future => (SecType::FutureOption, self.underlying_exchange.clone()), // Use underlying's exchange for FOP
+          _ => return Err(IBKRError::InvalidContract("Unsupported underlying type for options".to_string())),
+      };
 
       let option_contract_spec = Contract {
         symbol: self.underlying_symbol.clone(),
-        sec_type: SecType::Option,
+        sec_type: option_sec_type, // Use determined SecType (OPT or FOP)
         last_trade_date_or_contract_month: Some(expiry_str.clone()), // Use formatted string
         strike: Some(strike),
         right: Some(right),
         exchange: option_exchange.to_string(),
         currency: self.underlying_currency.clone(),
-        // multiplier might be needed, fetch from option params if available
-        // multiplier: Some("100".to_string()), // Default US
+        // Multiplier will be filled in from details below
         ..Default::default()
       };
 
@@ -280,8 +288,27 @@ impl OptionsStrategyBuilder {
               expiry_str, strike, right, details_list[0].contract.con_id);
       }
 
-      let contract = details_list[0].contract.clone(); // Clone the contract part
-      debug!("Found option contract: ConID={}", contract.con_id);
+      let mut contract = details_list[0].contract.clone(); // Clone the contract part
+
+      // Ensure the multiplier is set correctly from the details
+      if contract.multiplier.is_none() || contract.multiplier.as_deref() == Some("") {
+          let detail_multiplier = details_list[0].contract.multiplier.clone(); // Multiplier from details
+          if detail_multiplier.is_some() && detail_multiplier.as_deref() != Some("") {
+              debug!("Updating contract multiplier from details: {:?}", detail_multiplier);
+              contract.multiplier = detail_multiplier;
+          } else {
+              // Fallback or error if multiplier still missing
+              let default_mult = match contract.sec_type {
+                  SecType::FutureOption => "50", // Common default for ES, but might be wrong
+                  _ => "100", // Default for STK options
+              };
+              warn!("Multiplier not found in contract details for ConID {}. Using default: {}", contract.con_id, default_mult);
+              contract.multiplier = Some(default_mult.to_string());
+          }
+      }
+
+
+      debug!("Found option contract: ConID={}, Multiplier={:?}", contract.con_id, contract.multiplier);
       // Insert using the original cache_key with strike_bits
       self.option_contract_cache.insert(cache_key.clone(), contract);
     }

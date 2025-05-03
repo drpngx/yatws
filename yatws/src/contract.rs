@@ -21,7 +21,7 @@ pub enum SecType {
   IndexOption,    // IOPT
   Forward,        // FWD
   Combo,          // BAG
-  Index,
+  Index,          // IND
   Bill,           // BILL
   Fund,           // FUND
   Fixed,          // FIXED
@@ -214,10 +214,10 @@ impl Contract {
     }
   }
 
-  /// Create a new option contract
+  /// Create a new stock option contract
   pub fn option(
     symbol: &str,
-    expiry: &str,
+    expiry: &str, // YYYYMMDD
     strike: f64,
     right: OptionRight,
     exchange: &str,
@@ -247,6 +247,42 @@ impl Contract {
       combo_legs: Vec::new(),
     }
   }
+
+  /// Create a new futures option contract
+  pub fn futures_option(
+    symbol: &str,
+    expiry: &str, // YYYYMMDD
+    strike: f64,
+    right: OptionRight,
+    exchange: &str,
+    currency: &str,
+    multiplier: &str, // Futures options often have specific multipliers (e.g., "50" for ES)
+  ) -> Self {
+    Contract {
+      con_id: 0,
+      symbol: symbol.to_string(),
+      sec_type: SecType::FutureOption, // FOP
+      last_trade_date_or_contract_month: Some(expiry.to_string()),
+      exchange: exchange.to_string(),
+      currency: currency.to_string(),
+      strike: Some(strike),
+      right: Some(right),
+      multiplier: Some(multiplier.to_string()), // Use provided multiplier
+      last_trade_date: None,
+      primary_exchange: None,
+      local_symbol: None,
+      trading_class: None,
+      sec_id_type: None,
+      sec_id: None,
+      description: None,
+      issuer_id: None,
+      delta_neutral_contract: None,
+      include_expired: false,
+      combo_legs_descrip: None,
+      combo_legs: Vec::new(),
+    }
+  }
+
 
   /// Is this a combo contract?
   pub fn is_combo(&self) -> bool {

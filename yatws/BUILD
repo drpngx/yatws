@@ -104,6 +104,7 @@ rust_binary(
     deps = [
         ":yatws",
         "@crates//:anyhow",
+        "@crates//:chrono",
         "@crates//:clap",
         "@crates//:env_logger",
         "@crates//:inventory",

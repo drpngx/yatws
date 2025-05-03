@@ -345,6 +345,7 @@ pub fn process_historical_schedule(handler: &Arc<dyn ReferenceDataHandler>, pars
 
 /// Process contract data message
 pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
+  log::debug!("CONTRACT DATA 0");
   // Determine version based on server version (matching Java EDecoder logic)
   let version = if server_version < min_server_ver::SIZE_RULES { parser.read_int()? } else { 8 }; // Default to 8 for newer servers
 
@@ -362,7 +363,8 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
     contract_details.contract.last_trade_date = parser.read_string_opt()?;
   }
   contract_details.contract.strike = Some(parser.read_double()?);
-  contract_details.contract.right = Some(OptionRight::from_str(&parser.read_string()?)?);
+  let opt_right = parser.read_string()?;
+  contract_details.contract.right = if opt_right.is_empty() { None } else { Some(OptionRight::from_str(&opt_right)?) };
   contract_details.contract.exchange = parser.read_string()?;
   contract_details.contract.currency = parser.read_string()?;
   contract_details.contract.local_symbol = parser.read_string_opt()?;
@@ -462,8 +464,6 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
   if server_version >= min_server_ver::BOND_ISSUERID { // Issuer ID can apply to non-bonds too (rare)
     contract_details.contract.issuer_id = parser.read_string_opt()?;
   }
-
-  // Note: Ineligibility reasons are not part of the standard ContractData message in Java EDecoder
 
   debug!("Contract Data: ReqID={}, Symbol={}, SecType={}, Exchange={}, ConID={}",
          req_id, contract_details.contract.symbol, contract_details.contract.sec_type, contract_details.contract.exchange, contract_details.contract.con_id);
