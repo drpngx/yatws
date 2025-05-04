@@ -17,6 +17,7 @@ use yatws::{
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
   contract::{Contract, SecType},
+  data::MarketDataType
 };
 use chrono::{Utc, Duration as ChronoDuration, NaiveDate};
 
@@ -362,6 +363,7 @@ mod test_cases {
         snapshot,
         regulatory_snapshot,
         mkt_data_options,
+        Some(MarketDataType::Delayed)
       )
       .context("Failed to request market data")?;
 
@@ -392,7 +394,7 @@ mod test_cases {
 
     info!("Requesting quote for {} with timeout {:?}", contract.symbol, timeout);
 
-    match data_mgr.get_quote(&contract, timeout) {
+    match data_mgr.get_quote(&contract, Some(MarketDataType::Delayed), timeout) {
       Ok((bid, ask, last)) => {
         info!("Successfully received quote for {}:", contract.symbol);
         info!("  Bid:  {:?}", bid);
@@ -484,6 +486,7 @@ mod test_cases {
       snapshot,
       regulatory_snapshot,
       mkt_data_options,
+      Some(MarketDataType::Delayed),
       timeout,
       // Completion condition: Wait until we have received at least one BID (1) and one ASK (2) price tick.
       |state| {
@@ -800,7 +803,8 @@ mod test_cases {
       use_rth,
       format_date,
       keep_up_to_date,
-      chart_options,
+      Some(MarketDataType::Delayed),
+      chart_options
     ) {
       Ok(bars) => {
         info!("Successfully received {} historical bars.", bars.len());
@@ -942,7 +946,7 @@ mod test_cases {
 
           // Get quote for the combo contract
           let quote_timeout = Duration::from_secs(20);
-          match data_market.get_quote(&combo_contract, quote_timeout) {
+          match data_market.get_quote(&combo_contract, Some(MarketDataType::Delayed), quote_timeout) {
             Ok((Some(bid), Some(ask), _last)) => {
               let mid_price = (bid + ask) / 2.0;
               info!("  Quote: Bid={:.4}, Ask={:.4}, Mid={:.4}", bid, ask, mid_price);

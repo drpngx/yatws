@@ -11,7 +11,7 @@ use crate::contract::{
 use crate::protocol_decoder::ClientErrorCode;
 use crate::data::{
   TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
-  MarketDataTypeEnum,
+  MarketDataType,
 };
 use crate::news::NewsProvider;
 
@@ -205,7 +205,7 @@ pub trait MarketDataHandler: Send + Sync {
               dividend_impact: f64, dividends_to_last_trade_date: f64);
   fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData);
   fn tick_snapshot_end(&self, req_id: i32);
-  fn market_data_type(&self, req_id: i32, market_data_type: MarketDataTypeEnum);
+  fn market_data_type(&self, req_id: i32, market_data_type: MarketDataType);
   fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32);
 
   // --- Real Time Bars ---

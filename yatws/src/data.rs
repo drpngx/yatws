@@ -59,7 +59,7 @@ pub struct MarketDataSubscription {
   pub ticks: HashMap<i32, Vec<(f64, TickAttrib)>>, // Stores price ticks: tick_type -> Vec<(price, attrib)>
   pub sizes: HashMap<i32, Vec<f64>>, // Stores size ticks: tick_type -> Vec<size>
   // General
-  pub market_data_type: Option<MarketDataTypeEnum>, // From message 58
+  pub market_data_type: Option<MarketDataType>, // From message 58
   pub error_code: Option<i32>,
   pub error_message: Option<String>,
 }
@@ -232,7 +232,7 @@ pub struct MarketDepthRow {
 }
 
 /// Historical data request state
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct HistoricalDataRequestState {
   pub req_id: i32,
@@ -242,29 +242,47 @@ pub struct HistoricalDataRequestState {
   pub end_date: String,   // Received in end message
   pub end_received: bool,
   pub update_received: bool, // Flag if real-time updates come after initial load
+  pub requested_market_data_type: MarketDataType, // Track the type requested
   pub error_code: Option<i32>,
   pub error_message: Option<String>,
+}
+
+impl Default for HistoricalDataRequestState {
+  fn default() -> Self {
+    Self {
+      req_id: 0,
+      contract: Contract::default(),
+      bars: Vec::new(),
+      start_date: String::new(),
+      end_date: String::new(),
+      end_received: false,
+      update_received: false,
+      requested_market_data_type: MarketDataType::RealTime, // Default
+      error_code: None,
+      error_message: None,
+    }
+  }
 }
 
 
 /// Enum for Market Data Type Message (ID 58)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MarketDataTypeEnum {
-  Unknown = 0,
-  RealTime = 1,
+pub enum MarketDataType {
+  Unknown = 0, // Should not happen in practice
+  RealTime = 1, // Default
   Frozen = 2,
   Delayed = 3,
   DelayedFrozen = 4,
 }
 
-impl From<i32> for MarketDataTypeEnum {
+impl From<i32> for MarketDataType {
   fn from(v: i32) -> Self {
     match v {
-      1 => MarketDataTypeEnum::RealTime,
-      2 => MarketDataTypeEnum::Frozen,
-      3 => MarketDataTypeEnum::Delayed,
-      4 => MarketDataTypeEnum::DelayedFrozen,
-      _ => MarketDataTypeEnum::Unknown,
+      1 => MarketDataType::RealTime,
+      2 => MarketDataType::Frozen,
+      3 => MarketDataType::Delayed,
+      4 => MarketDataType::DelayedFrozen,
+      _ => MarketDataType::Unknown,
     }
   }
 }
@@ -315,25 +333,4 @@ pub struct TickNewsData {
   pub article_id: String,
   pub headline: String,
   pub extra_data: String,
-}
-
-
-/// Market data type enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum MarketDataType {
-  BidAsk,
-  LastPrice,
-  HighLow,
-  Volume,
-  HistoricalVolatility,
-  ImpliedVolatility,
-  OptionChain, // Note: Option Chain data usually comes via SecDefOptParams
-  PutCallRatio,
-  DividendSchedule,
-  Fundamentals,
-  News,
-  RealTimeBars, // Added
-  TickByTick,  // Added
-  MarketDepth, // Added
 }

@@ -5,7 +5,7 @@ use crate::handler::MarketDataHandler;
 use crate::base::IBKRError;
 use crate::protocol_dec_parser::FieldParser;
 use crate::contract::{ContractDetails, OptionRight, Bar, SecType}; // Added Contract
-use crate::data::{TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataTypeEnum, TickOptionComputationData}; // Added new types
+use crate::data::{TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataType, TickOptionComputationData}; // Added new types
 use crate::min_server_ver::min_server_ver; // Added min_server_ver
 use std::str::FromStr;
 
@@ -313,7 +313,7 @@ pub fn process_market_data_type(handler: &Arc<dyn MarketDataHandler>, parser: &m
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
   let market_data_type_int = parser.read_int()?;
-  let market_data_type = MarketDataTypeEnum::from(market_data_type_int);
+  let market_data_type = MarketDataType::from(market_data_type_int);
 
   log::debug!("Market Data Type: ReqId={}, Type={:?} ({})", req_id, market_data_type, market_data_type_int);
   handler.market_data_type(req_id, market_data_type);

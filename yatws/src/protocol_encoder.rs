@@ -7,6 +7,7 @@ use crate::contract::{Contract, SecType, ComboLeg};
 use crate::order::{OrderRequest, OrderType, OrderCancel};
 use crate::account::ExecutionFilter;
 use crate::data_wsh::WshEventDataRequest;
+use crate::data::MarketDataType;
 use crate::min_server_ver::min_server_ver;
 use chrono::{DateTime, Utc};
 use log::{debug, trace, warn};
@@ -2315,6 +2316,20 @@ impl Encoder {
 
     Ok(self.finish_encoding(cursor))
   }
+
+  /// Encodes a request to set the market data type.
+  pub fn encode_request_market_data_type(&self, market_data_type: MarketDataType) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request market data type: Type={:?}", market_data_type);
+    if self.server_version < min_server_ver::REQ_MARKET_DATA_TYPE {
+        return Err(IBKRError::Unsupported("Server version does not support reqMarketDataType.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqMarketDataType as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, market_data_type as i32)?; // 1=Live, 2=Frozen, 3=Delayed, 4=Delayed Frozen
+    Ok(self.finish_encoding(cursor))
+  }
+
 
   /// Encodes a request to cancel WSH event data.
   pub fn encode_cancel_wsh_event_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {

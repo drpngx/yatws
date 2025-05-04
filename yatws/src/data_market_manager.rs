@@ -5,12 +5,12 @@ use crate::contract::{Bar, Contract, ContractDetails};
 use crate::data::{
   MarketDataSubscription, RealTimeBarSubscription, TickByTickSubscription, MarketDepthSubscription,
   HistoricalDataRequestState, TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
-  MarketDataTypeEnum, MarketDepthRow, TickByTickData,
+  MarketDataType, MarketDepthRow, TickByTickData,
 };
 use crate::handler::MarketDataHandler;
 use crate::protocol_encoder::Encoder;
-use crate::protocol_decoder::ClientErrorCode; // Added import
-use crate::base::IBKRError::Timeout; // Import Timeout variant directly
+use crate::protocol_decoder::ClientErrorCode;
+use crate::base::IBKRError::Timeout;
 use parking_lot::{Condvar, Mutex};
 use chrono::{Utc, TimeZone};
 use std::collections::HashMap;
@@ -130,8 +130,12 @@ pub struct DataMarketManager {
   message_broker: Arc<MessageBroker>,
   // State for active subscriptions
   subscriptions: Mutex<HashMap<i32, MarketSubscription>>,
-  // Condvar primarily for historical data requests that block
+  // Condvar primarily for blocking data requests (historical, get_quote, etc.)
   request_cond: Condvar,
+  // State for the connection's current market data type
+  current_market_data_type: Mutex<MarketDataType>,
+  // Condvar for waiting on market data type changes
+  market_data_type_cond: Condvar,
   // Optional: Observer pattern for streaming data
   // observers: RwLock<Vec<Weak<dyn MarketDataObserver>>>,
 }
@@ -145,8 +149,76 @@ impl DataMarketManager {
       message_broker,
       subscriptions: Mutex::new(HashMap::new()),
       request_cond: Condvar::new(),
+      current_market_data_type: Mutex::new(MarketDataType::RealTime), // Default to RealTime
+      market_data_type_cond: Condvar::new(),
       // observers: RwLock::new(Vec::new()),
     })
+  }
+
+  // --- Helper to set market data type if needed ---
+  fn set_market_data_type_if_needed(
+    &self,
+    desired_type: MarketDataType,
+    timeout: Duration,
+  ) -> Result<(), IBKRError> {
+    if desired_type == MarketDataType::Unknown {
+        return Err(IBKRError::ConfigurationError("Cannot request Unknown market data type".to_string()));
+    }
+
+    let start_time = std::time::Instant::now();
+    let mut current_type_guard = self.current_market_data_type.lock();
+
+    if *current_type_guard == desired_type {
+      debug!("Market data type already set to {:?}, no change needed.", desired_type);
+      return Ok(());
+    }
+
+    info!("Current market data type is {:?}, requesting change to {:?}", *current_type_guard, desired_type);
+    let server_version = self.message_broker.get_server_version()?;
+    if server_version < crate::min_server_ver::min_server_ver::REQ_MARKET_DATA_TYPE {
+        return Err(IBKRError::Unsupported(format!(
+            "Server version {} does not support changing market data type (requires {}).",
+            server_version, crate::min_server_ver::min_server_ver::REQ_MARKET_DATA_TYPE
+        )));
+    }
+
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_request_market_data_type(desired_type)?;
+    self.message_broker.send_message(&request_msg)?;
+
+    // Wait for the handler to update the type
+    loop {
+      if *current_type_guard == desired_type {
+        info!("Market data type successfully changed to {:?}", desired_type);
+        return Ok(());
+      }
+
+      let elapsed = start_time.elapsed();
+      if elapsed >= timeout {
+        warn!("Timeout waiting for market data type change to {:?}. Current type is {:?}.", desired_type, *current_type_guard);
+        return Err(Timeout(format!(
+            "Timed out waiting for market data type change to {:?} after {:?}", desired_type, timeout
+        )));
+      }
+      let remaining_timeout = timeout - elapsed;
+
+      trace!("Waiting for market data type change confirmation (remaining: {:?})...", remaining_timeout);
+      let wait_result = self.market_data_type_cond.wait_for(&mut current_type_guard, remaining_timeout);
+
+      if wait_result.timed_out() {
+        // Re-check after timeout just in case the notification happened right before timeout
+        if *current_type_guard == desired_type {
+          info!("Market data type successfully changed to {:?} just before timeout.", desired_type);
+          return Ok(());
+        } else {
+          warn!("Timeout waiting for market data type change to {:?}. Current type is {:?}.", desired_type, *current_type_guard);
+          return Err(Timeout(format!(
+              "Timed out waiting for market data type change to {:?} after wait", desired_type
+          )));
+        }
+      }
+      // If not timed out, loop continues to check the condition
+    }
   }
 
   // --- Helper to wait for completion (mainly for historical data) ---
@@ -554,10 +626,18 @@ impl DataMarketManager {
     snapshot: bool,
     regulatory_snapshot: bool, // Requires TWS 963+
     mkt_data_options: &[(String, String)], // TagValue list
+    market_data_type: Option<MarketDataType>, // Added parameter
   ) -> Result<i32, IBKRError> {
-    info!("Requesting market data: Contract={}, Snapshot={}, RegSnapshot={}", contract.symbol, snapshot, regulatory_snapshot);
+    let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
+    info!("Requesting market data: Contract={}, Snapshot={}, RegSnapshot={}, Type={:?}",
+          contract.symbol, snapshot, regulatory_snapshot, desired_mkt_data_type);
+
+    // Set market data type if needed before sending the request
+    // Use a shorter timeout for the type change itself
+    self.set_market_data_type_if_needed(desired_mkt_data_type, Duration::from_secs(10))?;
+
     let req_id = self.message_broker.next_request_id();
-    let server_version = self.message_broker.get_server_version()?;
+    let server_version = self.message_broker.get_server_version()?; // Re-fetch in case it changed? Unlikely.
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_market_data(
@@ -570,7 +650,7 @@ impl DataMarketManager {
       if subs.contains_key(&req_id) {
         return Err(IBKRError::DuplicateRequestId(req_id));
       }
-      let state = MarketDataSubscription::new(
+      let mut state = MarketDataSubscription::new(
         req_id,
         contract.clone(),
         generic_tick_list.to_string(),
@@ -578,8 +658,10 @@ impl DataMarketManager {
         regulatory_snapshot,
         mkt_data_options.to_vec(),
       );
+      // Store the requested type in the state
+      state.market_data_type = Some(desired_mkt_data_type);
       subs.insert(req_id, MarketSubscription::TickData(state));
-      debug!("Market data subscription added for ReqID: {}", req_id);
+      debug!("Market data subscription added for ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
     }
 
     self.message_broker.send_message(&request_msg)?;
@@ -594,14 +676,18 @@ impl DataMarketManager {
     snapshot: bool, // Note: For true snapshots, get_quote might be simpler
     regulatory_snapshot: bool,
     mkt_data_options: &[(String, String)],
+    market_data_type: Option<MarketDataType>,
     timeout: Duration,
     completion_check: F, // Closure: FnMut(&MarketDataSubscription) -> bool
   ) -> Result<MarketDataSubscription, IBKRError>
   where
     F: FnMut(&MarketDataSubscription) -> bool,
   {
-    info!("Requesting blocking market data: Contract={}, Snapshot={}, Timeout={:?}",
-          contract.symbol, snapshot, timeout);
+    let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
+    info!("Requesting blocking market data: Contract={}, Snapshot={}, Type={:?}, Timeout={:?}",
+          contract.symbol, snapshot, desired_mkt_data_type, timeout);
+
+    // Note: set_market_data_type_if_needed is called *inside* request_market_data
 
     // 1. Initiate the non-blocking request (gets req_id and stores initial state)
     let req_id = self.request_market_data(
@@ -610,8 +696,9 @@ impl DataMarketManager {
       snapshot,
       regulatory_snapshot,
       mkt_data_options,
+      Some(desired_mkt_data_type), // Pass the type
     )?;
-    debug!("Blocking market data request initiated with ReqID: {}", req_id);
+    debug!("Blocking market data request initiated with ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
 
     // 2. Wait for completion using the generic helper
     let result = self.wait_for_completion(
@@ -716,8 +803,18 @@ impl DataMarketManager {
 
 
   /// Gets a single quote (Bid, Ask, Last) for a contract using a snapshot request. Blocks until data is received or timeout.
-  pub fn get_quote(&self, contract: &Contract, timeout: Duration) -> Result<Quote, IBKRError> {
-    info!("Requesting quote snapshot for: Contract={}", contract.symbol);
+  pub fn get_quote(
+      &self,
+      contract: &Contract,
+      market_data_type: Option<MarketDataType>, // Added parameter
+      timeout: Duration
+  ) -> Result<Quote, IBKRError> {
+    let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
+    info!("Requesting quote snapshot for: Contract={}, Type={:?}", contract.symbol, desired_mkt_data_type);
+
+    // Set market data type if needed before sending the request
+    self.set_market_data_type_if_needed(desired_mkt_data_type, Duration::from_secs(10))?;
+
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
@@ -748,8 +845,9 @@ impl DataMarketManager {
         mkt_data_options,
       );
       state.is_blocking_quote_request = true; // Mark this specifically
+      state.market_data_type = Some(desired_mkt_data_type); // Store requested type
       subs.insert(req_id, MarketSubscription::TickData(state));
-      debug!("Blocking quote request added for ReqID: {}", req_id);
+      debug!("Blocking quote request added for ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
     }
 
     // Send the request
@@ -1094,10 +1192,16 @@ impl DataMarketManager {
     use_rth: bool,
     format_date: i32, // 1 for yyyyMMdd HH:mm:ss, 2 for system time (seconds)
     keep_up_to_date: bool, // Subscribe to updates after initial load
+    market_data_type: Option<MarketDataType>, // Added parameter
     chart_options: &[(String, String)], // TagValue list
   ) -> Result<Vec<Bar>, IBKRError> {
-    info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}, KeepUpToDate={}",
-          contract.symbol, duration_str, bar_size_setting, what_to_show, keep_up_to_date);
+    let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
+    info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}, KeepUpToDate={}, Type={:?}",
+          contract.symbol, duration_str, bar_size_setting, what_to_show, keep_up_to_date, desired_mkt_data_type);
+
+    // Set market data type if needed before sending the request
+    self.set_market_data_type_if_needed(desired_mkt_data_type, Duration::from_secs(10))?;
+
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
@@ -1110,13 +1214,14 @@ impl DataMarketManager {
     {
       let mut subs = self.subscriptions.lock();
       if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
-      let state = HistoricalDataRequestState {
+      let mut state = HistoricalDataRequestState {
         req_id,
         contract: contract.clone(),
         ..Default::default()
       };
+      state.requested_market_data_type = desired_mkt_data_type; // Store requested type
       subs.insert(req_id, MarketSubscription::HistoricalData(state));
-      debug!("Historical data request added for ReqID: {}", req_id);
+      debug!("Historical data request added for ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
     }
 
     self.message_broker.send_message(&request_msg)?;
@@ -1362,17 +1467,26 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn market_data_type(&self, req_id: i32, market_data_type: MarketDataTypeEnum) {
-    debug!("Handler: Market Data Type: ID={}, Type={:?}", req_id, market_data_type);
-    let mut subs = self.subscriptions.lock();
-    // Store the type in all relevant subscription types?
-    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-      state.market_data_type = Some(market_data_type);
-    } else if let Some(MarketSubscription::MarketDepth(_state)) = subs.get_mut(&req_id) {
-      // Market depth might also care about frozen status
-      // state.market_data_type = Some(market_data_type); // Add field if needed
+  fn market_data_type(&self, _req_id: i32, market_data_type: MarketDataType) {
+    // Note: The req_id in this message corresponds to the *original* market data request ID,
+    // not the ReqMarketDataType message itself. We update the global state.
+    debug!("Handler: Market Data Type Received: Type={:?}", market_data_type);
+
+    // Update the manager's current market data type state
+    {
+        let mut current_type_guard = self.current_market_data_type.lock();
+        if *current_type_guard != market_data_type {
+            info!("Updating connection market data type from {:?} to {:?}", *current_type_guard, market_data_type);
+            *current_type_guard = market_data_type;
+            // Notify any threads waiting for this specific type change
+            self.market_data_type_cond.notify_all();
+        } else {
+            trace!("Received market data type confirmation for current type: {:?}", market_data_type);
+        }
     }
-    // No need to notify observers for this meta-information usually.
+
+    // We don't need to update individual subscription states here, as they
+    // already store the *requested* type. The global state reflects the *active* type.
   }
 
   fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32) {
