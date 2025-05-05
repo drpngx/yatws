@@ -3,9 +3,10 @@ use crate::base::IBKRError;
 use crate::conn::MessageBroker;
 use crate::contract::{Bar, Contract, ContractDetails};
 use crate::data::{
-  MarketDataSubscription, RealTimeBarSubscription, TickByTickSubscription, MarketDepthSubscription,
-  HistoricalDataRequestState, TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
-  MarketDataType, MarketDepthRow, TickByTickData,
+  MarketDataSubscription, MarketDataType, MarketDepthRow, MarketDepthSubscription,
+  RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData,
+  TickByTickSubscription, TickNewsData, TickOptionComputationData, TickType, // Added TickType
+  HistoricalDataRequestState,
 };
 use crate::handler::MarketDataHandler;
 use crate::protocol_encoder::Encoder;
@@ -186,6 +187,7 @@ impl DataMarketManager {
     let request_msg = encoder.encode_request_market_data_type(desired_type)?;
     self.message_broker.send_message(&request_msg)?;
 
+    return Ok(());
     // Wait for the handler to update the type
     loop {
       if *current_type_guard == desired_type {
@@ -535,11 +537,11 @@ impl DataMarketManager {
           debug!("Error found for quote request {} before completion signal.", req_id);
           Some(Err(IBKRError::ApiError(code, msg.clone())))
         }
-        // If not complete and no error, check if we have all required prices (alternative success)
-        // This can happen if ticks arrive before snapshot_end
-        else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
-          debug!("All required prices received for quote request {} before completion signal.", req_id);
-          Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+        // If not complete and no error, check if we have the required Bid/Ask prices (alternative success)
+        // This can happen if ticks arrive before snapshot_end, especially for combos without 'Last'
+        else if state.bid_price.is_some() && state.ask_price.is_some() {
+          debug!("Required Bid/Ask prices received for quote request {} before completion signal.", req_id);
+          Some(Ok((state.bid_price, state.ask_price, state.last_price))) // Return last_price if available, otherwise None
         }
         // Otherwise, still waiting
         else {
@@ -591,9 +593,9 @@ impl DataMarketManager {
           else if let (Some(code), Some(msg)) = (state.error_code, state.error_message.as_ref()) {
             Some(Err(IBKRError::ApiError(code, msg.clone())))
           }
-          // Check if all prices arrived just before timeout
-          else if state.bid_price.is_some() && state.ask_price.is_some() && state.last_price.is_some() {
-            Some(Ok((state.bid_price, state.ask_price, state.last_price)))
+          // Check if Bid/Ask prices arrived just before timeout
+          else if state.bid_price.is_some() && state.ask_price.is_some() {
+            Some(Ok((state.bid_price, state.ask_price, state.last_price))) // Return last_price if available, otherwise None
           }
           // Otherwise, it's a genuine timeout
           else { None }
@@ -822,7 +824,7 @@ impl DataMarketManager {
     // Use an empty generic tick list for snapshot requests.
     // This often requests all available generic ticks for the snapshot.
     let generic_tick_list = "";
-    let snapshot = false; // Request snapshot
+    let snapshot = true; // Request snapshot
     let regulatory_snapshot = false; // Typically false for simple quotes
     let mkt_data_options: Vec<(String, String)> = Vec::new(); // No options needed usually
 
@@ -1269,6 +1271,14 @@ impl DataMarketManager {
   fn _internal_handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
     if req_id <= 0 { return; } // Ignore general errors not tied to a request
 
+    match code {
+      ClientErrorCode::MarketDataNotSubscribedDisplayDelayed => {
+        info!("API Info received for market data request {}: Code={:?}, Msg={}", req_id, code, msg);
+        return;
+      }
+      _ => {},
+    }
+
     let mut subs = self.subscriptions.lock();
     if let Some(sub_state) = subs.get_mut(&req_id) {
       warn!("API Error received for market data request {}: Code={:?}, Msg={}", req_id, code, msg);
@@ -1328,24 +1338,36 @@ impl DataMarketManager {
 impl MarketDataHandler for DataMarketManager {
 
   // --- Tick Data ---
-  fn tick_price(&self, req_id: i32, tick_type: i32, price: f64, attrib: TickAttrib) {
-    trace!("Handler: Tick Price: ID={}, Type={}, Price={}, Attrib={:?}", req_id, tick_type, price, attrib);
+  fn tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib) {
+    trace!("Handler: Tick Price: ID={}, Type={:?}, Price={}, Attrib={:?}", req_id, tick_type, price, attrib);
+    debug!("Data Market: Tick Price: ID={}, Type={:?}, Price={}, Attrib={:?}", req_id, tick_type, price, attrib);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-      // Map tick_type to fields in MarketDataSubscriptionState
+      // Map tick_type enum to fields in MarketDataSubscriptionState
       match tick_type {
-        1 => state.bid_price = Some(price),  // BID
-        2 => state.ask_price = Some(price),  // ASK
-        4 => state.last_price = Some(price), // LAST
-        6 => state.high_price = Some(price), // HIGH
-        7 => state.low_price = Some(price),  // LOW
-        9 => state.close_price = Some(price),// CLOSE
-        14 => state.open_price = Some(price), // OPEN_TICK
-        // ... map other tick types (DELAYED_BID, DELAYED_ASK, etc.) if needed
-        _ => trace!("Unhandled tick_type {} in tick_price for ReqID {}", tick_type, req_id),
+        TickType::BidPrice => state.bid_price = Some(price),
+        TickType::AskPrice => state.ask_price = Some(price),
+        TickType::LastPrice => state.last_price = Some(price),
+        TickType::High => state.high_price = Some(price),
+        TickType::Low => state.low_price = Some(price),
+        TickType::ClosePrice => state.close_price = Some(price),
+        TickType::OpenTick => state.open_price = Some(price),
+        TickType::DelayedBid => state.bid_price = Some(price), // Update main field for delayed
+        TickType::DelayedAsk => state.ask_price = Some(price), // Update main field for delayed
+        TickType::DelayedLast => state.last_price = Some(price), // Update main field for delayed
+        TickType::DelayedHighPrice => state.high_price = Some(price), // Update main field for delayed
+        TickType::DelayedLowPrice => state.low_price = Some(price), // Update main field for delayed
+        TickType::DelayedClose => state.close_price = Some(price), // Update main field for delayed
+        TickType::DelayedOpen => state.open_price = Some(price), // Update main field for delayed
+        TickType::MarkPrice => { /* Maybe store separately? */ },
+        TickType::BidYield | TickType::AskYield | TickType::LastYield => { /* Store yield separately? */ },
+        TickType::EtfNavClose | TickType::EtfNavPriorClose | TickType::EtfNavBid | TickType::EtfNavAsk | TickType::EtfNavLast | TickType::EtfNavFrozenLast | TickType::EtfNavHigh | TickType::EtfNavLow => { /* Store NAV separately? */ },
+        TickType::AuctionPrice => { /* Store auction price separately? */ },
+        TickType::CreditmanMarkPrice | TickType::CreditmanSlowMarkPrice => { /* Store creditman price separately? */ },
+        _ => trace!("Unhandled price tick_type {:?} in tick_price for ReqID {}", tick_type, req_id),
       }
-      // TODO: Store attrib if needed
-      state.ticks.entry(tick_type).or_default().push((price, attrib.clone())); // Store tick history
+      // TODO: Store attrib if needed? Maybe only store latest?
+      state.ticks.entry(tick_type).or_default().push((price, attrib.clone())); // Store tick history using enum key
 
       // If this is for a blocking quote request, check if we have all needed data
       if state.is_blocking_quote_request && !state.quote_received {
@@ -1365,26 +1387,34 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn tick_size(&self, req_id: i32, tick_type: i32, size: f64) {
-    trace!("Handler: Tick Size: ID={}, Type={}, Size={}", req_id, tick_type, size);
+  fn tick_size(&self, req_id: i32, tick_type: TickType, size: f64) {
+    trace!("Handler: Tick Size: ID={}, Type={:?}, Size={}", req_id, tick_type, size);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
       match tick_type {
-        0 => state.bid_size = Some(size),  // BID_SIZE
-        3 => state.ask_size = Some(size),  // ASK_SIZE
-        5 => state.last_size = Some(size), // LAST_SIZE
-        8 => state.volume = Some(size),    // VOLUME
-        27 => state.call_open_interest = Some(size),
-        28 => state.put_open_interest = Some(size),
-        29 => state.call_volume = Some(size),
-        30 => state.put_volume = Some(size),
-        21 => state.avg_volume = Some(size), // Map AVG_VOLUME to this? Check TWS docs
-        37 => state.shortable_shares = Some(size), // SHORTABLE -> SHORTABLE_SHARES
-        48 => state.futures_open_interest = Some(size), // RT_VOLUME -> FUTURES_OPEN_INTEREST? Check TWS docs
-        // ... map other size types (DELAYED_BID_SIZE, RT_TRD_VOLUME etc.)
-        _ => trace!("Unhandled tick_type {} in tick_size", tick_type),
+        TickType::BidSize => state.bid_size = Some(size),
+        TickType::AskSize => state.ask_size = Some(size),
+        TickType::LastSize => state.last_size = Some(size),
+        TickType::Volume => state.volume = Some(size),
+        TickType::OptionCallOpenInterest => state.call_open_interest = Some(size),
+        TickType::OptionPutOpenInterest => state.put_open_interest = Some(size),
+        TickType::OptionCallVolume => state.call_volume = Some(size),
+        TickType::OptionPutVolume => state.put_volume = Some(size),
+        TickType::AverageVolume => state.avg_volume = Some(size), // Assuming ID 21 maps here
+        TickType::ShortableShares => state.shortable_shares = Some(size), // Assuming ID 89 maps here
+        TickType::FuturesOpenInterest => state.futures_open_interest = Some(size), // Assuming ID 86 maps here
+        TickType::DelayedBidSize => state.bid_size = Some(size), // Update main field
+        TickType::DelayedAskSize => state.ask_size = Some(size), // Update main field
+        TickType::DelayedLastSize => state.last_size = Some(size), // Update main field
+        TickType::DelayedVolume => state.volume = Some(size), // Update main field
+        TickType::ShortTermVolume3Minutes => state.short_term_volume_3_min = Some(size),
+        TickType::ShortTermVolume5Minutes => state.short_term_volume_5_min = Some(size),
+        TickType::ShortTermVolume10Minutes => state.short_term_volume_10_min = Some(size),
+        TickType::AuctionVolume | TickType::AuctionImbalance | TickType::RegulatoryImbalance => { /* Store separately? */ },
+        TickType::AverageOptionVolume => { /* Store separately? */ },
+        _ => trace!("Unhandled size tick_type {:?} in tick_size", tick_type),
       }
-      state.sizes.entry(tick_type).or_default().push(size); // Store size history
+      state.sizes.entry(tick_type).or_default().push(size); // Store size history using enum key
       self.request_cond.notify_all(); // Notify waiters
       // self.notify_observers(req_id);
     } else {
@@ -1392,21 +1422,34 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn tick_string(&self, req_id: i32, tick_type: i32, value: &str) {
-    trace!("Handler: Tick String: ID={}, Type={}, Value='{}'", req_id, tick_type, value);
+  fn tick_string(&self, req_id: i32, tick_type: TickType, value: &str) {
+    trace!("Handler: Tick String: ID={}, Type={:?}, Value='{}'", req_id, tick_type, value);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
       match tick_type {
-        45 => { // LAST_TIMESTAMP
+        TickType::LastTimestamp | TickType::DelayedLastTimestamp => {
           if let Ok(ts) = value.parse::<i64>() {
             state.last_timestamp = Some(ts);
           } else {
-            warn!("Failed to parse LAST_TIMESTAMP '{}' for ReqID {}", value, req_id);
+            warn!("Failed to parse timestamp string '{}' for {:?} ReqID {}", value, tick_type, req_id);
           }
         },
-        59 => state.last_reg_time = Some(value.to_string()), // IB_DIVIDENDS -> last_reg_time? Check TWS. Placeholder.
-        // ... map RT_TRADE_VOLUME tick types if they send string data ...
-        _ => trace!("Unhandled tick_type {} in tick_string", tick_type),
+        TickType::LastRegulatoryTime => state.last_reg_time = Some(value.to_string()),
+        TickType::RtVolume => { /* Parse RTVolume string: price;size;time;totalVolume;vwap;singleTrade */ },
+        TickType::RtTradeVolume => { /* Parse RTTradeVolume string */ },
+        TickType::IbDividends => { /* Parse dividend string: past12m,next12m,nextDate,nextAmt */ },
+        TickType::News => { /* Parse news string: time;provider;articleId;headline;extraData */
+            // Example parsing (adjust based on actual format)
+            let parts: Vec<&str> = value.split(';').collect();
+            if parts.len() >= 4 {
+                if let Ok(ts) = parts[0].parse::<i64>() {
+                    state.latest_news_time = Some(ts);
+                    // Could store full TickNewsData if needed
+                }
+            }
+        },
+        TickType::BidExchange | TickType::AskExchange | TickType::LastExchange => state.last_exchange = Some(value.to_string()),
+        _ => trace!("Unhandled string tick_type {:?} in tick_string", tick_type),
       }
       // self.notify_observers(req_id);
     } else {
@@ -1414,16 +1457,22 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn tick_generic(&self, req_id: i32, tick_type: i32, value: f64) {
-    trace!("Handler: Tick Generic: ID={}, Type={}, Value={}", req_id, tick_type, value);
+  fn tick_generic(&self, req_id: i32, tick_type: TickType, value: f64) {
+    trace!("Handler: Tick Generic: ID={}, Type={:?}, Value={}", req_id, tick_type, value);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
       match tick_type {
-        10 => state.bid_price = Some(value), // OPTION_IMPLIED_VOL -> bid_price? Unlikely. Needs mapping.
-        11 => state.ask_price = Some(value), // OPTION_IMPLIED_VOL -> ask_price? Unlikely. Needs mapping.
-        31 => state.trade_count = Some(value as i64), // AUCTION_IMBALANCE -> trade_count? Unlikely. Needs mapping.
-        // ... map other generic types ...
-        _ => trace!("Unhandled tick_type {} in tick_generic", tick_type),
+        TickType::OptionHistoricalVolatility | TickType::RtHistoricalVolatility => { /* Store vol separately? */ },
+        TickType::OptionImpliedVolatility => { /* Store vol separately? */ },
+        TickType::IndexFuturePremium => { /* Store premium separately? */ },
+        TickType::Shortable => { /* Store shortable status separately? */ },
+        TickType::Halted => state.halted = Some(value != 0.0), // 0=Not Halted, 1/2=Halted, -1=Unknown
+        TickType::TradeCount => state.trade_count = Some(value as i64),
+        TickType::TradeRate => state.trade_rate = Some(value),
+        TickType::VolumeRate => state.volume_rate = Some(value),
+        TickType::BondFactorMultiplier => { /* Store multiplier separately? */ },
+        TickType::EstimatedIpoMidpoint | TickType::FinalIpoPrice => { /* Store IPO price separately? */ },
+        _ => trace!("Unhandled generic tick_type {:?} in tick_generic", tick_type),
       }
       // self.notify_observers(req_id);
     } else {
@@ -1431,20 +1480,22 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn tick_efp(&self, req_id: i32, tick_type: i32, basis_points: f64, _formatted_basis_points: &str,
+  fn tick_efp(&self, req_id: i32, tick_type: TickType, basis_points: f64, _formatted_basis_points: &str,
               _implied_futures_price: f64, _hold_days: i32, _future_last_trade_date: &str,
               _dividend_impact: f64, _dividends_to_last_trade_date: f64) {
-    trace!("Handler: Tick EFP: ID={}, Type={}, BasisPts={}", req_id, tick_type, basis_points);
+    trace!("Handler: Tick EFP: ID={}, Type={:?}, BasisPts={}", req_id, tick_type, basis_points);
     // EFP data doesn't typically fit into the standard MarketDataSubscription fields.
     // An observer pattern or dedicated callback might be better here.
-    // For now, just log it.
+    // For now, just log it. Store if needed.
   }
 
   fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData) {
-    trace!("Handler: Tick Option Computation: ID={}, Type={}", req_id, data.tick_type);
+    trace!("Handler: Tick Option Computation: ID={}, Type={:?}", req_id, data.tick_type);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      // Store the whole computation data struct
       state.option_computation = Some(data);
+      // Optionally update specific fields like implied vol if needed elsewhere
       // self.notify_observers(req_id);
     } else {
       // warn!("Received tick_option_computation for unknown or non-tick subscription ID: {}", req_id);

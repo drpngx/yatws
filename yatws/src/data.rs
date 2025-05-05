@@ -1,5 +1,171 @@
+use crate::base::IBKRError;
 use crate::contract::{Contract, Bar};
 use std::collections::HashMap;
+use std::convert::TryFrom;
+use num_enum::TryFromPrimitive;
+
+
+/// Enum representing the different types of market data ticks.
+/// Based on https://interactivebrokers.github.io/tws-api/tick_types.html
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive)]
+#[repr(i32)]
+pub enum TickType {
+    BidSize = 0,
+    BidPrice = 1,
+    AskPrice = 2,
+    AskSize = 3,
+    LastPrice = 4,
+    LastSize = 5,
+    High = 6,
+    Low = 7,
+    Volume = 8,
+    ClosePrice = 9,
+    BidOptionComputation = 10,
+    AskOptionComputation = 11,
+    LastOptionComputation = 12,
+    ModelOptionComputation = 13,
+    OpenTick = 14,
+    Low13Weeks = 15,
+    High13Weeks = 16,
+    Low26Weeks = 17,
+    High26Weeks = 18,
+    Low52Weeks = 19,
+    High52Weeks = 20,
+    AverageVolume = 21,
+    // OpenInterest = 22, // Deprecated
+    OptionHistoricalVolatility = 23,
+    OptionImpliedVolatility = 24,
+    // OptionBidExchange = 25, // Not Used
+    // OptionAskExchange = 26, // Not Used
+    OptionCallOpenInterest = 27,
+    OptionPutOpenInterest = 28,
+    OptionCallVolume = 29,
+    OptionPutVolume = 30,
+    IndexFuturePremium = 31,
+    BidExchange = 32,
+    AskExchange = 33,
+    AuctionVolume = 34,
+    AuctionPrice = 35,
+    AuctionImbalance = 36,
+    MarkPrice = 37,
+    BidEfpComputation = 38,
+    AskEfpComputation = 39,
+    LastEfpComputation = 40,
+    OpenEfpComputation = 41,
+    HighEfpComputation = 42,
+    LowEfpComputation = 43,
+    CloseEfpComputation = 44,
+    LastTimestamp = 45,
+    Shortable = 46,
+    // FundamentalRatios = 47, // Not listed as a tick type, but generic tick 258
+    RtVolume = 48, // Time & Sales
+    Halted = 49,
+    BidYield = 50,
+    AskYield = 51,
+    LastYield = 52,
+    CustomOptionComputation = 53,
+    TradeCount = 54,
+    TradeRate = 55,
+    VolumeRate = 56,
+    LastRthTrade = 57,
+    RtHistoricalVolatility = 58,
+    IbDividends = 59,
+    BondFactorMultiplier = 60,
+    RegulatoryImbalance = 61,
+    News = 62,
+    ShortTermVolume3Minutes = 63,
+    ShortTermVolume5Minutes = 64,
+    ShortTermVolume10Minutes = 65,
+    DelayedBid = 66,
+    DelayedAsk = 67,
+    DelayedLast = 68,
+    DelayedBidSize = 69,
+    DelayedAskSize = 70,
+    DelayedLastSize = 71,
+    DelayedHighPrice = 72,
+    DelayedLowPrice = 73,
+    DelayedVolume = 74,
+    DelayedClose = 75,
+    DelayedOpen = 76,
+    RtTradeVolume = 77, // RT Trd Vol
+    CreditmanMarkPrice = 78,
+    CreditmanSlowMarkPrice = 79,
+    DelayedBidOption = 80,
+    DelayedAskOption = 81,
+    DelayedLastOption = 82,
+    DelayedModelOption = 83,
+    LastExchange = 84,
+    LastRegulatoryTime = 85,
+    FuturesOpenInterest = 86,
+    AverageOptionVolume = 87,
+    DelayedLastTimestamp = 88,
+    ShortableShares = 89,
+    // 90, 91 unknown
+    EtfNavClose = 92,
+    EtfNavPriorClose = 93,
+    EtfNavBid = 94,
+    EtfNavAsk = 95,
+    EtfNavLast = 96,
+    EtfNavFrozenLast = 97,
+    EtfNavHigh = 98,
+    EtfNavLow = 99,
+    // 100 unknown? (Maybe Option Put Volume again?)
+    EstimatedIpoMidpoint = 101, // Note: Doc says 101, but also lists GenericTick101. Assuming direct ID.
+    FinalIpoPrice = 102, // Note: Doc says 102, but also lists GenericTick102. Assuming direct ID.
+    // Add generic tick IDs if needed, or handle them separately
+    // GenericTick100 = 100, // Option Volume
+    // GenericTick101 = 101, // Option Open Interest
+    // GenericTick104 = 104, // Historical Volatility
+    // GenericTick105 = 105, // Average Option Volume
+    // GenericTick106 = 106, // Option Implied Volatility
+    // GenericTick162 = 162, // Index Future Premium
+    // GenericTick165 = 165, // 13, 26, 52 week high/low, Avg Volume
+    // GenericTick225 = 225, // Auction data
+    // GenericTick232 = 232, // Mark Price
+    // GenericTick233 = 233, // RT Volume Timestamp
+    // GenericTick236 = 236, // Shortable
+    // GenericTick258 = 258, // Fundamental Ratios
+    // GenericTick292 = 292, // News
+    // GenericTick293 = 293, // Trade Count
+    // GenericTick294 = 294, // Trade Rate
+    // GenericTick295 = 295, // Volume Rate
+    // GenericTick318 = 318, // Last RTH Trade
+    // GenericTick375 = 375, // RT Trade Volume
+    // GenericTick411 = 411, // RT Historical Volatility
+    // GenericTick456 = 456, // IB Dividends
+    // GenericTick460 = 460, // Bond Factor Multiplier
+    // GenericTick576 = 576, // ETF NAV Bid/Ask
+    // GenericTick577 = 577, // ETF NAV Last
+    // GenericTick578 = 578, // ETF NAV Close/Prior Close
+    // GenericTick586 = 586, // IPO Prices
+    // GenericTick588 = 588, // Futures Open Interest
+    // GenericTick595 = 595, // Short Term Volume
+    // GenericTick614 = 614, // ETF NAV High/Low
+    // GenericTick619 = 619, // Creditman Slow Mark Price
+    // GenericTick623 = 623, // ETF NAV Frozen Last
+    Unknown = -1, // For unhandled cases
+}
+
+impl TickType {
+    /// Returns the corresponding size tick type for a given price tick type, if applicable.
+    pub fn get_corresponding_size_tick(&self) -> Option<TickType> {
+        match self {
+            TickType::BidPrice => Some(TickType::BidSize),
+            TickType::AskPrice => Some(TickType::AskSize),
+            TickType::LastPrice => Some(TickType::LastSize),
+            TickType::DelayedBid => Some(TickType::DelayedBidSize),
+            TickType::DelayedAsk => Some(TickType::DelayedAskSize),
+            TickType::DelayedLast => Some(TickType::DelayedLastSize),
+            _ => None,
+        }
+    }
+}
+
+impl Default for TickType {
+  fn default() -> Self {
+    TickType::Unknown
+  }
+}
 
 /// Market data subscription request details and live state.
 #[derive(Debug, Clone)]
@@ -56,8 +222,8 @@ pub struct MarketDataSubscription {
   pub quote_received: bool, // Flag set by tick_snapshot_end or when all required ticks arrive
   pub completed: bool, // General completion flag for flexible blocking requests
   // History for flexible blocking requests
-  pub ticks: HashMap<i32, Vec<(f64, TickAttrib)>>, // Stores price ticks: tick_type -> Vec<(price, attrib)>
-  pub sizes: HashMap<i32, Vec<f64>>, // Stores size ticks: tick_type -> Vec<size>
+  pub ticks: HashMap<TickType, Vec<(f64, TickAttrib)>>, // Stores price ticks: tick_type -> Vec<(price, attrib)>
+  pub sizes: HashMap<TickType, Vec<f64>>, // Stores size ticks: tick_type -> Vec<size>
   // General
   pub market_data_type: Option<MarketDataType>, // From message 58
   pub error_code: Option<i32>,
@@ -309,10 +475,10 @@ pub struct TickAttribBidAsk {
   pub ask_past_high: bool,
 }
 
-/// Data for Tick Option Computation Message (ID 21)
+/// Data for Tick Option Computation Message
 #[derive(Debug, Clone, Default)]
 pub struct TickOptionComputationData {
-  pub tick_type: i32,
+  pub tick_type: TickType, // Use the enum
   pub tick_attrib: i32, // Specific attributes for option computation ticks
   pub implied_vol: Option<f64>,
   pub delta: Option<f64>,

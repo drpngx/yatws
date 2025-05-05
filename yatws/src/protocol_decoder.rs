@@ -815,6 +815,8 @@ pub enum ClientErrorCode {
   CannotCancelNotFoundOrder = 10147,
   /// OrderId <OrderId> that needs to be cancelled can not be cancelled, state: <State>
   CannotCancelFilledOrder = 10148,
+  /// Requested market data is not subscribed. Displaying delayed market data.
+  MarketDataNotSubscribedDisplayDelayed = 10167,
   /// Requested market data is not subscribed. Delayed market data is not enabled
   MarketDataNotSubscribedDelayedDisabled = 10186,
   /// No market data during competing session
@@ -1259,6 +1261,7 @@ impl fmt::Display for ClientErrorCode {
       ClientErrorCode::CannotCancelNotFoundOrder => "OrderId <OrderId> that needs to be cancelled is not found, state: <State>",
       ClientErrorCode::CannotCancelFilledOrder => "OrderId <OrderId> that needs to be cancelled can not be cancelled, state: <State>",
       ClientErrorCode::MarketDataNotSubscribedDelayedDisabled => "Requested market data is not subscribed. Delayed market data is not enabled",
+      ClientErrorCode::MarketDataNotSubscribedDisplayDelayed => "Requested market data is not subscribed. Displaying delayed market data",
       ClientErrorCode::NoMarketDataDuringCompetingSession => "No market data during competing session",
       ClientErrorCode::BustEventDeactivatedSubscription => "Bust event occurred, current subscription is deactivated. Please resubscribe real-time bars immediately",
       ClientErrorCode::UnsavedFaChanges => "You have unsaved FA changes. Please retry 'request FA' operation later, when 'replace FA' operation is complete",
@@ -1668,6 +1671,7 @@ impl TryFrom<i32> for ClientErrorCode {
       10090 => Ok(ClientErrorCode::PartiallySubscribedMarketData),
       10147 => Ok(ClientErrorCode::CannotCancelNotFoundOrder),
       10148 => Ok(ClientErrorCode::CannotCancelFilledOrder),
+      10167 => Ok(ClientErrorCode::MarketDataNotSubscribedDisplayDelayed),
       10186 => Ok(ClientErrorCode::MarketDataNotSubscribedDelayedDisabled),
       10197 => Ok(ClientErrorCode::NoMarketDataDuringCompetingSession),
       10225 => Ok(ClientErrorCode::BustEventDeactivatedSubscription),

@@ -317,6 +317,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     // TWS Market Data Errors (10000+)
     ClientErrorCode::NotSubscribedMarketData | // Error
     ClientErrorCode::PartiallySubscribedMarketData | // Warning
+    ClientErrorCode::MarketDataNotSubscribedDisplayDelayed | // Warning/Info
     ClientErrorCode::MarketDataNotSubscribedDelayedDisabled | // Warning/Info
     ClientErrorCode::NoMarketDataDuringCompetingSession | // Warning/Info
     ClientErrorCode::BustEventDeactivatedSubscription => { // System/Warning

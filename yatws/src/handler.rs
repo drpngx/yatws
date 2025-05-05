@@ -10,7 +10,7 @@ use crate::contract::{
 };
 use crate::protocol_decoder::ClientErrorCode;
 use crate::data::{
-  TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData,
+  TickType, TickAttrib, TickAttribLast, TickAttribBidAsk, TickOptionComputationData, // Added TickType
   MarketDataType,
 };
 use crate::news::NewsProvider;
@@ -196,14 +196,14 @@ pub trait ReferenceDataHandler: Send + Sync {
 /// Micro-structure: quotes etc.
 pub trait MarketDataHandler: Send + Sync {
   // --- Tick Data ---
-  fn tick_price(&self, req_id: i32, tick_type: i32, price: f64, attrib: TickAttrib);
-  fn tick_size(&self, req_id: i32, tick_type: i32, size: f64); // Use f64 for Decimal size
-  fn tick_string(&self, req_id: i32, tick_type: i32, value: &str);
-  fn tick_generic(&self, req_id: i32, tick_type: i32, value: f64);
-  fn tick_efp(&self, req_id: i32, tick_type: i32, basis_points: f64, formatted_basis_points: &str,
+  fn tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib);
+  fn tick_size(&self, req_id: i32, tick_type: TickType, size: f64); // Use f64 for Decimal size
+  fn tick_string(&self, req_id: i32, tick_type: TickType, value: &str);
+  fn tick_generic(&self, req_id: i32, tick_type: TickType, value: f64);
+  fn tick_efp(&self, req_id: i32, tick_type: TickType, basis_points: f64, formatted_basis_points: &str,
               implied_futures_price: f64, hold_days: i32, future_last_trade_date: &str,
               dividend_impact: f64, dividends_to_last_trade_date: f64);
-  fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData);
+  fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData); // data contains TickType
   fn tick_snapshot_end(&self, req_id: i32);
   fn market_data_type(&self, req_id: i32, market_data_type: MarketDataType);
   fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32);

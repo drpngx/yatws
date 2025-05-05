@@ -54,6 +54,7 @@ rust_library(
         "@crates//:futures",
         "@crates//:lazy_static",
         "@crates//:log",
+        "@crates//:num_enum",
         "@crates//:num-traits",
         "@crates//:once_cell",
         "@crates//:parking_lot",

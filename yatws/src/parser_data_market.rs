@@ -1,12 +1,14 @@
 // yatws/src/parser_data_market.rs
 use std::sync::Arc;
 use chrono::{Utc, TimeZone}; // Added TimeZone
+use std::convert::TryFrom;
+use num_traits::FromPrimitive; // Import FromPrimitive
 use crate::handler::MarketDataHandler;
 use crate::base::IBKRError;
 use crate::protocol_dec_parser::FieldParser;
-use crate::contract::{ContractDetails, OptionRight, Bar, SecType}; // Added Contract
-use crate::data::{TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataType, TickOptionComputationData}; // Added new types
-use crate::min_server_ver::min_server_ver; // Added min_server_ver
+use crate::contract::{ContractDetails, OptionRight, Bar, SecType};
+use crate::data::{TickType, TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataType, TickOptionComputationData}; // Added TickType
+use crate::min_server_ver::min_server_ver;
 use std::str::FromStr;
 
 
@@ -45,34 +47,31 @@ fn parse_tick_attrib_bid_ask(mask_val: i32) -> TickAttribBidAsk {
 
 
 /// Process tick price message
-pub fn process_tick_price(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> { // Added server_version
+pub fn process_tick_price(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
   let _version = parser.read_int()?; // Version of the tick price message itself
   let ticker_id = parser.read_int()?;
-  let tick_type = parser.read_int()?;
+  let tick_type_int = parser.read_int()?;
   let price = parser.read_double()?;
   let size = parser.read_decimal_max()?.unwrap_or(-1.0); // Read size, default to -1.0 if MAX/empty
   let attr_mask = parser.read_int()?; // Read attribute mask
 
+  let tick_type = TickType::try_from(tick_type_int)
+      .unwrap_or_else(|_| {
+          log::warn!("Received unknown TickType integer {} in process_tick_price", tick_type_int);
+          TickType::Unknown // Fallback to Unknown
+      });
+
   let attrib = parse_tick_attrib(attr_mask, server_version);
 
-  log::trace!("Tick Price: ID={}, Type={}, Price={}, Size={}, Attrib={:?}", ticker_id, tick_type, price, size, attrib);
+  log::trace!("Tick Price: ID={}, Type={:?}({}), Price={}, Size={}, Attrib={:?}", ticker_id, tick_type, tick_type_int, price, size, attrib);
   handler.tick_price(ticker_id, tick_type, price, attrib);
 
-  // Handle implied TickSize based on TickType (as in Java EDecoder)
-  let size_tick_type = match tick_type {
-    1 => Some(0),  // BID -> BID_SIZE
-    2 => Some(3),  // ASK -> ASK_SIZE
-    4 => Some(5),  // LAST -> LAST_SIZE
-    66 => Some(69), // DELAYED_BID -> DELAYED_BID_SIZE
-    67 => Some(70), // DELAYED_ASK -> DELAYED_ASK_SIZE
-    68 => Some(71), // DELAYED_LAST -> DELAYED_LAST_SIZE
-    _ => None,
-  };
-
-  if let Some(stt) = size_tick_type {
+  // Handle implied TickSize based on TickType enum
+  if let Some(size_tick_type) = tick_type.get_corresponding_size_tick() {
     if size >= 0.0 { // Only send size if valid
-      log::trace!("Implied Tick Size: ID={}, Type={}, Size={}", ticker_id, stt, size);
-      handler.tick_size(ticker_id, stt, size);
+      log::trace!("Implied Tick Size: ID={}, Type={:?}, Size={}", ticker_id, size_tick_type, size);
+      // Pass the implied TickType enum variant to the handler
+      handler.tick_size(ticker_id, size_tick_type, size);
     }
   }
 
@@ -83,10 +82,16 @@ pub fn process_tick_price(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fie
 pub fn process_tick_size(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let ticker_id = parser.read_int()?;
-  let tick_type = parser.read_int()?;
+  let tick_type_int = parser.read_int()?;
   let size = parser.read_decimal_max()?.unwrap_or(0.0); // Read as optional decimal
 
-  log::trace!("Tick Size: ID={}, Type={}, Size={}", ticker_id, tick_type, size);
+  let tick_type = TickType::try_from(tick_type_int)
+      .unwrap_or_else(|_| {
+          log::warn!("Received unknown TickType integer {} in process_tick_size", tick_type_int);
+          TickType::Unknown // Fallback to Unknown
+      });
+
+  log::trace!("Tick Size: ID={}, Type={:?}({}), Size={}", ticker_id, tick_type, tick_type_int, size);
   handler.tick_size(ticker_id, tick_type, size);
   Ok(())
 }
@@ -251,7 +256,7 @@ pub fn process_scanner_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
 pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
-  let tick_type = parser.read_int()?;
+  let tick_type_int = parser.read_int()?;
   let basis_points = parser.read_double()?;
   let formatted_basis_points = parser.read_string()?;
   let implied_futures_price = parser.read_double()?;
@@ -260,8 +265,14 @@ pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, parser: &mut Field
   let dividend_impact = parser.read_double()?;
   let dividends_to_last_trade_date = parser.read_double()?;
 
-  log::trace!("Tick EFP: ID={}, Type={}, BasisPts={}, FmtBasisPts={}, ImpFutPx={}, HoldDays={}, FutLastTrade={}, DivImpact={}, DivsToDate={}",
-              req_id, tick_type, basis_points, formatted_basis_points, implied_futures_price, hold_days, future_last_trade_date, dividend_impact, dividends_to_last_trade_date);
+  let tick_type = TickType::try_from(tick_type_int)
+      .unwrap_or_else(|_| {
+          log::warn!("Received unknown TickType integer {} in process_tick_efp", tick_type_int);
+          TickType::Unknown // Fallback to Unknown
+      });
+
+  log::trace!("Tick EFP: ID={}, Type={:?}({}), BasisPts={}, FmtBasisPts={}, ImpFutPx={}, HoldDays={}, FutLastTrade={}, DivImpact={}, DivsToDate={}",
+              req_id, tick_type, tick_type_int, basis_points, formatted_basis_points, implied_futures_price, hold_days, future_last_trade_date, dividend_impact, dividends_to_last_trade_date);
 
   handler.tick_efp(req_id, tick_type, basis_points, &formatted_basis_points, implied_futures_price, hold_days, &future_last_trade_date, dividend_impact, dividends_to_last_trade_date);
   Ok(())
@@ -321,10 +332,10 @@ pub fn process_market_data_type(handler: &Arc<dyn MarketDataHandler>, parser: &m
 }
 
 /// Process tick option computation message
-pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> { // Added server_version
+pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
   let version = if server_version >= min_server_ver::PRICE_BASED_VOLATILITY { i32::MAX } else { parser.read_int()? };
   let req_id = parser.read_int()?;
-  let tick_type = parser.read_int()?;
+  let tick_type_int = parser.read_int()?;
 
   let tick_attrib = if server_version >= min_server_ver::PRICE_BASED_VOLATILITY {
     parser.read_int()?
@@ -352,15 +363,17 @@ pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, par
   let mut theta = None;
   let mut und_price = None;
 
-  // Fields introduced in version 6 OR for specific model tick types
-  if version >= 6 || tick_type == 21 || tick_type == 48 { // 21=TICK_OPTION_COMPUTATION, 48=MODEL_OPTION (Java constants) -> Need Rust TickType enum
-    // 21: TICK_OPTION_COMPUTATION, needs index mapping
-    // Let's assume tick_type 21 and 48 correspond to model option computations
-    // FIXME: Need a proper TickType enum mapping
-    // Using raw integers for now based on Java comment
-    let is_model_tick = tick_type == 21 || tick_type == 48; // Placeholder check
+  let tick_type = TickType::try_from(tick_type_int)
+      .unwrap_or_else(|_| {
+          log::warn!("Received unknown TickType integer {} in process_tick_option_computation", tick_type_int);
+          TickType::Unknown // Fallback to Unknown
+      });
 
-    if version >= 6 || is_model_tick {
+  // Fields introduced in version 6 OR for specific model tick types
+  let is_model_tick = matches!(tick_type, TickType::BidOptionComputation | TickType::AskOptionComputation | TickType::LastOptionComputation | TickType::ModelOptionComputation | TickType::CustomOptionComputation | TickType::DelayedBidOption | TickType::DelayedAskOption | TickType::DelayedLastOption | TickType::DelayedModelOption);
+
+  if version >= 6 || is_model_tick {
+    if version >= 6 || is_model_tick { // Check again for clarity, logic from Java
       opt_price = match parser.read_double()? { -1.0 => None, p => Some(p) };
       pv_dividend = match parser.read_double()? { -1.0 => None, p => Some(p) };
     }
@@ -372,9 +385,8 @@ pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, par
     }
   }
 
-
   let data = TickOptionComputationData {
-    tick_type,
+    tick_type, // Use the parsed enum variant
     tick_attrib,
     implied_vol,
     delta,
@@ -386,7 +398,7 @@ pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, par
     und_price,
   };
 
-  log::trace!("Tick Option Computation: ID={}, Data={:?}", req_id, data);
+  log::trace!("Tick Option Computation: ID={}, Type={:?}({}), Data={:?}", req_id, tick_type, tick_type_int, data);
   handler.tick_option_computation(req_id, data);
   Ok(())
 }
@@ -541,10 +553,10 @@ pub fn process_historical_ticks_last(handler: &Arc<dyn MarketDataHandler>, parse
 /// Process tick by tick message
 pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let req_id = parser.read_int()?;
-  let tick_type = parser.read_int()?; // 1=Last, 2=AllLast, 3=BidAsk, 4=MidPoint
+  let tick_type_int = parser.read_int()?; // 1=Last, 2=AllLast, 3=BidAsk, 4=MidPoint
   let time = parser.read_i64()?; // Unix epoch seconds
 
-  match tick_type {
+  match tick_type_int {
     1 | 2 => { // Last or AllLast
       let price = parser.read_double()?;
       let size = parser.read_decimal_max()?.unwrap_or(0.0);
@@ -552,8 +564,8 @@ pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
       let tick_attrib_last = parse_tick_attrib_last(mask);
       let exchange = parser.read_string()?;
       let special_conditions = parser.read_string()?;
-      log::trace!("Tick-By-Tick Last/AllLast: ID={}, Type={}, Time={}, Px={}, Sz={}, Exch={}, Cond={}", req_id, tick_type, time, price, size, exchange, special_conditions);
-      handler.tick_by_tick_all_last(req_id, tick_type, time, price, size, tick_attrib_last, &exchange, &special_conditions);
+      log::trace!("Tick-By-Tick Last/AllLast: ID={}, Type={}, Time={}, Px={}, Sz={}, Exch={}, Cond={}", req_id, tick_type_int, time, price, size, exchange, special_conditions);
+      handler.tick_by_tick_all_last(req_id, tick_type_int, time, price, size, tick_attrib_last, &exchange, &special_conditions);
     },
     3 => { // BidAsk
       let bid_price = parser.read_double()?;
@@ -571,9 +583,9 @@ pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
       handler.tick_by_tick_mid_point(req_id, time, mid_point);
     },
     _ => {
-      log::warn!("Unknown Tick-By-Tick Type: {}", tick_type);
+      log::warn!("Unknown Tick-By-Tick Type: {}", tick_type_int);
       // Consume remaining fields based on expected structure if possible, or return error
-      return Err(IBKRError::ParseError(format!("Unknown tick-by-tick type {}", tick_type)));
+      return Err(IBKRError::ParseError(format!("Unknown tick-by-tick type {}", tick_type_int)));
     }
   }
   Ok(())
@@ -583,10 +595,16 @@ pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
 pub fn process_tick_generic(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
-  let tick_type = parser.read_int()?;
+  let tick_type_int = parser.read_int()?;
   let value = parser.read_double()?;
 
-  log::trace!("Tick Generic: ID={}, Type={}, Value={}", req_id, tick_type, value);
+  let tick_type = TickType::try_from(tick_type_int)
+      .unwrap_or_else(|_| {
+          log::warn!("Received unknown TickType integer {} in process_tick_generic", tick_type_int);
+          TickType::Unknown // Fallback to Unknown
+      });
+
+  log::trace!("Tick Generic: ID={}, Type={:?}({}), Value={}", req_id, tick_type, tick_type_int, value);
   handler.tick_generic(req_id, tick_type, value);
   Ok(())
 }
@@ -595,10 +613,16 @@ pub fn process_tick_generic(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
 pub fn process_tick_string(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
   let req_id = parser.read_int()?;
-  let tick_type = parser.read_int()?;
+  let tick_type_int = parser.read_int()?;
   let value = parser.read_string()?;
 
-  log::trace!("Tick String: ID={}, Type={}, Value='{}'", req_id, tick_type, value);
+  let tick_type = TickType::try_from(tick_type_int)
+      .unwrap_or_else(|_| {
+          log::warn!("Received unknown TickType integer {} in process_tick_string", tick_type_int);
+          TickType::Unknown // Fallback to Unknown
+      });
+
+  log::trace!("Tick String: ID={}, Type={:?}({}), Value='{}'", req_id, tick_type, tick_type_int, value);
   handler.tick_string(req_id, tick_type, &value);
   Ok(())
 }

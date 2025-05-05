@@ -17,7 +17,7 @@ use yatws::{
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
   contract::{Contract, SecType},
-  data::MarketDataType
+  data::{MarketDataType, TickType}
 };
 use chrono::{Utc, Duration as ChronoDuration, NaiveDate};
 
@@ -490,8 +490,9 @@ mod test_cases {
       timeout,
       // Completion condition: Wait until we have received at least one BID (1) and one ASK (2) price tick.
       |state| {
-        let has_bid = state.ticks.contains_key(&1) && !state.ticks[&1].is_empty();
-        let has_ask = state.ticks.contains_key(&2) && !state.ticks[&2].is_empty();
+        let has_tick_type = |x| state.ticks.contains_key(x) && !state.ticks[x].is_empty();
+        let has_bid = has_tick_type(&TickType::BidPrice) || has_tick_type(&TickType::DelayedBid);
+        let has_ask = has_tick_type(&TickType::AskPrice) || has_tick_type(&TickType::DelayedAsk);
         has_bid && has_ask
       },
     ) {
@@ -500,8 +501,8 @@ mod test_cases {
         info!("  Bid Price: {:?}", final_state.bid_price);
         info!("  Ask Price: {:?}", final_state.ask_price);
         info!("  Last Price: {:?}", final_state.last_price);
-        info!("  Total Bid Ticks Received: {}", final_state.ticks.get(&1).map_or(0, |v| v.len()));
-        info!("  Total Ask Ticks Received: {}", final_state.ticks.get(&2).map_or(0, |v| v.len()));
+        info!("  Total Bid Ticks Received: {}", final_state.ticks.get(&TickType::BidPrice).map_or(0, |v| v.len()));
+        info!("  Total Ask Ticks Received: {}", final_state.ticks.get(&TickType::AskPrice).map_or(0, |v| v.len()));
 
         if final_state.bid_price.is_some() && final_state.ask_price.is_some() {
           info!("Received Bid and Ask price. Test successful.");
