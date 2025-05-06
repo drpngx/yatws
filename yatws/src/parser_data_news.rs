@@ -21,7 +21,6 @@ pub fn process_news_article(handler: &Arc<dyn NewsDataHandler>, parser: &mut Fie
 
 /// Process news providers message
 pub fn process_news_providers(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?; // Version unused currently
   let num_providers = parser.read_int()?;
   let mut providers = Vec::with_capacity(num_providers as usize);
   for _ in 0..num_providers {
