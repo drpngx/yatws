@@ -1012,7 +1012,7 @@ mod test_cases {
 
     // 1. Request Financial Summary
     info!("Requesting 'ReportsFinSummary' for {}...", contract.symbol);
-    match fin_data_mgr.get_fundamental_data(&contract, "ReportsFinSummary", fundamental_data_options) {
+    match fin_data_mgr.get_fundamental_data(&contract, FundamentalReportType::ReportsFinSummary, fundamental_data_options) {
       Ok(xml_data) => {
         info!("Successfully received 'ReportsFinSummary' XML for {}: {}", contract.symbol, xml_data);
         if xml_data.is_empty() {
@@ -1067,7 +1067,7 @@ mod test_cases {
 
     // 2. Request Report Snapshot
     info!("Requesting 'ReportSnapshot' for {}...", contract.symbol);
-    match fin_data_mgr.get_fundamental_data(&contract, "ReportSnapshot", fundamental_data_options) {
+    match fin_data_mgr.get_fundamental_data(&contract, FundamentalReportType::ReportSnapshot, fundamental_data_options) {
       Ok(xml_data) => {
         info!("Successfully received 'ReportSnapshot' XML for {}. Length: {}", contract.symbol, xml_data.len());
         info!("Successfully received 'ReportSnapshot' XML for {}: {}", contract.symbol, xml_data);

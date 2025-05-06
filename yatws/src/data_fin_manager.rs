@@ -39,11 +39,11 @@
 //!
 //!     let contract = Contract::stock("AAPL");
 //!
-//!     match fin_data_mgr.get_fundamental_data(&contract, "ReportsFinSummary", &[]) {
+//!     match fin_data_mgr.get_fundamental_data(&contract, FundamentalReportType::ReportsFinSummary, &[]) {
 //!         Ok(xml_data) => {
 //!             println!("Received 'ReportsFinSummary' XML for AAPL (length {}).", xml_data.len());
 //!             // Example of parsing (add error handling for production)
-//!             match parse_fundamental_xml(&xml_data, FundamentalReportType::ReportsFinSummary) {
+//!             match parse_fundamental_xml(&xml_data, FundamentalReportType::ReportsFinSummary) { // Ensure parser also uses the enum correctly
 //!                 Ok(ParsedFundamentalData::FinancialSummary(summary)) => {
 //!                     println!("Parsed Summary: {} EPS records.", summary.eps_records.len());
 //!                 }
@@ -62,6 +62,7 @@ use crate::conn::MessageBroker;
 use crate::protocol_decoder::ClientErrorCode; // Added import
 use crate::contract::Contract;
 use crate::data_wsh::WshEventDataRequest;
+use crate::data::FundamentalReportType;
 use crate::handler::{FinancialDataHandler};
 use crate::protocol_encoder::Encoder;
 use parking_lot::{Condvar, Mutex};
@@ -233,8 +234,7 @@ impl DataFundamentalsManager {
   ///
   /// # Arguments
   /// * `contract` - The [`Contract`] for which to request fundamental data.
-  /// * `report_type` - A string specifying the type of report (e.g., "ReportsFinSummary",
-  ///   "ReportSnapshot", "ReportsFinStatements", "RESC", "CalendarReport").
+  /// * `report_type` - A [`FundamentalReportType`] enum specifying the type of report.
   /// * `fundamental_data_options` - A list of `(tag, value)` pairs for additional options (rarely used).
   ///
   /// # Returns
@@ -250,10 +250,11 @@ impl DataFundamentalsManager {
   /// # fn main() -> Result<(), IBKRError> {
   /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
   /// # let fin_data_mgr = client.data_financials();
+  /// # use data::FundamentalReportType;
   /// let contract = Contract::stock("AAPL");
   /// let xml_data = fin_data_mgr.get_fundamental_data(
   ///     &contract,
-  ///     "ReportsFinSummary", // Request Financial Summary
+  ///     FundamentalReportType::ReportsFinSummary, // Request Financial Summary
   ///     &[]
   /// )?;
   /// println!("Received Financial Summary XML for AAPL (length {}).", xml_data.len());
@@ -264,10 +265,11 @@ impl DataFundamentalsManager {
   pub fn get_fundamental_data(
     &self,
     contract: &Contract,
-    report_type: &str, // e.g., "ReportsFinSummary", "ReportSnapshot", "ReportsFinStatements", "RESC", "CalendarReport"
+    report_type: FundamentalReportType,
     fundamental_data_options: &[(String, String)], // Added in API v???, check docs/min_server_ver
   ) -> Result<String, IBKRError> {
-    info!("Requesting fundamental data: Contract={}, ReportType={}", contract.symbol, report_type);
+    let report_type_str = report_type.as_tws_str();
+    info!("Requesting fundamental data: Contract={}, ReportType={}", contract.symbol, report_type_str);
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
@@ -278,7 +280,7 @@ impl DataFundamentalsManager {
     // }
 
     let request_msg = encoder.encode_request_fundamental_data(
-      req_id, contract, report_type, fundamental_data_options
+      req_id, contract, report_type_str, fundamental_data_options
     )?;
 
     // Initialize state

@@ -977,6 +977,7 @@ pub fn parse_fundamental_xml(
     FundamentalReportType::ReportSnapshot => {
       parse_report_snapshot(xml_data).map(ParsedFundamentalData::Snapshot)
     }
+    _ => Err(IBKRError::ParseError(std::format!("Parsing of {:?} not implemented", report_type)))
   }
 }
 

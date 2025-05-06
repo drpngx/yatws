@@ -503,16 +503,33 @@ pub struct TickNewsData {
 
 // --- Financial Report Structures ---
 
-/// Represents the type of fundamental report being parsed.
+/// Represents the type of fundamental report being parsed or requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FundamentalReportType {
+  /// Company overview, ratios, estimates. TWS String: "ReportSnapshot"
   ReportSnapshot,
+  /// Financial summary. TWS String: "ReportsFinSummary"
   ReportsFinSummary,
-  // Add other types as needed, e.g.:
-  // ReportsFinStatements,
-  // Resc, // Analyst Estimates
-  // ReportsOwnership,
-  // CalendarReport,
+  /// Detailed financial statements (Income, Balance Sheet, Cash Flow). TWS String: "ReportsFinStatements"
+  ReportsFinStatements,
+  /// Analyst estimates. TWS String: "RESC"
+  RESC,
+  /// Corporate calendar events (deprecated by TWS in favor of WSH). TWS String: "CalendarReport"
+  CalendarReport,
+  // Consider adding ReportsOwnership if needed.
+}
+
+impl FundamentalReportType {
+  /// Returns the string representation required by the TWS API for this report type.
+  pub fn as_tws_str(&self) -> &'static str {
+    match self {
+      FundamentalReportType::ReportSnapshot => "ReportSnapshot",
+      FundamentalReportType::ReportsFinSummary => "ReportsFinSummary",
+      FundamentalReportType::ReportsFinStatements => "ReportsFinStatements",
+      FundamentalReportType::RESC => "RESC",
+      FundamentalReportType::CalendarReport => "CalendarReport",
+    }
+  }
 }
 
 /// General company identification information, aggregated from various XML parts.

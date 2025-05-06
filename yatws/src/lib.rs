@@ -279,12 +279,12 @@
 //! // Get fundamental data (returns XML)
 //! let fundamental_data = client.data_financials().get_fundamental_data(
 //!     &contract,
-//!     "ReportsFinSummary",  // Report type
+//!     yatws::data::FundamentalReportType::ReportsFinSummary,  // Report type using enum
 //!     &[]                   // No options
 //! )?;
 //!
 //! // Parse the XML data into structured format
-//! let parsed_data = parse_fundamental_xml(&fundamental_data, FundamentalReportType::ReportsFinSummary)?;
+//! let parsed_data = parse_fundamental_xml(&fundamental_data, yatws::data::FundamentalReportType::ReportsFinSummary)?;
 //!
 //! // Get Wall Street Horizon events
 //! let wsh_request = WshEventDataRequest {
