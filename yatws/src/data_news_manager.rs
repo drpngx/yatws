@@ -1,4 +1,86 @@
 // yatws/src/data_news_manager.rs
+
+//! Manages requests for news providers, articles, and historical news.
+//!
+//! The `DataNewsManager` allows fetching:
+//! -   A list of available news providers via `get_news_providers()`.
+//! -   The content of a specific news article via `get_news_article()`.
+//! -   Historical news headlines for a contract via `get_historical_news()`.
+//!
+//! It also supports subscribing to live news bulletins via `request_news_bulletins()`
+//! and receiving tick-based news updates if a market data stream (via `DataMarketManager`)
+//! includes the news tick type.
+//!
+//! # Observers
+//!
+//! For streaming news (bulletins or tick-based news), an [`NewsObserver`] can be registered.
+//! -   `on_news_article()`: Called when a news bulletin or a news tick is received.
+//!     The `NewsArticle` struct attempts to unify these different news sources.
+//!
+//! # Example: Getting News Providers and an Article
+//!
+//! ```no_run
+//! use yatws::{IBKRClient, IBKRError, contract::Contract};
+//! use std::time::Duration;
+//!
+//! fn main() -> Result<(), IBKRError> {
+//!     let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+//!     let news_mgr = client.data_news();
+//!     let ref_data_mgr = client.data_ref(); // For con_id
+//!
+//!     // 1. Get News Providers
+//!     match news_mgr.get_news_providers() {
+//!         Ok(providers) => {
+//!             if providers.is_empty() {
+//!                 println!("No news providers available.");
+//!             } else {
+//!                 println!("Available News Providers:");
+//!                 for provider in &providers {
+//!                     println!("  Code: {}, Name: {}", provider.code, provider.name);
+//!                 }
+//!                 // Example: Get an article from the first provider (if any news exists)
+//!                 // This requires knowing a valid article_id for that provider.
+//!                 // For a real example, you'd likely get article_id from historical_news or a news tick.
+//!                 // if let Some(first_provider) = providers.first() {
+//!                 //     match news_mgr.get_news_article(&first_provider.code, "SOME_ARTICLE_ID", &[]) {
+//!                 //         Ok(article_data) => println!("Article Content (type {}): {}...",
+//!                 //             article_data.article_type,
+//!                 //             article_data.article_text.chars().take(100).collect::<String>()
+//!                 //         ),
+//!                 //         Err(e) => eprintln!("Error getting article: {:?}", e),
+//!                 //     }
+//!                 // }
+//!             }
+//!         }
+//!         Err(e) => eprintln!("Error getting news providers: {:?}", e),
+//!     }
+//!
+//!     // 2. Get Historical News for a contract (e.g., AAPL)
+//!     let contract_spec = Contract::stock("AAPL");
+//!     if let Ok(details_list) = ref_data_mgr.get_contract_details(&contract_spec) {
+//!         if let Some(details) = details_list.first() {
+//!             let con_id = details.contract.con_id;
+//!             // Assuming we have provider codes from the previous step
+//!             let provider_codes = "BRFG,BRFUPDN"; // Example provider codes
+//!
+//!             match news_mgr.get_historical_news(con_id, provider_codes, None, None, 10, &[]) {
+//!                 Ok(articles) => {
+//!                     println!("\nHistorical News for AAPL (con_id {}):", con_id);
+//!                     for article_info in articles.iter().take(3) { // Print first 3
+//!                         println!("  Time: {}, Provider: {}, ID: {}, Headline: {}",
+//!                                  article_info.time, article_info.provider_code,
+//!                                  article_info.article_id, article_info.headline);
+//!                     }
+//!                 }
+//!                 Err(e) => eprintln!("Error getting historical news: {:?}", e),
+//!             }
+//!         } else { eprintln!("Could not get contract details for AAPL."); }
+//!     } else { eprintln!("Error fetching contract details for AAPL."); }
+//!
+//!     Ok(())
+//! }
+//! ```
+
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
 use crate::protocol_decoder::ClientErrorCode; // Added import
@@ -14,20 +96,32 @@ use log::{debug, info, trace, warn};
 
 
 // --- State for Pending News Requests ---
+
+/// Internal state for tracking pending news-related requests.
+/// This is used by the manager to correlate responses with blocking calls.
 #[derive(Debug, Default)]
 struct NewsRequestState {
-  // Field for NewsProviders (no req_id involved in response)
+  /// Stores the list of news providers received from `reqNewsProviders`.
   news_providers: Option<Vec<NewsProvider>>,
+  /// Stores the content of a specific news article from `reqNewsArticle`.
+  /// The `req_id` is part of `NewsArticleData`.
   // Fields for NewsArticle
-  news_article: Option<NewsArticleData>, // req_id is inside the struct
-  // Fields for HistoricalNews
+  news_article: Option<NewsArticleData>,
+  /// Stores a list of historical news headlines from `reqHistoricalNews`.
   historical_news_list: Vec<HistoricalNews>,
+  /// Flag indicating if `historicalNewsEnd` has been received for a historical news request.
   historical_news_end_received: bool,
-  // General error fields
+  /// Stores an error code if an API error occurred for this request.
   error_code: Option<i32>,
+  /// Stores an error message if an API error occurred for this request.
   error_message: Option<String>,
 }
 
+/// Manages requests for news providers, articles, historical news, and streaming news bulletins.
+///
+/// Accessed via [`IBKRClient::data_news()`].
+///
+/// See the [module-level documentation](index.html) for more details and examples.
 pub struct DataNewsManager {
   message_broker: Arc<MessageBroker>,
   request_states: Mutex<HashMap<i32, NewsRequestState>>,
@@ -37,6 +131,9 @@ pub struct DataNewsManager {
 }
 
 impl DataNewsManager {
+  /// Creates a new `DataNewsManager`.
+  ///
+  /// This is typically called internally when an `IBKRClient` is created.
   pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
     Arc::new(DataNewsManager {
       message_broker,
@@ -49,8 +146,14 @@ impl DataNewsManager {
 
   // --- Add observer management methods ---
 
-  /// Registers an observer to receive streaming news updates.
-  /// Observers are held weakly.
+  /// Registers an observer to receive streaming news updates (bulletins and news ticks).
+  ///
+  /// Observers implement the [`NewsObserver`] trait. They are held by `Weak` pointers,
+  /// so the caller must maintain a strong reference (`Arc`) to the observer
+  /// for it to remain active.
+  ///
+  /// # Arguments
+  /// * `observer` - An `Arc` to an object implementing `NewsObserver`.
   pub fn add_observer(&self, observer: Arc<dyn NewsObserver>) {
       let mut observers = self.observers.write();
       // Avoid adding duplicates if observer is already present (optional check)
@@ -67,6 +170,7 @@ impl DataNewsManager {
   // Optional: Add remove_observer or clear_observers if needed
 
   /// Clears all registered news observers.
+  /// After this call, no observers will receive further news updates from this manager.
   pub fn clear_observers(&self) {
       debug!("Clearing all news observers");
       let mut observers = self.observers.write();
@@ -87,6 +191,21 @@ impl DataNewsManager {
 
 
   // --- Helper to wait for completion ---
+
+  /// Internal helper for blocking calls that wait for a news-related request to complete.
+  ///
+  /// It waits until the `is_complete_check` closure indicates completion, an API error occurs,
+  /// or the timeout is reached.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID.
+  /// * `timeout` - Maximum duration to wait.
+  /// * `is_complete_check` - A closure `Fn(&NewsRequestState) -> Option<Result<R, IBKRError>>`.
+  ///   It returns `Some(Ok(result))` when the condition is met, `Some(Err(e))` if the check itself
+  ///   determines an error, or `None` to continue waiting.
+  ///
+  /// # Returns
+  /// The result `R` from `is_complete_check` or an `IBKRError` (e.g., Timeout, ApiError).
   fn wait_for_completion<F, R>(
     &self,
     req_id: i32,
@@ -148,6 +267,14 @@ impl DataNewsManager {
 
   // --- Public API Methods ---
 
+  /// Requests and returns a list of available news providers. This is a blocking call.
+  ///
+  /// # Returns
+  /// A `Vec<NewsProvider>` containing codes and names of news providers.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the provider list is not received within the timeout.
+  /// Returns other `IBKRError` variants for communication or encoding issues.
   pub fn get_news_providers(&self) -> Result<Vec<NewsProvider>, IBKRError> {
     info!("Requesting news providers");
     // req_id is not used for this request, but we use one for state tracking
@@ -171,6 +298,19 @@ impl DataNewsManager {
     })
   }
 
+  /// Requests and returns the content of a specific news article. This is a blocking call.
+  ///
+  /// # Arguments
+  /// * `provider_code` - The code of the news provider (e.g., "BRFG", "DJNL").
+  /// * `article_id` - The unique ID of the article from the specified provider.
+  /// * `news_article_options` - A list of `(tag, value)` pairs for additional options (rarely used).
+  ///
+  /// # Returns
+  /// A `NewsArticleData` struct containing the article type and text.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the article is not received within the timeout.
+  /// Returns other `IBKRError` variants for communication or encoding issues.
   pub fn get_news_article(
     &self,
     provider_code: &str,
@@ -197,6 +337,51 @@ impl DataNewsManager {
     })
   }
 
+  /// Requests and returns historical news headlines for a specific contract. This is a blocking call.
+  ///
+  /// # Arguments
+  /// * `con_id` - The TWS contract ID of the instrument.
+  /// * `provider_codes` - A comma-separated string of news provider codes to include (e.g., "BRFG,RTRS,DJNL").
+  /// * `start_date_time` - Optional `DateTime<Utc>` for the start of the period. If `None`, TWS defaults.
+  /// * `end_date_time` - Optional `DateTime<Utc>` for the end of the period. If `None`, TWS defaults (usually current time).
+  /// * `total_results` - The maximum number of headlines to return.
+  /// * `historical_news_options` - A list of `(tag, value)` pairs for additional options.
+  ///
+  /// # Returns
+  /// A `Vec<HistoricalNews>` containing the news headlines.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the headlines are not received within the timeout.
+  /// Returns `IBKRError::ApiError` for common issues like "Historical news request requires subscription".
+  /// Returns other `IBKRError` variants for communication or encoding issues.
+  ///
+  /// # Example from `gen_goldens.rs`:
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract, ChronoDuration, Utc};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let news_mgr = client.data_news();
+  /// # let ref_data_mgr = client.data_ref();
+  /// # let contract_spec = Contract::stock("AAPL");
+  /// # let contract_details_list = ref_data_mgr.get_contract_details(&contract_spec)?;
+  /// # let con_id = contract_details_list[0].contract.con_id;
+  /// let provider_codes = "BRFG,DJNL"; // Example
+  /// let start_time = Some(Utc::now() - ChronoDuration::days(7));
+  /// let end_time = Some(Utc::now());
+  /// let articles = news_mgr.get_historical_news(
+  ///     con_id,
+  ///     provider_codes,
+  ///     start_time,
+  ///     end_time,
+  ///     10, // Max 10 results
+  ///     &[]
+  /// )?;
+  /// for article in articles {
+  ///     println!("[{}] {}: {}", article.provider_code, article.time, article.headline);
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_historical_news(
     &self,
     con_id: i32,
@@ -233,6 +418,17 @@ impl DataNewsManager {
   }
 
   // --- Streaming Calls (Non-blocking) ---
+
+  /// Subscribes to live news bulletins from TWS. This is a non-blocking call.
+  ///
+  /// Received bulletins are delivered via the `update_news_bulletin` method of the
+  /// `NewsDataHandler` trait, which then notifies registered [`NewsObserver`]s.
+  ///
+  /// # Arguments
+  /// * `all_msgs` - If `true`, receives all news bulletins. If `false`, receives only new bulletins.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded or sent.
   pub fn request_news_bulletins(&self, all_msgs: bool) -> Result<(), IBKRError> {
     info!("Requesting news bulletins: AllMsgs={}", all_msgs);
     let server_version = self.message_broker.get_server_version()?;
@@ -241,6 +437,10 @@ impl DataNewsManager {
     self.message_broker.send_message(&request_msg)
   }
 
+  /// Cancels the subscription to live news bulletins.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
   pub fn cancel_news_bulletins(&self) -> Result<(), IBKRError> {
     info!("Cancelling news bulletins");
     let server_version = self.message_broker.get_server_version()?;

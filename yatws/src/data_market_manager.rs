@@ -1,4 +1,73 @@
 // yatws/src/data_market_manager.rs
+
+//! Manages requests for real-time and historical market data.
+//!
+//! The `DataMarketManager` provides methods to:
+//! -   Request streaming market data (ticks) via `request_market_data()` and cancel with `cancel_market_data()`.
+//! -   Fetch a snapshot quote (Bid/Ask/Last) via the blocking `get_quote()`.
+//! -   Request streaming 5-second real-time bars via `request_real_time_bars()` and cancel with `cancel_real_time_bars()`.
+//! -   Fetch a specific number of 5-second real-time bars via the blocking `get_realtime_bars()`.
+//! -   Request streaming tick-by-tick data (Last, AllLast, BidAsk, MidPoint) via `request_tick_by_tick_data()` and cancel with `cancel_tick_by_tick_data()`.
+//! -   Request streaming market depth (Level II) data via `request_market_depth()` and cancel with `cancel_market_depth()`.
+//! -   Fetch historical bar data via the blocking `get_historical_data()` and cancel with `cancel_historical_data()`.
+//! -   Generic blocking methods `get_market_data()`, `get_tick_by_tick_data()`, `get_market_depth()` allow waiting for custom conditions.
+//!
+//! # Data Types and Market Data Type Setting
+//!
+//! TWS can provide market data in different "types":
+//! 1.  **RealTime (1)**: Live, streaming market data. Requires market data subscriptions.
+//! 2.  **Frozen (2)**: Market data is frozen at the close of the previous day.
+//! 3.  **Delayed (3)**: Delayed market data.
+//! 4.  **DelayedFrozen (4)**: Delayed market data, frozen at the close of the previous day.
+//!
+//! Most methods in this manager accept an optional `MarketDataType` parameter. If provided,
+//! the manager will attempt to set TWS to this data type before making the request.
+//! If `None`, `MarketDataType::RealTime` is typically assumed or the current TWS setting is used.
+//! The `set_market_data_type_if_needed()` helper handles this.
+//!
+//! # Observers
+//!
+//! For streaming data (e.g., from `request_market_data`, `request_real_time_bars`),
+//! you would typically implement an observer pattern. The `MarketDataHandler` trait methods
+//! within `DataMarketManager` are called by the message processing loop. To consume this
+//! data in your application, you would:
+//! 1.  Create your own struct that implements a custom observer trait (e.g., `MyMarketObserver`).
+//! 2.  Pass an `Arc` or `Weak` reference of your observer to `DataMarketManager` (e.g., via an `add_observer` method, which is not explicitly shown in the current `DataMarketManager` but is a common pattern).
+//! 3.  The `MarketDataHandler` methods in `DataMarketManager` would then call the appropriate methods on your registered observers.
+//!     (Currently, observer notification is commented out in the provided code, e.g., `// self.notify_observers(req_id);`)
+//!
+//! # Blocking vs. Streaming
+//!
+//! -   **`get_*` methods** (e.g., `get_quote`, `get_historical_data`, `get_realtime_bars`) are generally **blocking**.
+//!     They send a request and wait for the complete response or a timeout.
+//! -   **`request_*` methods** (e.g., `request_market_data`, `request_real_time_bars`) are **non-blocking/streaming**.
+//!     They send a request and return a request ID. Data arrives asynchronously and is processed by the `MarketDataHandler`
+//!     methods, which would then typically forward it to registered observers.
+//!
+//! # Example: Getting a Quote
+//!
+//! ```no_run
+//! use yatws::{IBKRClient, IBKRError, contract::Contract, data::MarketDataType};
+//! use std::time::Duration;
+//!
+//! fn main() -> Result<(), IBKRError> {
+//!     let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+//!     let market_data_mgr = client.data_market();
+//!
+//!     let contract = Contract::stock("AAPL");
+//!     let timeout = Duration::from_secs(10);
+//!
+//!     // Request a delayed quote
+//!     match market_data_mgr.get_quote(&contract, Some(MarketDataType::Delayed), timeout) {
+//!         Ok((bid, ask, last)) => {
+//!             println!("AAPL Quote (Delayed): Bid={:?}, Ask={:?}, Last={:?}", bid, ask, last);
+//!         }
+//!         Err(e) => eprintln!("Error getting quote: {:?}", e),
+//!     }
+//!     Ok(())
+//! }
+//! ```
+
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
 use crate::contract::{Bar, Contract, ContractDetails};
@@ -21,10 +90,16 @@ use log::{debug, info, trace, warn}; // Removed unused 'error'
 
 
 // --- Helper Trait for Generic Waiting ---
-// Allows the generic wait_for_completion function to access common state fields/methods.
+
+/// Internal trait used by `wait_for_completion` to interact with different subscription state types.
+/// It defines common methods for checking completion status and accessing error information.
 trait CompletableState: Clone + Send + 'static {
+  /// Checks if the operation associated with this state is considered complete.
+  /// This could be due to successful data retrieval, an error, or a user-defined condition.
   fn is_completed(&self) -> bool;
+  /// Marks the operation associated with this state as complete.
   fn mark_completed(&mut self);
+  /// Retrieves an error associated with this state, if any.
   fn get_error(&self) -> Option<IBKRError>;
 }
 
@@ -76,8 +151,12 @@ impl CompletableState for MarketDepthSubscription {
 
 
 // --- Helper Trait for Downcasting MarketSubscription Enum ---
-// Private helper trait to implement the downcasting logic
+
+/// Internal helper trait to enable downcasting from the `MarketSubscription` enum
+/// to a specific underlying subscription state type (e.g., `MarketDataSubscription`).
+/// This is used within generic functions like `wait_for_completion`.
 trait TryIntoStateHelper<T> {
+  /// Attempts to get a mutable reference to the specific state type `T`.
   fn try_into_state_helper_mut(&mut self) -> Option<&mut T>;
 }
 
@@ -107,7 +186,8 @@ impl TryIntoStateHelper<MarketDepthSubscription> for MarketSubscription {
 
 // Helper methods on the enum to simplify access in the generic wait function
 impl MarketSubscription {
-  // Tries to get a mutable reference to the specific state type S
+  /// Tries to get a mutable reference to the specific underlying state type `S`
+  /// (e.g., `MarketDataSubscription`) from this `MarketSubscription` enum variant.
   fn try_get_mut<S>(&mut self) -> Option<&mut S>
   where
     MarketSubscription: TryIntoStateHelper<S>, // Use helper trait
@@ -116,17 +196,31 @@ impl MarketSubscription {
   }
 }
 
-
+/// Enum representing the different types of active market data subscriptions
+/// managed by `DataMarketManager`. Each variant holds the specific state
+/// for that subscription type.
 #[derive(Debug)]
 enum MarketSubscription {
+  /// State for a standard tick-based market data subscription.
   TickData(MarketDataSubscription),
+  /// State for a real-time bars subscription.
   RealTimeBars(RealTimeBarSubscription),
+  /// State for a tick-by-tick data subscription.
   TickByTick(TickByTickSubscription),
   MarketDepth(MarketDepthSubscription),
   HistoricalData(HistoricalDataRequestState),
   // Add Scanner, Histogram etc. if needed
 }
 
+/// Manages requests for real-time and historical market data from TWS.
+///
+/// This includes handling subscriptions for streaming ticks, real-time bars,
+/// tick-by-tick data, market depth, and fetching historical data.
+/// It also manages the market data type setting (e.g., real-time, delayed, frozen).
+///
+/// Accessed via [`IBKRClient::data_market()`].
+///
+/// See the [module-level documentation](index.html) for more details on interaction patterns.
 pub struct DataMarketManager {
   message_broker: Arc<MessageBroker>,
   // State for active subscriptions
@@ -141,10 +235,15 @@ pub struct DataMarketManager {
   // observers: RwLock<Vec<Weak<dyn MarketDataObserver>>>,
 }
 
-// Define the return type for get_quote
+/// Represents a market quote, typically containing Bid, Ask, and Last prices.
+/// Each field is an `Option<f64>` because not all prices may be available for all instruments
+/// or at all times.
 pub type Quote = (Option<f64>, Option<f64>, Option<f64>); // (Bid, Ask, Last)
 
 impl DataMarketManager {
+  /// Creates a new `DataMarketManager`.
+  ///
+  /// This is typically called internally when an `IBKRClient` is created.
   pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
     Arc::new(DataMarketManager {
       message_broker,
@@ -157,6 +256,19 @@ impl DataMarketManager {
   }
 
   // --- Helper to set market data type if needed ---
+
+  /// Sets the TWS market data type (e.g., RealTime, Delayed, Frozen) if it's different
+  /// from the `desired_type`. Blocks until the change is confirmed by TWS or a timeout occurs.
+  ///
+  /// # Arguments
+  /// * `desired_type` - The target `MarketDataType`.
+  /// * `timeout` - Maximum duration to wait for TWS to confirm the type change.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::ConfigurationError` if `MarketDataType::Unknown` is requested.
+  /// Returns `IBKRError::Unsupported` if the connected TWS version doesn't support type changes.
+  /// Returns `IBKRError::Timeout` if TWS doesn't confirm within the timeout.
+  /// Returns other `IBKRError` variants for communication issues.
   fn set_market_data_type_if_needed(
     &self,
     desired_type: MarketDataType,
@@ -224,6 +336,18 @@ impl DataMarketManager {
   }
 
   // --- Helper to wait for completion (mainly for historical data) ---
+
+  /// Waits for a historical data request to complete.
+  /// Completion means either all data has been received (`end_received` is true)
+  /// or an error has occurred.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID of the historical data request.
+  /// * `timeout` - Maximum duration to wait.
+  ///
+  /// # Returns
+  /// `Ok(Vec<Bar>)` containing the historical bars if successful.
+  /// `Err(IBKRError)` if an error occurs or the request times out.
   fn wait_for_historical_completion(
     &self,
     req_id: i32,
@@ -285,6 +409,19 @@ impl DataMarketManager {
 
 
   // --- Helper to wait for real-time bars completion ---
+
+  /// Waits for a `get_realtime_bars` request to complete.
+  /// Completion means either the target number of bars (`num_bars`) has been received,
+  /// an error has occurred, or the request has been explicitly marked as completed.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID of the real-time bars request.
+  /// * `num_bars` - The target number of bars to receive.
+  /// * `timeout` - Maximum duration to wait.
+  ///
+  /// # Returns
+  /// `Ok(Vec<Bar>)` containing the received real-time bars if successful.
+  /// `Err(IBKRError)` if an error occurs or the request times out.
   fn wait_for_realtime_bars_completion(
     &self,
     req_id: i32,
@@ -390,8 +527,25 @@ impl DataMarketManager {
 
 
   // --- Generic Wait Helper ---
-  // This helper abstracts the common waiting logic for blocking requests.
-  // It takes the request ID, timeout, and a closure to check the completion condition.
+
+  /// Generic helper function for blocking requests that wait for a specific condition to be met
+  /// on their subscription state, or until an error occurs or a timeout is reached.
+  ///
+  /// # Type Parameters
+  /// * `S`: The specific subscription state type (e.g., `MarketDataSubscription`, `TickByTickSubscription`)
+  ///        that implements `CompletableState` and `Clone`.
+  /// * `F`: A closure type `FnMut(&S) -> bool` that checks if the desired completion condition is met.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID.
+  /// * `timeout` - Maximum duration to wait.
+  /// * `completion_check` - A closure that takes a reference to the subscription state `S`
+  ///   and returns `true` if the custom completion condition is met, `false` otherwise.
+  /// * `request_type_name` - A string identifying the type of request (for logging).
+  ///
+  /// # Returns
+  /// `Ok(S)` containing a clone of the subscription state when the condition is met.
+  /// `Err(IBKRError)` if an error occurs, the request times out, or internal issues arise.
   fn wait_for_completion<S, F>(
     &self,
     req_id: i32,
@@ -508,8 +662,20 @@ impl DataMarketManager {
 
 
   // --- Helper to wait for quote completion ---
-  // Note: get_quote uses a specialized wait because its completion is tied to snapshot_end
-  // or receiving specific ticks, not a flexible closure. We keep it separate.
+
+  /// Waits for a `get_quote` request to complete.
+  /// Completion for a quote request means either:
+  /// - `tickSnapshotEnd` has been received.
+  /// - Both Bid and Ask prices have been received (for instruments that might not have a Last price or snapshot end).
+  /// - An error has occurred.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID of the quote request.
+  /// * `timeout` - Maximum duration to wait.
+  ///
+  /// # Returns
+  /// `Ok(Quote)` containing the (Bid, Ask, Last) prices if successful.
+  /// `Err(IBKRError)` if an error occurs or the request times out.
   fn wait_for_quote_completion(
     &self,
     req_id: i32,
@@ -620,7 +786,50 @@ impl DataMarketManager {
 
   // --- Public API Methods ---
 
-  /// Requests streaming market data (ticks). Non-blocking. Returns req_id.
+  /// Requests streaming market data (ticks) for a contract. This is a non-blocking call.
+  ///
+  /// Data updates (prices, sizes, etc.) will be delivered via the `MarketDataHandler`
+  /// trait methods implemented by this manager, which would typically notify registered observers.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request data.
+  /// * `generic_tick_list` - A comma-separated string of generic tick type IDs (e.g., "100,101,104").
+  ///   An empty string requests a default set of ticks. See TWS API documentation for available tick types.
+  /// * `snapshot` - If `true`, requests a single snapshot of current market data.
+  ///   If `false`, requests a continuous stream of updates. For simple snapshots, `get_quote()` might be easier.
+  /// * `regulatory_snapshot` - If `true`, requests a regulatory snapshot (requires TWS 963+ and specific permissions).
+  /// * `mkt_data_options` - A list of `(tag, value)` pairs for additional options (rarely used).
+  /// * `market_data_type` - Optional [`MarketDataType`] to request (e.g., RealTime, Delayed).
+  ///   If `None`, `MarketDataType::RealTime` is assumed.
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this market data request. This ID is needed to cancel the stream.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the market data type setting fails, the request cannot be encoded,
+  /// or the message fails to send.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::MarketDataType};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("SPY");
+  /// let req_id = market_data_mgr.request_market_data(
+  ///     &contract,
+  ///     "233", // Request RT Volume generic tick
+  ///     false, // Streaming
+  ///     false,
+  ///     &[],
+  ///     Some(MarketDataType::Delayed)
+  /// )?;
+  /// println!("Requested streaming market data for SPY with req_id: {}", req_id);
+  /// // ... (register an observer to process incoming ticks for req_id) ...
+  /// // market_data_mgr.cancel_market_data(req_id)?;
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn request_market_data(
     &self,
     contract: &Contract,
@@ -670,7 +879,48 @@ impl DataMarketManager {
     Ok(req_id)
   }
 
-  /// Requests streaming market data (ticks) and blocks until a completion condition is met.
+  /// Requests streaming market data (ticks) and blocks until a user-defined completion condition is met.
+  ///
+  /// This method initiates a market data stream similar to `request_market_data` but then
+  /// waits until the `completion_check` closure returns `true`, an error occurs, or the `timeout` is reached.
+  /// After the wait, it attempts to cancel the market data stream.
+  ///
+  /// # Arguments
+  /// * `contract`, `generic_tick_list`, `snapshot`, `regulatory_snapshot`, `mkt_data_options`, `market_data_type`:
+  ///   Same as for `request_market_data`.
+  /// * `timeout` - Maximum duration to wait for the completion condition.
+  /// * `completion_check` - A closure `FnMut(&MarketDataSubscription) -> bool`. It's called
+  ///   repeatedly with the current state of the market data subscription. The wait continues
+  ///   until this closure returns `true`.
+  ///
+  /// # Returns
+  /// A clone of the `MarketDataSubscription` state when the completion condition is met.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the underlying request fails, the wait times out, or other issues occur.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::{MarketDataType, TickType}};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("MSFT");
+  ///
+  /// // Wait until we receive at least one Bid and one Ask price
+  /// let result_state = market_data_mgr.get_market_data(
+  ///     &contract, "", false, false, &[], Some(MarketDataType::Delayed), Duration::from_secs(20),
+  ///     |state| {
+  ///         let has_bid = state.ticks.contains_key(&TickType::BidPrice) || state.ticks.contains_key(&TickType::DelayedBid);
+  ///         let has_ask = state.ticks.contains_key(&TickType::AskPrice) || state.ticks.contains_key(&TickType::DelayedAsk);
+  ///         has_bid && has_ask
+  ///     }
+  /// )?;
+  /// println!("MSFT Data: Bid={:?}, Ask={:?}", result_state.bid_price, result_state.ask_price);
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_market_data<F>(
     &self,
     contract: &Contract,
@@ -720,7 +970,14 @@ impl DataMarketManager {
   }
 
 
-  /// Cancels a streaming market data request.
+  /// Cancels an active streaming market data request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `request_market_data()` or `get_market_data()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
+  /// It logs a warning if the `req_id` is not found (e.g., already cancelled or completed).
   pub fn cancel_market_data(&self, req_id: i32) -> Result<(), IBKRError> {
     info!("Cancelling market data request: ReqID={}", req_id);
     let server_version = self.message_broker.get_server_version()?;
@@ -743,7 +1000,45 @@ impl DataMarketManager {
   }
 
 
-  /// Requests a specific number of 5-second real-time bars. Blocks until the bars are received, an error occurs, or timeout.
+  /// Requests a specific number of 5-second real-time bars and blocks until they are received,
+  /// an error occurs, or the timeout is reached.
+  ///
+  /// TWS API currently only supports 5-second bars for this type of request.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request bars.
+  /// * `what_to_show` - Type of data for bars (e.g., "TRADES", "MIDPOINT", "BID", "ASK").
+  /// * `use_rth` - If `true`, only include data from regular trading hours.
+  /// * `real_time_bars_options` - A list of `(tag, value)` pairs for additional options.
+  /// * `num_bars` - The number of 5-second bars to retrieve. Must be greater than 0.
+  /// * `timeout` - Maximum duration to wait for all bars.
+  ///
+  /// # Returns
+  /// A `Vec<Bar>` containing the requested real-time bars.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::ConfigurationError` if `num_bars` is 0.
+  /// Returns `IBKRError::Timeout` if not all bars are received within the timeout.
+  /// Returns other `IBKRError` variants for communication or encoding issues.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("AAPL");
+  /// let bars = market_data_mgr.get_realtime_bars(
+  ///     &contract, "TRADES", true, &[], 2, Duration::from_secs(20)
+  /// )?;
+  /// println!("Received {} real-time bars for AAPL.", bars.len());
+  /// for bar in bars {
+  ///     println!("  Time: {}, Close: {}", bar.time.format("%H:%M:%S"), bar.close);
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_realtime_bars(
     &self,
     contract: &Contract,
@@ -803,7 +1098,42 @@ impl DataMarketManager {
   }
 
 
-  /// Gets a single quote (Bid, Ask, Last) for a contract using a snapshot request. Blocks until data is received or timeout.
+  /// Requests a single snapshot quote (Bid, Ask, Last prices) for a contract.
+  /// This is a blocking call that waits until the quote data is received or a timeout occurs.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request the quote.
+  /// * `market_data_type` - Optional [`MarketDataType`] (e.g., RealTime, Delayed).
+  ///   If `None`, `MarketDataType::RealTime` is assumed.
+  /// * `timeout` - Maximum duration to wait for the quote.
+  ///
+  /// # Returns
+  /// A `Quote` tuple `(Option<f64>, Option<f64>, Option<f64>)` representing
+  /// (Bid Price, Ask Price, Last Price). Fields will be `None` if the respective
+  /// data is not available.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the quote is not received within the timeout.
+  /// Returns other `IBKRError` variants for issues with market data type setting,
+  /// request encoding, or message sending.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::MarketDataType};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("GOOG");
+  /// match market_data_mgr.get_quote(&contract, Some(MarketDataType::Delayed), Duration::from_secs(10)) {
+  ///     Ok((bid, ask, last)) => {
+  ///         println!("GOOG Quote: Bid={:?}, Ask={:?}, Last={:?}", bid, ask, last);
+  ///     },
+  ///     Err(e) => eprintln!("Failed to get quote: {:?}", e),
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_quote(
       &self,
       contract: &Contract,
@@ -865,7 +1195,40 @@ impl DataMarketManager {
   }
 
 
-  /// Requests streaming 5-second real-time bars. Non-blocking. Returns req_id.
+  /// Requests a stream of 5-second real-time bars for a contract. This is a non-blocking call.
+  ///
+  /// TWS API currently only supports 5-second bars for this type of request.
+  /// Bar data is delivered via the `real_time_bar` method of the `MarketDataHandler` trait,
+  /// which would typically notify registered observers.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request bars.
+  /// * `what_to_show` - Type of data for bars (e.g., "TRADES", "MIDPOINT", "BID", "ASK").
+  /// * `use_rth` - If `true`, only include data from regular trading hours.
+  /// * `real_time_bars_options` - A list of `(tag, value)` pairs for additional options.
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this real-time bars request.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded or sent.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("TSLA");
+  /// let req_id = market_data_mgr.request_real_time_bars(
+  ///     &contract, "TRADES", true, &[]
+  /// )?;
+  /// println!("Requested streaming real-time bars for TSLA with req_id: {}", req_id);
+  /// // ... (register an observer to process incoming bars for req_id) ...
+  /// // market_data_mgr.cancel_real_time_bars(req_id)?;
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn request_real_time_bars(
     &self,
     contract: &Contract,
@@ -909,7 +1272,13 @@ impl DataMarketManager {
     Ok(req_id)
   }
 
-  /// Cancels streaming real-time bars.
+  /// Cancels an active streaming real-time bars request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `request_real_time_bars()` or `get_realtime_bars()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
   pub fn cancel_real_time_bars(&self, req_id: i32) -> Result<(), IBKRError> {
     info!("Cancelling real time bars request: ReqID={}", req_id);
     let server_version = self.message_broker.get_server_version()?;
@@ -930,7 +1299,46 @@ impl DataMarketManager {
   }
 
 
-  /// Requests streaming tick-by-tick data. Non-blocking. Returns req_id.
+  /// Requests a stream of tick-by-tick data for a contract. This is a non-blocking call.
+  ///
+  /// Tick-by-tick data provides a detailed view of trades, bid/ask changes, or midpoint updates.
+  /// Data is delivered via the `tick_by_tick_*` methods of the `MarketDataHandler` trait,
+  /// which would typically notify registered observers.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request data.
+  /// * `tick_type` - The type of tick data:
+  ///     - "Last": Last trade ticks.
+  ///     - "AllLast": All last trade ticks (includes non-NBBO).
+  ///     - "BidAsk": Bid and Ask ticks.
+  ///     - "MidPoint": Midpoint ticks.
+  /// * `number_of_ticks` - For historical tick-by-tick data, the number of ticks to retrieve.
+  ///   Set to `0` for streaming live tick-by-tick data.
+  /// * `ignore_size` - For "BidAsk" tick type, if `true`, do not report bid/ask sizes (saves bandwidth).
+  ///   Usually `false` for streaming.
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this tick-by-tick data request.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded or sent.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("NVDA");
+  /// let req_id = market_data_mgr.request_tick_by_tick_data(
+  ///     &contract, "Last", 0, false // Stream Last trades
+  /// )?;
+  /// println!("Requested streaming tick-by-tick 'Last' data for NVDA with req_id: {}", req_id);
+  /// // ... (register an observer to process incoming ticks for req_id) ...
+  /// // market_data_mgr.cancel_tick_by_tick_data(req_id)?;
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn request_tick_by_tick_data(
     &self,
     contract: &Contract,
@@ -971,7 +1379,46 @@ impl DataMarketManager {
     Ok(req_id)
   }
 
-  /// Requests streaming tick-by-tick data and blocks until a completion condition is met.
+  /// Requests streaming tick-by-tick data and blocks until a user-defined completion condition is met.
+  ///
+  /// This method initiates a tick-by-tick data stream similar to `request_tick_by_tick_data`
+  /// but then waits until the `completion_check` closure returns `true`, an error occurs,
+  /// or the `timeout` is reached. After the wait, it attempts to cancel the stream.
+  ///
+  /// For streaming requests intended to be blocked upon, `number_of_ticks` should typically be `0`.
+  ///
+  /// # Arguments
+  /// * `contract`, `tick_type`, `number_of_ticks`, `ignore_size`: Same as for `request_tick_by_tick_data`.
+  /// * `timeout` - Maximum duration to wait for the completion condition.
+  /// * `completion_check` - A closure `FnMut(&TickByTickSubscription) -> bool`. It's called
+  ///   repeatedly with the current state of the tick-by-tick subscription. The wait continues
+  ///   until this closure returns `true`.
+  ///
+  /// # Returns
+  /// A clone of the `TickByTickSubscription` state when the completion condition is met.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the underlying request fails, the wait times out, or other issues occur.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::TickByTickData};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("GOOG");
+  /// let target_ticks = 5;
+  ///
+  /// // Wait until we receive at least 5 'Last' ticks
+  /// let result_state = market_data_mgr.get_tick_by_tick_data(
+  ///     &contract, "Last", 0, false, Duration::from_secs(30),
+  ///     |state| state.ticks.len() >= target_ticks
+  /// )?;
+  /// println!("Received at least {} tick-by-tick 'Last' data for GOOG.", result_state.ticks.len());
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_tick_by_tick_data<F>(
     &self,
     contract: &Contract,
@@ -1019,7 +1466,13 @@ impl DataMarketManager {
   }
 
 
-  /// Cancels streaming tick-by-tick data.
+  /// Cancels an active streaming tick-by-tick data request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `request_tick_by_tick_data()` or `get_tick_by_tick_data()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
   pub fn cancel_tick_by_tick_data(&self, req_id: i32) -> Result<(), IBKRError> {
     info!("Cancelling tick-by-tick data request: ReqID={}", req_id);
     let server_version = self.message_broker.get_server_version()?;
@@ -1039,7 +1492,40 @@ impl DataMarketManager {
     Ok(())
   }
 
-  /// Requests streaming market depth. Non-blocking. Returns req_id.
+  /// Requests a stream of market depth data (Level II book). This is a non-blocking call.
+  ///
+  /// Market depth updates are delivered via the `update_mkt_depth` and `update_mkt_depth_l2`
+  /// methods of the `MarketDataHandler` trait, which would typically notify registered observers.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request market depth.
+  /// * `num_rows` - The number of rows of market depth data to display on each side (bid/ask).
+  /// * `is_smart_depth` - If `true`, requests aggregated depth from SMART routing.
+  ///   If `false`, requests depth from the contract's native exchange. SMART depth requires TWS 96 SMART Depth subscription.
+  /// * `mkt_depth_options` - A list of `(tag, value)` pairs for additional options.
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this market depth request.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded or sent.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("IBM");
+  /// let req_id = market_data_mgr.request_market_depth(
+  ///     &contract, 5, false, &[] // Request 5 levels of regular depth
+  /// )?;
+  /// println!("Requested streaming market depth for IBM with req_id: {}", req_id);
+  /// // ... (register an observer to process incoming depth updates for req_id) ...
+  /// // market_data_mgr.cancel_market_depth(req_id)?;
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn request_market_depth(
     &self,
     contract: &Contract,
@@ -1078,7 +1564,44 @@ impl DataMarketManager {
     Ok(req_id)
   }
 
-  /// Requests streaming market depth and blocks until a completion condition is met.
+  /// Requests streaming market depth data and blocks until a user-defined completion condition is met.
+  ///
+  /// This method initiates a market depth stream similar to `request_market_depth`
+  /// but then waits until the `completion_check` closure returns `true`, an error occurs,
+  /// or the `timeout` is reached. After the wait, it attempts to cancel the stream.
+  ///
+  /// # Arguments
+  /// * `contract`, `num_rows`, `is_smart_depth`, `mkt_depth_options`: Same as for `request_market_depth`.
+  /// * `timeout` - Maximum duration to wait for the completion condition.
+  /// * `completion_check` - A closure `FnMut(&MarketDepthSubscription) -> bool`. It's called
+  ///   repeatedly with the current state of the market depth subscription. The wait continues
+  ///   until this closure returns `true`.
+  ///
+  /// # Returns
+  /// A clone of the `MarketDepthSubscription` state when the completion condition is met.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the underlying request fails, the wait times out, or other issues occur.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("IBM");
+  ///
+  /// // Wait until we have at least one bid and one ask level in the depth book
+  /// let result_state = market_data_mgr.get_market_depth(
+  ///     &contract, 5, false, &[], Duration::from_secs(20),
+  ///     |state| !state.depth_bids.is_empty() && !state.depth_asks.is_empty()
+  /// )?;
+  /// println!("IBM Market Depth: Top Bid Px={:?}, Top Ask Px={:?}",
+  ///          result_state.bid_price, result_state.ask_price);
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_market_depth<F>(
     &self,
     contract: &Contract,
@@ -1130,7 +1653,14 @@ impl DataMarketManager {
   }
 
 
-  /// Cancels streaming market depth.
+  /// Cancels an active streaming market depth request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `request_market_depth()` or `get_market_depth()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
+  /// It logs a warning if the `req_id` is not found or if `is_smart_depth` cannot be determined.
   pub fn cancel_market_depth(&self, req_id: i32) -> Result<(), IBKRError> {
     let is_smart_depth = { // Need to check the state for is_smart_depth flag
       let subs = self.subscriptions.lock();
@@ -1182,7 +1712,59 @@ impl DataMarketManager {
   }
 
 
-  /// Requests historical bar data. Blocks until data is received or timeout.
+  /// Requests historical bar data for a contract. This is a blocking call.
+  ///
+  /// It waits until all historical bars are received from TWS or a timeout occurs.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request historical data.
+  /// * `end_date_time` - Optional `DateTime<Utc>` specifying the end point of the historical data.
+  ///   If `None`, data up to the present time is requested.
+  /// * `duration_str` - The duration of data to request (e.g., "1 Y", "3 M", "60 D", "3600 S").
+  /// * `bar_size_setting` - The size of each bar (e.g., "1 day", "30 mins", "1 secs").
+  /// * `what_to_show` - The type of data to include in bars (e.g., "TRADES", "MIDPOINT", "BID_ASK").
+  /// * `use_rth` - If `true`, only include data from regular trading hours.
+  /// * `format_date` - Date format: `1` for "yyyyMMdd HH:mm:ss", `2` for system time (seconds since epoch).
+  /// * `keep_up_to_date` - If `true`, subscribe to updates for the head bar after the initial data load.
+  ///   (Note: `DataMarketManager` currently processes these updates but doesn't have a dedicated observer mechanism for them beyond the initial fetch).
+  /// * `market_data_type` - Optional [`MarketDataType`] for the historical data (e.g., Delayed).
+  ///   If `None`, `MarketDataType::RealTime` is assumed (which might require subscriptions for some data).
+  /// * `chart_options` - A list of `(tag, value)` pairs for additional chart options.
+  ///
+  /// # Returns
+  /// A `Vec<Bar>` containing the historical bars.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the data is not received within the timeout.
+  /// Returns other `IBKRError` variants for issues with market data type setting,
+  /// request encoding, or message sending.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::MarketDataType};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let market_data_mgr = client.data_market();
+  /// let contract = Contract::stock("IBM");
+  /// let bars = market_data_mgr.get_historical_data(
+  ///     &contract,
+  ///     None, // Up to present
+  ///     "3 D", // 3 days of data
+  ///     "1 hour", // 1-hour bars
+  ///     "TRADES",
+  ///     true, // RTH only
+  ///     1,    // yyyyMMdd HH:mm:ss format
+  ///     false, // Don't keep up to date
+  ///     Some(MarketDataType::Delayed),
+  ///     &[]
+  /// )?;
+  /// println!("Received {} historical bars for IBM.", bars.len());
+  /// if let Some(bar) = bars.first() {
+  ///     println!("First bar: Time={}, Close={}", bar.time, bar.close);
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_historical_data(
     &self,
     contract: &Contract,
@@ -1232,7 +1814,14 @@ impl DataMarketManager {
     self.wait_for_historical_completion(req_id, timeout)
   }
 
-  /// Cancels a historical data request.
+  /// Cancels an ongoing historical data request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `get_historical_data()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
+  /// It logs a warning if the `req_id` is not found (e.g., already completed or cancelled).
   pub fn cancel_historical_data(&self, req_id: i32) -> Result<(), IBKRError> {
     info!("Cancelling historical data request: ReqID={}", req_id);
     let server_version = self.message_broker.get_server_version()?;

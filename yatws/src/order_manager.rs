@@ -1,3 +1,67 @@
+
+//! Manages order submission, status tracking, and cancellation.
+//!
+//! The `OrderManager` is responsible for the entire lifecycle of an order,
+//! from placement to final execution or cancellation.
+//!
+//! # Order Lifecycle
+//!
+//! 1.  **Placement**: An order is placed using `place_order`. Initially, its status is `PendingSubmit`.
+//! 2.  **Submission Acknowledgement**: TWS acknowledges the order, and its status typically
+//!     moves to `PreSubmitted` or `Submitted`. This can be waited for using
+//!     `wait_order_submitted` or `try_wait_order_submitted`.
+//! 3.  **Execution**: If the order fills, its status becomes `Filled`. This can be waited for
+//!     using `wait_order_executed` or `try_wait_order_executed`. Partial fills will also
+//!     update the `filled_quantity` and `remaining_quantity` fields.
+//! 4.  **Cancellation**: An order can be cancelled using `cancel_order`. If successful,
+//!     its status will move to `PendingCancel` and then `Cancelled` or `ApiCancelled`.
+//!     This can be waited for using `wait_order_canceled` or `try_wait_order_canceled`.
+//! 5.  **Modification**: An order can be modified using `modify_order`. This effectively
+//!     replaces the existing order with a new one having the same client order ID but
+//!     updated parameters. The status will reflect the new order's state.
+//!
+//! # Error Handling
+//!
+//! If TWS rejects an order or encounters an error during its lifecycle, the `OrderState`
+//! will contain an `error` field, and the status might become `Cancelled` or another
+//! terminal state. Observers will be notified via `on_order_error`.
+//!
+//! # Observers
+//!
+//! For asynchronous updates, an [`OrderObserver`] can be registered. It will receive
+//! notifications for order status changes (`on_order_update`) and errors (`on_order_error`).
+//!
+//! # Example: Placing a Market Order and Waiting for Execution
+//!
+//! ```no_run
+//! use yatws::{IBKRClient, IBKRError, OrderBuilder, contract::Contract, order::{OrderSide, OrderStatus}};
+//! use std::time::Duration;
+//!
+//! fn main() -> Result<(), IBKRError> {
+//!     let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+//!     let order_mgr = client.orders();
+//!
+//!     // Build a market order to buy 1 share of SPY
+//!     let (contract, buy_request) = OrderBuilder::new(OrderSide::Buy, 1.0)
+//!         .market()
+//!         .for_stock("SPY")
+//!         .build()?;
+//!
+//!     // Place the order
+//!     let buy_order_id = order_mgr.place_order(contract.clone(), buy_request)?;
+//!     println!("BUY order placed with ID: {}", buy_order_id);
+//!
+//!     // Wait for the order to be filled (e.g., up to 20 seconds)
+//!     match order_mgr.try_wait_order_executed(&buy_order_id, Duration::from_secs(20)) {
+//!         Ok(OrderStatus::Filled) => println!("BUY order {} filled.", buy_order_id),
+//!         Ok(status) => eprintln!("BUY order {} did not fill as expected. Final status: {:?}", buy_order_id, status),
+//!         Err(e) => eprintln!("Error waiting for BUY order {}: {:?}", buy_order_id, e),
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+
 use parking_lot::{RwLock, Mutex, Condvar};
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -15,6 +79,12 @@ use crate::protocol_decoder::ClientErrorCode; // Added import
 // Removed unused import: crate::parser_order;
 
 
+/// Manages order lifecycle, including placement, status tracking, modification, and cancellation.
+///
+/// Accessed via [`IBKRClient::orders()`].
+///
+/// See the [module-level documentation](index.html) for an overview of the order lifecycle
+/// and interaction patterns.
 pub struct OrderManager {
   message_broker: Arc<MessageBroker>,
   // Map: client_order_id (String) -> Order struct
@@ -34,8 +104,12 @@ pub struct OrderManager {
 }
 
 impl OrderManager {
-  /// Creates a new OrderManager and returns it along with a closure
-  /// that must be called *after* connection to wait for the initial nextValidId.
+  /// Creates a new `OrderManager` and returns it along with a closure.
+  /// The closure *must* be called after the TWS connection is established and
+  /// the initial `StartAPI` handshake is complete. It waits for the server
+  /// to send the `nextValidId` message, which is crucial for placing orders.
+  ///
+  /// This method is typically called internally when an `IBKRClient` is created.
   pub(crate) fn create(message_broker: Arc<MessageBroker>) -> (Arc<Self>, impl FnOnce() -> Result<(), IBKRError>) {
     let manager = Arc::new(OrderManager {
       message_broker,
@@ -83,7 +157,10 @@ impl OrderManager {
     Ok(())
   }
 
-  /// Adds an observer to receive order notifications.
+  /// Adds an observer to receive asynchronous notifications about order updates and errors.
+  ///
+  /// Observers implement the [`OrderObserver`] trait.
+  /// Multiple observers can be added.
   pub fn add_observer(&self, observer: Box<dyn OrderObserver + Send + Sync>) {
     let mut observers = self.observers.write();
     observers.push(observer);
@@ -92,8 +169,16 @@ impl OrderManager {
 
   // Note: Removing observers requires assigning unique IDs, omitted for brevity.
 
-  /// Peek what the next order ID will be *without* consuming it.
-  /// You may get a higher next order ID at the next `place_order` if you run in parallel.
+  /// Peeks at the next available client order ID without consuming it.
+  ///
+  /// This ID will be used for the next order placed via `place_order`.
+  /// Note: If multiple operations are placing orders concurrently (though not typical
+  /// for a single `OrderManager` instance unless accessed from multiple threads without
+  /// external synchronization), the actual ID used might be higher.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::InternalError` if the initial `nextValidId` has not yet
+  /// been received from TWS.
   pub fn peek_order_id(&self) -> Result<String, IBKRError> {
     let guard = self.next_order_id_state.lock();
     match *guard {
@@ -102,9 +187,44 @@ impl OrderManager {
     }
   }
 
-  /// Place an order.
-  /// This sends an order to the system and returns immediately without waiting for confirmation.
-  /// The assigned client order ID is returned.
+  /// Places an order with TWS.
+  ///
+  /// This method sends the order request to TWS and returns the assigned client order ID
+  /// immediately, without waiting for TWS to acknowledge or fill the order.
+  /// The order's initial status will be `PendingSubmit`.
+  ///
+  /// To track the order's progress, you can:
+  /// - Use the `wait_*` or `try_wait_*` methods (e.g., `try_wait_order_submitted`, `try_wait_order_executed`).
+  /// - Register an [`OrderObserver`] to receive asynchronous updates.
+  /// - Periodically call `get_order` or `get_open_orders`.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for the instrument to trade.
+  /// * `request` - The [`OrderRequest`] detailing the order parameters (side, type, quantity, price, etc.).
+  ///
+  /// # Returns
+  /// The client-assigned order ID (as a `String`) if the request was successfully sent.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the initial `nextValidId` is not available, if there's an
+  /// encoding issue, or if the message fails to send.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, OrderBuilder, contract::Contract, order::OrderSide};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let order_mgr = client.orders();
+  /// let (contract, order_req) = OrderBuilder::new(OrderSide::Buy, 100.0)
+  ///     .limit(250.50)
+  ///     .for_stock("AAPL")
+  ///     .build()?;
+  ///
+  /// let order_id = order_mgr.place_order(contract, order_req)?;
+  /// println!("Order placed with ID: {}", order_id);
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn place_order(&self, contract: Contract, request: OrderRequest) -> Result<String, IBKRError> {
     info!("Placing order: {:?} x {:.0} for {}", request.side, request.quantity, contract.symbol);
     if !request.transmit {
@@ -175,8 +295,45 @@ impl OrderManager {
     Ok(order_id_str)
   }
 
-  /// Cancel an order.
-  /// This method sends a cancel request and returns immediately without waiting for confirmation.
+  /// Requests the cancellation of an existing order.
+  ///
+  /// This method sends a cancel request to TWS and returns immediately.
+  /// It does not wait for confirmation that the order has been cancelled.
+  /// The order's status will typically move to `PendingCancel` and then `Cancelled`
+  /// or `ApiCancelled` upon successful cancellation by TWS.
+  ///
+  /// # Arguments
+  /// * `order_id` - The client order ID of the order to cancel.
+  ///
+  /// # Returns
+  /// * `Ok(true)` if the cancel request was sent.
+  /// * `Ok(false)` if the order was already in a terminal state and no request was sent.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the order ID format is invalid, if there's an encoding issue,
+  /// or if the message fails to send.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, OrderBuilder, contract::Contract, order::{OrderSide, OrderStatus}};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let order_mgr = client.orders();
+  /// # let (contract, order_req) = OrderBuilder::new(OrderSide::Buy, 1.0).limit(10.0).for_stock("XYZ").build()?;
+  /// # let order_id = order_mgr.place_order(contract, order_req)?;
+  /// // Assume order_id is an active order
+  /// if order_mgr.cancel_order(&order_id)? {
+  ///     println!("Cancel request sent for order {}", order_id);
+  ///     // Optionally wait for cancellation confirmation
+  ///     match order_mgr.try_wait_order_canceled(&order_id, Duration::from_secs(5)) {
+  ///         Ok(status) => println!("Order {} cancellation confirmed with status: {:?}", order_id, status),
+  ///         Err(e) => eprintln!("Error waiting for cancellation: {:?}", e),
+  ///     }
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn cancel_order(&self, order_id: &str) -> Result<bool, IBKRError> {
     info!("Requesting cancellation for order ID: {}", order_id);
     let order_id_int = order_id.parse::<i32>()
@@ -212,9 +369,48 @@ impl OrderManager {
     Ok(true) // Indicate request was sent
   }
 
-  /// Modify an order.
-  /// This sends a *new* placeOrder command with the *same ID* but updated parameters.
-  /// Returns the `Arc<RwLock<Order>>` for the existing order.
+  /// Modifies an existing open order.
+  ///
+  /// This method sends a new `placeOrder` message to TWS with the *same client order ID*
+  /// but with updated parameters from the `updates` argument. TWS will attempt to
+  /// replace the existing order with the modified one.
+  ///
+  /// The method returns immediately after sending the modification request.
+  /// The returned `Arc<RwLock<Order>>` is a reference to the order's state in the
+  /// local order book, which will be updated asynchronously by TWS messages.
+  ///
+  /// # Arguments
+  /// * `order_id` - The client order ID of the order to modify.
+  /// * `updates` - An [`OrderUpdates`] struct containing the parameters to change
+  ///   (e.g., quantity, limit price). Fields set to `None` in `updates` are not changed.
+  ///
+  /// # Returns
+  /// An `Arc<RwLock<Order>>` pointing to the order being modified.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the order ID is not found, the order is already in a
+  /// terminal state, the order ID format is invalid, or if there are issues
+  /// encoding or sending the modification request.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, OrderBuilder, contract::Contract, order::{OrderSide, OrderUpdates}};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let order_mgr = client.orders();
+  /// # let (contract, order_req) = OrderBuilder::new(OrderSide::Buy, 1.0).limit(100.0).for_stock("XYZ").build()?;
+  /// # let order_id = order_mgr.place_order(contract, order_req)?;
+  /// // Assume order_id is an active limit order
+  /// let updates = OrderUpdates {
+  ///     limit_price: Some(100.50), // Change limit price
+  ///     ..Default::default()
+  /// };
+  /// order_mgr.modify_order(&order_id, updates)?;
+  /// println!("Modification request sent for order {}", order_id);
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn modify_order(&self, order_id: &str, updates: OrderUpdates) -> Result<Arc<RwLock<Order>>, IBKRError> {
     info!("Modifying order ID: {} with updates: {:?}", order_id, updates);
     let order_id_int = order_id.parse::<i32>()
@@ -302,9 +498,14 @@ impl OrderManager {
     Ok(order_arc)
   }
 
-  /// Refreshes the order book by requesting all open orders from TWS and waiting for completion.
+  /// Refreshes the local order book by requesting all open orders from TWS.
   ///
-  /// This is a blocking call. It sends `reqAllOpenOrders` and waits for the `openOrderEnd`
+  /// This is a blocking call. It sends a `reqAllOpenOrders` message to TWS and
+  /// waits until TWS responds with an `openOrderEnd` message, indicating that all
+  /// open orders have been sent. The local order book is updated with the received orders.
+  ///
+  /// This is useful for synchronizing the client's view of open orders with TWS,
+  /// especially after a reconnection or if there's a suspicion of discrepancies.
   /// message from TWS, or until the specified timeout is reached.
   ///
   /// # Arguments
@@ -358,7 +559,21 @@ impl OrderManager {
 
   // --- Wait Functions ---
 
-  /// Internal helper for waiting logic. `timeout_duration = None` means wait indefinitely.
+  /// Internal helper for the common logic of waiting for an order to reach one of
+  /// a set of target statuses, or until it fails, terminates unexpectedly, or times out.
+  ///
+  /// # Arguments
+  /// * `order_id` - The client order ID to monitor.
+  /// * `target_statuses` - A slice of [`OrderStatus`] values that are considered successful outcomes.
+  /// * `timeout_duration` - An `Option<Duration>`. If `Some`, the function will time out
+  ///   after this duration. If `None`, it will wait indefinitely.
+  ///
+  /// # Returns
+  /// * `Ok(OrderStatus)` - The specific `OrderStatus` from `target_statuses` that was reached.
+  /// * `Err(IBKRError::Timeout)` - If `timeout_duration` was specified and elapsed.
+  /// * `Err(IBKRError::InvalidOrder)` - If the order is not found, or if it reaches a
+  ///   terminal state that is *not* one of the `target_statuses`.
+  /// * `Err(IBKRError)` - If the order's internal state indicates a previously recorded API error.
   fn _wait_for_status_internal(
     &self,
     order_id: &str,
@@ -471,38 +686,52 @@ impl OrderManager {
   }
 
 
-  /// Wait indefinitely until an order is Submitted, or fails/terminates.
+  /// Waits indefinitely until an order's status becomes `Submitted` or `Filled`,
+  /// or until the order fails or reaches another terminal state.
+  ///
+  /// This is useful for confirming that TWS has accepted an order.
+  /// `Filled` is included as a target because an aggressive order might fill
+  /// before a `Submitted` status is even processed locally.
   pub fn wait_order_submitted(&self, order_id: &str) -> Result<OrderStatus, IBKRError> {
     self._wait_for_status_internal(order_id, &[OrderStatus::Submitted, OrderStatus::Filled], None)
   }
 
-  /// Wait with a timeout until an order is Submitted or PreSubmitted, or fails/terminates.
-  /// Returns the status reached (Submitted or PreSubmitted) or an error (including Timeout).
+  /// Tries to wait for a specified duration until an order's status becomes `Submitted` or `Filled`,
+  /// or until the order fails, terminates, or the timeout elapses.
+  ///
+  /// Returns the status reached (`Submitted` or `Filled`) or an error (including `IBKRError::Timeout`).
   pub fn try_wait_order_submitted(&self, order_id: &str, timeout: Duration) -> Result<OrderStatus, IBKRError> {
     self._wait_for_status_internal(order_id, &[OrderStatus::Submitted, OrderStatus::Filled], Some(timeout))
   }
 
-  /// Wait indefinitely until an order is Filled, or fails/terminates.
-  /// Returns OrderStatus::Filled or an error.
+  /// Waits indefinitely until an order's status becomes `Filled`,
+  /// or until the order fails or reaches another terminal state.
+  ///
+  /// This is used to wait for an order to be fully executed.
   pub fn wait_order_executed(&self, order_id: &str) -> Result<OrderStatus, IBKRError> {
     self._wait_for_status_internal(order_id, &[OrderStatus::Filled], None)
   }
 
-  /// Wait with a timeout until an order is Filled, or fails/terminates.
-  /// Returns OrderStatus::Filled or an error (including Timeout).
+  /// Tries to wait for a specified duration until an order's status becomes `Filled`,
+  /// or until the order fails, terminates, or the timeout elapses.
+  ///
+  /// Returns `OrderStatus::Filled` or an error (including `IBKRError::Timeout`).
   pub fn try_wait_order_executed(&self, order_id: &str, timeout: Duration) -> Result<OrderStatus, IBKRError> {
     self._wait_for_status_internal(order_id, &[OrderStatus::Filled], Some(timeout))
   }
 
-  /// Wait indefinitely until an order is Cancelled, ApiCancelled, or Inactive, or fails/terminates differently.
-  /// Returns the status reached (Cancelled, ApiCancelled, Inactive) or an error.
-  /// Note: 'Inactive' often implies cancellation but might lack explicit confirmation.
+  /// Waits indefinitely until an order's status becomes `Cancelled`, `ApiCancelled`, or `Inactive`.
+  ///
+  /// `Inactive` often implies cancellation but might lack explicit TWS confirmation.
+  /// This method is used to wait for an order cancellation to be confirmed.
   pub fn wait_order_canceled(&self, order_id: &str) -> Result<OrderStatus, IBKRError> {
     self._wait_for_status_internal(order_id, &[OrderStatus::Cancelled, OrderStatus::ApiCancelled, OrderStatus::Inactive], None)
   }
 
-  /// Wait with a timeout until an order is Cancelled, ApiCancelled, or Inactive, or fails/terminates differently.
-  /// Returns the status reached (Cancelled, ApiCancelled, Inactive) or an error (including Timeout).
+  /// Tries to wait for a specified duration until an order's status becomes `Cancelled`, `ApiCancelled`, or `Inactive`,
+  /// or until the order fails, terminates, or the timeout elapses.
+  ///
+  /// Returns the status reached (`Cancelled`, `ApiCancelled`, `Inactive`) or an error (including `IBKRError::Timeout`).
   pub fn try_wait_order_canceled(&self, order_id: &str, timeout: Duration) -> Result<OrderStatus, IBKRError> {
     self._wait_for_status_internal(order_id, &[OrderStatus::Cancelled, OrderStatus::ApiCancelled, OrderStatus::Inactive], Some(timeout))
   }
@@ -510,19 +739,30 @@ impl OrderManager {
 
   // --- Getters ---
 
-  /// Find an order by ID. Returns a clone of the order data.
+  /// Retrieves a snapshot of an order's current state by its client order ID.
+  ///
+  /// Returns `Some(Order)` if the order is found in the local order book,
+  /// or `None` if no order with that ID is known. The returned `Order` is a clone
+  /// of the current state.
   pub fn get_order(&self, order_id: &str) -> Option<Order> {
     let book = self.order_book.read();
     book.get(order_id).map(|order_arc| order_arc.read().clone())
   }
 
-  /// List all orders known to the manager. Returns clones.
+  /// Retrieves a list of all orders currently known to the `OrderManager`.
+  ///
+  /// This includes orders in any state (open, filled, cancelled, etc.).
+  /// The returned `Order` objects are clones of their current state.
   pub fn get_all_orders(&self) -> Vec<Order> {
     let book = self.order_book.read();
     book.values().map(|order_arc| order_arc.read().clone()).collect()
   }
 
-  /// List all open orders (not terminal: Filled, Cancelled, Inactive, ApiCancelled). Returns clones.
+  /// Retrieves a list of all open (non-terminal) orders.
+  ///
+  /// An order is considered open if its status is not one of:
+  /// `Filled`, `Cancelled`, `ApiCancelled`, or `Inactive`.
+  /// The returned `Order` objects are clones of their current state.
   pub fn get_open_orders(&self) -> Vec<Order> {
     let book = self.order_book.read();
     book.values()
@@ -933,10 +1173,21 @@ impl OrderHandler for OrderManager {
 }
 
 // --- Order Observer Trait ---
-// (Make sure the trait is defined, likely in this file or imported)
+
+/// Defines the callbacks for an observer wishing to receive asynchronous order updates.
+///
+/// Implement this trait and register it with [`OrderManager::add_observer()`]
+/// to be notified of changes to order status or errors related to orders.
 pub trait OrderObserver: Send + Sync {
-  /// Called when an order's state is updated (e.g., via orderStatus or openOrder).
+  /// Called when an order's state is updated.
+  /// This can be triggered by `orderStatus` or `openOrder` messages from TWS.
+  /// The `order` argument provides a snapshot of the order's current state.
   fn on_order_update(&self, order: &Order);
-  /// Called when an error related to a specific order is received.
+
+  /// Called when an error related to a specific order is received from TWS.
+  ///
+  /// # Arguments
+  /// * `order_id` - The client order ID associated with the error.
+  /// * `error` - An [`IBKRError`] containing details of the error.
   fn on_order_error(&self, order_id: &str, error: &crate::base::IBKRError);
 }

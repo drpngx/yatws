@@ -1,5 +1,65 @@
 // yatws/src/account_manager.rs
 
+//! Manages account-related data, including account summary, portfolio positions, and Profit & Loss (P&L).
+//!
+//! The `AccountManager` allows subscribing to continuous updates for account values and positions.
+//! It also provides methods to fetch snapshots of this data.
+//!
+//! # Subscription and Data Flow
+//!
+//! -   To receive continuous updates, call `subscribe_account_updates()`. This method
+//!     performs an initial blocking fetch of account summary and positions. Once complete,
+//!     updates will arrive asynchronously.
+//! -   Registered [`AccountObserver`]s will be notified of changes to account values
+//!     (`on_account_update`), positions (`on_position_update`), and executions (`on_execution`).
+//! -   Data can also be fetched on-demand using methods like `get_account_info()`,
+//!     `list_open_positions()`, and `get_day_executions()`. These methods typically
+//!     ensure that a subscription is active before returning data.
+//!
+//! # Key Data Structures
+//!
+//! -   [`AccountInfo`]: A summary of key account metrics (equity, buying power, etc.).
+//! -   [`Position`]: Details of a single position in the portfolio.
+//! -   [`Execution`]: Information about a single trade execution.
+//! -   [`AccountValue`]: A key-value pair representing a single account metric from TWS.
+//!
+//! # Example: Getting Account Summary and Positions
+//!
+//! ```no_run
+//! use yatws::{IBKRClient, IBKRError};
+//!
+//! fn main() -> Result<(), IBKRError> {
+//!     let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+//!     let acct_mgr = client.account();
+//!
+//!     // Subscribe to updates (includes initial fetch)
+//!     // This is often called implicitly by getter methods if not already subscribed.
+//!     // acct_mgr.subscribe_account_updates()?;
+//!
+//!     // Get account summary
+//!     match acct_mgr.get_account_info() {
+//!         Ok(info) => println!("Account Info: {:#?}", info),
+//!         Err(e) => eprintln!("Error getting account info: {:?}", e),
+//!     }
+//!
+//!     // List open positions
+//!     match acct_mgr.list_open_positions() {
+//!         Ok(positions) => {
+//!             if positions.is_empty() {
+//!                 println!("No open positions.");
+//!             } else {
+//!                 println!("Open Positions:");
+//!                 for pos in positions {
+//!                     println!("  Symbol: {}, Qty: {}", pos.symbol, pos.quantity);
+//!                 }
+//!             }
+//!         }
+//!         Err(e) => eprintln!("Error listing positions: {:?}", e),
+//!     }
+//!     Ok(())
+//! }
+//! ```
+
 use crate::account::{AccountInfo, AccountState, AccountValue, Position, AccountObserver, Execution, ExecutionFilter};
 use crate::base::IBKRError;
 use crate::contract::Contract;
@@ -56,7 +116,20 @@ pub struct AccountManager {
   manual_position_refresh_cond: Condvar,
 }
 
+/// Manages account summary, portfolio positions, P&L, and execution data.
+///
+/// Accessed via [`IBKRClient::account()`].
+///
+/// See the [module-level documentation](index.html) for an overview of interaction patterns.
 impl AccountManager {
+  /// Creates a new `AccountManager`.
+  ///
+  /// This is typically called internally when an `IBKRClient` is created.
+  ///
+  /// # Arguments
+  /// * `message_broker` - Shared `MessageBroker` for communication with TWS.
+  /// * `initial_account_id` - Optional account ID to pre-configure. If `None`,
+  ///   the account ID will be inferred from the first account messages received from TWS.
   pub(crate) fn new(message_broker: Arc<MessageBroker>, initial_account_id: Option<String>) -> Arc<Self> {
     let initial_state = AccountState {
       account_id: initial_account_id.unwrap_or_default(),
@@ -101,8 +174,23 @@ impl AccountManager {
   }
 
   // --- Helper to get specific account value ---
+
+  /// Retrieves a specific account value by its key.
+  ///
+  /// Account values are key-value pairs received from TWS (e.g., "NetLiquidation", "BuyingPower").
+  /// This method provides direct access to the raw `AccountValue` struct.
+  ///
+  /// Requires an active subscription via `subscribe_account_updates()` or implicit
+  /// call by other getter methods.
+  ///
+  /// # Arguments
+  /// * `key` - The TWS tag name for the desired account value.
+  ///
+  /// # Returns
+  /// `Ok(Some(AccountValue))` if the key is found, `Ok(None)` if not, or `Err(IBKRError)`
+  /// if not subscribed or other issues occur.
   pub fn get_account_value(&self, key: &str) -> Result<Option<AccountValue>, IBKRError> {
-    // read() returns the guard directly
+    self.ensure_subscribed()?; // Ensure subscription is active
     let state = self.account_state.read();
     // Optional: Check for poison if needed: if state.is_poisoned() { ... }
     Ok(state.values.get(key).cloned())
@@ -121,9 +209,34 @@ impl AccountManager {
 
   // --- Public API Methods ---
 
+  /// Retrieves a consolidated summary of account information.
+  ///
+  /// This includes metrics like account ID, type, base currency, equity, buying power,
+  /// cash balance, margin requirements, and P&L figures.
+  ///
+  /// Requires an active subscription to account updates (implicitly calls
+  /// `subscribe_account_updates()` if not already subscribed).
+  ///
+  /// # Returns
+  /// An `AccountInfo` struct containing the summary.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the subscription fails, data is not yet populated,
+  /// or if essential account values are missing or cannot be parsed.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// let account_info = client.account().get_account_info()?;
+  /// println!("Account ID: {}", account_info.account_id);
+  /// println!("Equity: {}", account_info.equity);
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_account_info(&self) -> Result<AccountInfo, IBKRError> {
     self.ensure_subscribed()?;
-    // read() returns the guard directly
     let state = self.account_state.read();
 
     // Check again after ensuring subscription, in case it failed silently or data is missing
@@ -174,24 +287,57 @@ impl AccountManager {
     })
   }
 
+  /// Retrieves the current buying power for the account.
+  /// Requires an active subscription.
   pub fn get_buying_power(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
     self.get_parsed_value("BuyingPower")
   }
 
+  /// Retrieves the total cash balance for the account.
+  /// Requires an active subscription.
   pub fn get_cash_balance(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
     self.get_parsed_value("TotalCashValue")
   }
 
+  /// Retrieves the net liquidation value (equity) of the account.
+  /// Attempts to parse "NetLiquidation" first, then "EquityWithLoanValue" as a fallback.
+  /// Requires an active subscription.
   pub fn get_equity(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
     self.get_parsed_value("NetLiquidation")
       .or_else(|_| self.get_parsed_value("EquityWithLoanValue"))
   }
 
-  /// Requests a fresh snapshot of positions and returns them.
-  /// This is a blocking call that waits for the position data to be updated.
+  /// Retrieves a list of all open positions in the account's portfolio.
+  ///
+  /// This method ensures that an account subscription is active and then requests
+  /// a fresh snapshot of positions from TWS. It blocks until the position data
+  /// is received and updated.
+  ///
+  /// Positions with zero quantity are filtered out.
+  ///
+  /// # Returns
+  /// A `Vec<Position>` containing all open positions.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the subscription fails, the position refresh times out,
+  /// or other communication issues occur.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// let positions = client.account().list_open_positions()?;
+  /// for pos in positions {
+  ///     println!("Symbol: {}, Quantity: {}, Avg Cost: {}",
+  ///              pos.symbol, pos.quantity, pos.average_cost);
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn list_open_positions(&self) -> Result<Vec<Position>, IBKRError> {
     self.ensure_subscribed()?; // Ensure basic account info is likely present
 
@@ -248,24 +394,65 @@ impl AccountManager {
   }
 
 
+  /// Retrieves the daily Profit & Loss (P&L) for the account.
+  /// Requires an active subscription.
   pub fn get_daily_pnl(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
     self.get_parsed_value("DailyPnL")
   }
 
+  /// Retrieves the unrealized Profit & Loss (P&L) for the account.
+  /// Requires an active subscription.
   pub fn get_unrealized_pnl(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
     self.get_parsed_value("UnrealizedPnL")
   }
 
+  /// Retrieves the realized Profit & Loss (P&L) for the account.
+  /// Requires an active subscription.
   pub fn get_realized_pnl(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
     self.get_parsed_value("RealizedPnL")
   }
 
-  /// Requests and returns execution details merged with commission data for the current trading day.
-  /// It uses a default filter (all executions for the current connection).
-  /// See `get_executions_filtered` for using a custom filter.
+  /// Requests and returns execution details for the current trading day,
+  /// attempting to merge them with commission data.
+  ///
+  /// This method uses a default [`ExecutionFilter`] which typically requests all
+  /// executions for the current client connection. For more specific filtering,
+  /// use `get_executions_filtered()`.
+  ///
+  /// This is a blocking call. It waits for TWS to send all execution details
+  /// and then includes a short grace period to allow for commission reports to arrive
+  /// and be merged.
+  ///
+  /// **Note on Commissions:** Due to the asynchronous nature of TWS messages,
+  /// commission reports might arrive after this function returns. While a grace
+  /// period is included, it's not a guarantee that all commissions will be merged
+  /// immediately. Observers registered via `add_observer` might see `Execution`
+  /// objects updated later when their corresponding commission data is received.
+  ///
+  /// This method does *not* require a prior call to `subscribe_account_updates()`.
+  ///
+  /// # Returns
+  /// A `Vec<Execution>` containing the day's executions.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request times out or other communication issues occur.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// let executions = client.account().get_day_executions()?;
+  /// for exec in executions {
+  ///     println!("Exec ID: {}, Symbol: {}, Qty: {}, Price: {}, Commission: {:?}",
+  ///              exec.execution_id, exec.symbol, exec.quantity, exec.price, exec.commission);
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
   /// Note: This does NOT require prior subscription via `subscribe_account_updates`.
   pub fn get_day_executions(&self) -> Result<Vec<Execution>, IBKRError> {
     // Execution requests are independent of the account summary/position subscription
@@ -275,12 +462,22 @@ impl AccountManager {
 
   /// Requests and returns execution details merged with commission data, based on the provided filter.
   ///
-  /// **Note:** This function attempts to merge commission details received from `commissionReport` messages.
-  /// Due to the asynchronous nature of TWS messages, commission reports might
-  /// arrive *after* this function returns. A short grace period is included after
-  /// receiving the end signal for executions, but it's not foolproof. Observers might see
-  /// execution updates later when commission data is merged.
-  /// Note: This is a blocking call.
+  /// This is a blocking call. It waits for TWS to send all execution details
+  /// matching the filter and then includes a short grace period to allow for
+  /// commission reports to arrive and be merged.
+  ///
+  /// See `get_day_executions()` for notes on commission merging.
+  /// This method does *not* require a prior call to `subscribe_account_updates()`.
+  ///
+  /// # Arguments
+  /// * `filter` - An [`ExecutionFilter`] specifying criteria for the executions to request
+  ///   (e.g., client ID, account code, time, symbol, security type, exchange).
+  ///
+  /// # Returns
+  /// A `Vec<Execution>` containing the filtered executions.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request times out or other communication issues occur.
   pub fn get_executions_filtered(&self, filter: &ExecutionFilter) -> Result<Vec<Execution>, IBKRError> {
     info!("Requesting executions with filter: {:?}", filter);
     let req_id = self.message_broker.next_request_id();
@@ -359,18 +556,33 @@ impl AccountManager {
   }
 
 
+  /// Adds an observer to receive asynchronous notifications about account updates,
+  /// position changes, and new executions.
+  ///
+  /// Observers implement the [`AccountObserver`] trait. Multiple observers can be added.
+  ///
+  /// # Arguments
+  /// * `observer` - A boxed trait object implementing `AccountObserver`.
+  ///
+  /// # Returns
+  /// A unique `usize` ID for the registered observer, which can be used with
+  /// `remove_observer()`.
   pub fn add_observer<T: AccountObserver + Send + Sync + 'static>(&self, observer: T) -> usize {
     let observer_id = self.next_observer_id.fetch_add(1, Ordering::SeqCst);
-    // write() returns guard directly
     let mut observers = self.observers.write();
-    // Optional: Check if observers.is_poisoned() if necessary
     observers.insert(observer_id, Box::new(observer));
     debug!("Added account observer with ID: {}", observer_id);
     observer_id
   }
 
+  /// Removes a previously registered account observer.
+  ///
+  /// # Arguments
+  /// * `observer_id` - The ID returned by `add_observer()`.
+  ///
+  /// # Returns
+  /// `true` if an observer with the given ID was found and removed, `false` otherwise.
   pub fn remove_observer(&self, observer_id: usize) -> bool {
-    // write() returns guard directly
     let mut observers = self.observers.write();
     let removed = observers.remove(&observer_id).is_some();
     if removed {
@@ -381,17 +593,41 @@ impl AccountManager {
     removed
   }
 
-  /// Subscribes to continuous account summary and position updates.
-  /// This function performs an initial blocking fetch of the account summary and positions.
-  /// Once the initial data is received, it returns, and updates will continue to arrive
-  /// in the background, notifying observers.
+  /// Subscribes to continuous updates for account summary and portfolio positions from TWS.
   ///
-  /// If already subscribed, this function returns Ok(()) immediately.
-  /// This is a blocking call during the initial data fetch.
+  /// This method initiates two subscriptions:
+  /// 1.  Account Summary: Uses `reqAccountSummary` to get a wide range of account values
+  ///     (equity, P&L, margins, etc.) and receive continuous updates.
+  /// 2.  Positions: Uses `reqPositions` to get current portfolio positions and receive
+  ///     continuous updates.
   ///
-  /// This does NOT use reqAccountUpdates, because only one subscription per account
-  /// is allowed. So, if one client has it, no other client would have been able to
-  /// list positions.
+  /// **Behavior:**
+  /// -   If not already subscribed, this function performs an **initial blocking fetch**
+  ///     of both account summary and all positions. It waits until TWS signals the end
+  ///     of these initial data bursts (`accountSummaryEnd` and `positionEnd`) or a
+  ///     timeout occurs.
+  /// -   Once the initial fetch is complete (or if already subscribed), the method returns.
+  ///     Account and position data will then continue to be updated asynchronously in the
+  ///     background. Registered [`AccountObserver`]s will be notified of these changes.
+  /// -   If called while already subscribed, it returns `Ok(())` immediately without
+  ///     re-fetching.
+  /// -   If called while an initial fetch is already in progress by another thread,
+  ///     it returns `Err(IBKRError::AlreadyRunning)`.
+  ///
+  /// **Note on `reqAccountUpdates`:** This method does *not* use the TWS `reqAccountUpdates`
+  /// message. `reqAccountUpdates` is designed for a single subscriber per account and
+  /// can conflict if multiple clients (or even multiple managers within one client)
+  /// attempt to use it. Instead, this library uses `reqAccountSummary` and `reqPositions`
+  /// which are more flexible for multiple subscribers and provide similar continuous updates.
+  ///
+  /// # Returns
+  /// `Ok(())` if the subscription is successful (or already active).
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if:
+  /// -   The initial fetch times out.
+  /// -   An initial fetch is already in progress by another call.
+  /// -   There are issues encoding or sending requests to TWS.
   pub fn subscribe_account_updates(&self) -> Result<(), IBKRError> {
     // Quick check without lock first
     if self.is_subscribed.load(Ordering::Relaxed) {
@@ -593,7 +829,18 @@ impl AccountManager {
   } // End subscribe_account_updates function
 
 
-  /// Stops receiving continuous updates for account summary and positions.
+  /// Stops receiving continuous updates for account summary and portfolio positions.
+  ///
+  /// This method sends `cancelAccountSummary` and `cancelPositions` messages to TWS
+  /// to halt the flow of updates initiated by `subscribe_account_updates()`.
+  ///
+  /// If not currently subscribed, it returns `Ok(())` immediately.
+  ///
+  /// # Returns
+  /// `Ok(())` if the cancellation requests were sent successfully (or if not subscribed).
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if there are issues encoding or sending the cancellation messages.
   pub fn stop_account_updates(&self) -> Result<(), IBKRError> {
     // Quick check first
     if !self.is_subscribed.load(Ordering::Relaxed) {

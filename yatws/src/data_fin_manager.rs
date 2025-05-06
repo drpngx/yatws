@@ -1,4 +1,62 @@
 // yatws/src/data_fin_manager.rs
+
+//! Manages requests for financial fundamental data and Wall Street Horizon (WSH) event data.
+//!
+//! The `DataFundamentalsManager` provides methods to:
+//! -   Fetch company fundamental data (e.g., financial statements, analyst estimates, reports)
+//!     via `get_fundamental_data()`. This is a blocking call.
+//! -   Fetch Wall Street Horizon (WSH) corporate event metadata and specific event data.
+//!     -   `request_wsh_meta_data()`: Non-blocking request for WSH metadata.
+//!     -   `request_wsh_event_data()`: Non-blocking request for WSH event data stream.
+//!     -   `get_wsh_events()`: Blocking call to fetch specific WSH events, ensuring metadata is available.
+//!
+//! # Fundamental Data Reports
+//!
+//! The `get_fundamental_data()` method accepts a `report_type` string. Common types include:
+//! -   `ReportsFinSummary`: Financial summary.
+//! -   `ReportSnapshot`: Company overview, ratios, estimates.
+//! -   `ReportsFinStatements`: Detailed financial statements (Income, Balance Sheet, Cash Flow).
+//! -   `RESC`: Analyst estimates.
+//! -   `CalendarReport`: Corporate calendar events (deprecated in favor of WSH).
+//!
+//! The data is returned as an XML string, which then needs to be parsed (e.g., using `parse_fundamental_xml` from the library).
+//!
+//! # Wall Street Horizon (WSH) Data
+//!
+//! WSH provides detailed corporate event data. Accessing it typically involves:
+//! 1.  Fetching metadata (describes available event types, filters, etc.). This is often done once
+//!     or periodically. `get_wsh_events()` handles this automatically if metadata isn't cached.
+//! 2.  Requesting specific event data using filters (e.g., by conId, event type, date range).
+//!
+//! # Example: Getting Financial Summary
+//!
+//! ```no_run
+//! use yatws::{IBKRClient, IBKRError, contract::Contract, data::{FundamentalReportType, ParsedFundamentalData}, parse_fundamental_xml};
+//!
+//! fn main() -> Result<(), IBKRError> {
+//!     let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+//!     let fin_data_mgr = client.data_financials();
+//!
+//!     let contract = Contract::stock("AAPL");
+//!
+//!     match fin_data_mgr.get_fundamental_data(&contract, "ReportsFinSummary", &[]) {
+//!         Ok(xml_data) => {
+//!             println!("Received 'ReportsFinSummary' XML for AAPL (length {}).", xml_data.len());
+//!             // Example of parsing (add error handling for production)
+//!             match parse_fundamental_xml(&xml_data, FundamentalReportType::ReportsFinSummary) {
+//!                 Ok(ParsedFundamentalData::FinancialSummary(summary)) => {
+//!                     println!("Parsed Summary: {} EPS records.", summary.eps_records.len());
+//!                 }
+//!                 Ok(_) => eprintln!("Parsed XML but got unexpected data type."),
+//!                 Err(e) => eprintln!("Failed to parse XML: {:?}", e),
+//!             }
+//!         }
+//!         Err(e) => eprintln!("Error getting financial summary: {:?}", e),
+//!     }
+//!     Ok(())
+//! }
+//! ```
+
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
 use crate::protocol_decoder::ClientErrorCode; // Added import
@@ -15,34 +73,48 @@ use serde_json; // Added for WSH event parsing
 
 // --- DataFundamentalsManager ---
 
+/// Enum identifying the type of a pending request within `DataFundamentalsManager`.
 #[derive(Debug, Clone, Copy, Default)]
 enum RequestType {
+  /// Request for standard fundamental data (XML reports).
   #[default]
   Fundamental,
+  /// Request for Wall Street Horizon (WSH) metadata.
   WshMetaData,
+  /// Request for Wall Street Horizon (WSH) event data.
   WshEventData,
 }
 
+/// Internal state for tracking pending fundamental or WSH data requests.
 #[derive(Debug, Default)]
 struct RequestState {
+  /// The type of this request.
   request_type: RequestType,
 
-  // Field for FundamentalData
-  fundamental_data: Option<String>, // Stores the XML/text report
+  /// Stores the XML/text report for `Fundamental` requests.
+  fundamental_data: Option<String>,
 
-  // Fields for WSH Meta Data
-  wsh_meta_data_json: Option<String>, // Stores JSON for WSH metadata
+  /// Stores the JSON string for `WshMetaData` requests.
+  wsh_meta_data_json: Option<String>,
 
-  // Fields for WSH Event Data
-  wsh_event_data_json_list: Vec<String>, // Stores JSON strings for WSH events
-  wsh_event_expected_count: Option<usize>, // Expected number of events for WshEventData
+  /// Stores a list of JSON strings, each representing a WSH event, for `WshEventData` requests.
+  wsh_event_data_json_list: Vec<String>,
+  /// For `WshEventData` requests made via `get_wsh_events`, this stores the expected number of events.
+  wsh_event_expected_count: Option<usize>,
 
-  // Common fields
-  request_complete: bool, // Flagged when data is received or expected count met
+  /// Flag indicating if the request is considered complete (data received, error occurred, or expected count met).
+  request_complete: bool,
+  /// Stores an error code if an API error occurred for this request.
   error_code: Option<i32>,
+  /// Stores an error message if an API error occurred for this request.
   error_message: Option<String>,
 }
 
+/// Manages requests for company fundamental data and Wall Street Horizon (WSH) event data.
+///
+/// Accessed via [`IBKRClient::data_financials()`].
+///
+/// See the [module-level documentation](index.html) for more details and examples.
 pub struct DataFundamentalsManager {
   message_broker: Arc<MessageBroker>,
   request_states: Mutex<HashMap<i32, RequestState>>,
@@ -52,6 +124,9 @@ pub struct DataFundamentalsManager {
 }
 
 impl DataFundamentalsManager {
+  /// Creates a new `DataFundamentalsManager`.
+  ///
+  /// This is typically called internally when an `IBKRClient` is created.
   pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
     Arc::new(DataFundamentalsManager {
       message_broker,
@@ -63,6 +138,21 @@ impl DataFundamentalsManager {
   }
 
   // --- Helper to wait for completion ---
+
+  /// Internal helper for blocking calls that wait for a fundamental or WSH data request to complete.
+  ///
+  /// It waits until the `is_complete_check` closure indicates completion, an API error occurs,
+  /// or the timeout is reached.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID.
+  /// * `timeout` - Maximum duration to wait.
+  /// * `is_complete_check` - A closure `Fn(&RequestState) -> Option<Result<R, IBKRError>>`.
+  ///   It returns `Some(Ok(result))` when the condition is met, `Some(Err(e))` if the check itself
+  ///   determines an error, or `None` to continue waiting.
+  ///
+  /// # Returns
+  /// The result `R` from `is_complete_check` or an `IBKRError` (e.g., Timeout, ApiError).
   fn wait_for_completion<F, R>(
     &self,
     req_id: i32,
@@ -136,8 +226,41 @@ impl DataFundamentalsManager {
 
   // --- Public API Methods ---
 
-  /// Requests and returns fundamental data (XML/text) for a contract.
-  /// Blocks until the data is received or timeout.
+  /// Requests and returns fundamental data for a contract. This is a blocking call.
+  ///
+  /// The data is typically returned as an XML string by TWS, which can then be parsed
+  /// using functions like `yatws::parse_fundamental_xml`.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request fundamental data.
+  /// * `report_type` - A string specifying the type of report (e.g., "ReportsFinSummary",
+  ///   "ReportSnapshot", "ReportsFinStatements", "RESC", "CalendarReport").
+  /// * `fundamental_data_options` - A list of `(tag, value)` pairs for additional options (rarely used).
+  ///
+  /// # Returns
+  /// An XML `String` containing the fundamental data report.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the data is not received within the timeout.
+  /// Returns other `IBKRError` variants for communication or encoding issues.
+  ///
+  /// # Example from `gen_goldens.rs`:
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let fin_data_mgr = client.data_financials();
+  /// let contract = Contract::stock("AAPL");
+  /// let xml_data = fin_data_mgr.get_fundamental_data(
+  ///     &contract,
+  ///     "ReportsFinSummary", // Request Financial Summary
+  ///     &[]
+  /// )?;
+  /// println!("Received Financial Summary XML for AAPL (length {}).", xml_data.len());
+  /// // ... (parse xml_data using yatws::parse_fundamental_xml) ...
+  /// # Ok(())
+  /// # }
+  /// ```
   pub fn get_fundamental_data(
     &self,
     contract: &Contract,
@@ -193,6 +316,13 @@ impl DataFundamentalsManager {
   }
 
   /// Cancels an ongoing fundamental data request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `get_fundamental_data()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
+  /// It logs a warning if the `req_id` is not found (e.g., already completed or cancelled).
   pub fn cancel_fundamental_data(&self, req_id: i32) -> Result<(), IBKRError> {
     info!("Cancelling fundamental data request: ReqID={}", req_id);
     let server_version = self.message_broker.get_server_version()?;
@@ -222,10 +352,20 @@ impl DataFundamentalsManager {
 
   // --- WSH Public API Methods ---
 
-  /// Requests Wall Street Horizon metadata. Non-blocking. Returns req_id.
-  /// The metadata is delivered via the `wsh_meta_data` handler method.
-  /// Note: This non-blocking call does not use the `wsh_global_lock`.
-  /// Users must ensure sequencing if mixing with `get_wsh_events` or other WSH calls.
+  /// Requests Wall Street Horizon (WSH) metadata. This is a non-blocking call.
+  ///
+  /// The WSH metadata (a JSON string describing available event types, filters, etc.)
+  /// is delivered asynchronously via the `wsh_meta_data` method of the `FinancialDataHandler` trait.
+  ///
+  /// This method does not use the internal `wsh_global_lock`, so users must ensure
+  /// proper sequencing if mixing this call with `get_wsh_events()` or other WSH operations
+  /// that might depend on this metadata. `get_wsh_events()` handles metadata fetching internally.
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this WSH metadata request.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded or sent.
   pub fn request_wsh_meta_data(&self) -> Result<i32, IBKRError> {
     info!("Requesting WSH metadata (non-blocking)");
     let req_id = self.message_broker.next_request_id();
@@ -237,7 +377,13 @@ impl DataFundamentalsManager {
     Ok(req_id)
   }
 
-  /// Cancels an ongoing WSH metadata request.
+  /// Cancels an ongoing Wall Street Horizon (WSH) metadata request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `request_wsh_meta_data()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
   pub fn cancel_wsh_meta_data(&self, req_id: i32) -> Result<(), IBKRError> {
     info!("Cancelling WSH metadata request: ReqID={}", req_id);
     let server_version = self.message_broker.get_server_version()?;
@@ -247,12 +393,27 @@ impl DataFundamentalsManager {
     // No state to clean up in the manager
   }
 
-  /// Requests Wall Street Horizon event data streaming. Non-blocking. Returns req_id.
-  /// Events are delivered individually via the `wsh_event_data` handler method.
-  /// Filters are applied based on the `wsh_event_data` parameter and server version support.
-  /// Note: This non-blocking call does not use the `wsh_global_lock`.
-  /// Users must ensure sequencing if mixing with `get_wsh_events` or other WSH calls,
-  /// and are responsible for ensuring metadata has been fetched if required by TWS.
+  /// Requests a stream of Wall Street Horizon (WSH) event data. This is a non-blocking call.
+  ///
+  /// Individual WSH events (JSON strings) are delivered asynchronously via the `wsh_event_data`
+  /// method of the `FinancialDataHandler` trait.
+  ///
+  /// Filters for the event data (e.g., by conId, event type, date range) are specified
+  /// in the `wsh_event_data` argument.
+  ///
+  /// This method does not use the internal `wsh_global_lock`. Users must ensure
+  /// proper sequencing and that WSH metadata (if required by TWS for the specific filters)
+  /// has been fetched beforehand if not using `get_wsh_events()`.
+  ///
+  /// # Arguments
+  /// * `wsh_event_data` - A [`WshEventDataRequest`] struct specifying the filters for the event data.
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this WSH event data request.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded (e.g., due to unsupported filters
+  /// for the TWS version) or if the message fails to send.
   pub fn request_wsh_event_data(&self, wsh_event_data: &WshEventDataRequest) -> Result<i32, IBKRError> {
     info!("Requesting WSH event data (non-blocking): Filters={:?}", wsh_event_data);
     let req_id = self.message_broker.next_request_id();
@@ -267,7 +428,13 @@ impl DataFundamentalsManager {
     Ok(req_id)
   }
 
-  /// Cancels an ongoing WSH event data request.
+  /// Cancels an ongoing Wall Street Horizon (WSH) event data streaming request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `request_wsh_event_data()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
   pub fn cancel_wsh_event_data(&self, req_id: i32) -> Result<(), IBKRError> {
     info!("Cancelling WSH event data request: ReqID={}", req_id);
     let server_version = self.message_broker.get_server_version()?;
@@ -278,17 +445,37 @@ impl DataFundamentalsManager {
     Ok(())
   }
 
-  /// Requests and returns WSH (Wall Street Horizon) event data.
-  /// This is a blocking call that first ensures WSH metadata is available (fetching if necessary)
-  /// and then requests the specified event data, waiting for the expected number of events or a timeout.
+  /// Requests and returns a specific set of Wall Street Horizon (WSH) corporate event data.
+  /// This is a blocking call.
+  ///
+  /// **Behavior:**
+  /// 1.  It first checks if WSH metadata is cached. If not, it requests and waits for the metadata.
+  /// 2.  Then, it requests the WSH event data specified by `request_details`.
+  /// 3.  It waits until the number of events specified by `request_details.total_limit`
+  ///     are received, or until the `timeout` occurs.
+  /// 4.  Finally, it parses the received JSON event strings into a `Vec<WshEventData>`.
+  ///
+  /// This method uses an internal lock (`wsh_global_lock`) to ensure that only one
+  /// WSH operation (metadata fetch or event data fetch via this method) occurs at a time
+  /// through this manager instance, preventing conflicts with metadata caching.
   ///
   /// # Arguments
-  /// * `request_details` - Specifies the WSH event data to request, including `con_id` and `total_limit`.
-  ///                       `total_limit` must be a positive number.
-  /// * `timeout` - Overall timeout for the entire operation (metadata + event data).
+  /// * `request_details` - A [`WshEventDataRequest`] specifying the filters for the event data.
+  ///   Crucially, `request_details.total_limit` must be `Some(positive_number)` as this
+  ///   determines how many events to wait for.
+  /// * `timeout` - The overall timeout for the entire operation (including potential metadata fetch
+  ///   and the event data fetch).
+  ///
+  /// # Returns
+  /// A `Vec<crate::data_wsh::WshEventData>` containing the parsed WSH events.
   ///
   /// # Errors
-  /// Returns `IBKRError` if the request fails, times out, `total_limit` is invalid, or parsing fails.
+  /// Returns `IBKRError` if:
+  /// -   `request_details.total_limit` is not a positive number.
+  /// -   Fetching WSH metadata fails or times out.
+  /// -   Fetching WSH event data fails or times out.
+  /// -   Parsing any of the received JSON event strings fails.
+  /// -   Other communication or encoding issues occur.
   pub fn get_wsh_events(
     &self,
     request_details: &WshEventDataRequest,
