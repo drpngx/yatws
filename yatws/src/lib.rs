@@ -222,6 +222,84 @@
 //! let order_id = client.orders().place_order(contract, order)?;
 //! ```
 //!
+//! ## 5. Financial Instrument Reference
+//!
+//! The DataRefManager provides comprehensive access to reference data about financial instruments, exchanges, and market parameters:
+//!
+//! ```rust
+//! // Get contract details
+//! let contract_details = client.data_ref().get_contract_details(&contract)?;
+//!
+//! // Get option chain parameters for an underlying
+//! let option_params = client.data_ref().get_option_chain_params(
+//!     "AAPL",
+//!     "",                // Future/FOP exchange (empty for stocks)
+//!     SecType::Stock,
+//!     0                  // Underlying contract ID (0 if unknown)
+//! )?;
+//!
+//! // Find contracts matching a pattern
+//! let matching_symbols = client.data_ref().get_matching_symbols("APPLE")?;
+//! ```
+//!
+//! ## 6. Market News and Information
+//!
+//! The DataNewsManager provides access to news headlines, articles, and bulletins from various providers:
+//!
+//! ```rust
+//! // Get available news providers
+//! let providers = client.data_news().get_news_providers()?;
+//!
+//! // Get a specific news article
+//! let article = client.data_news().get_news_article(
+//!     "BZ",              // Provider code
+//!     "BZ-1234567",      // Article ID
+//!     &[]                // No options
+//! )?;
+//!
+//! // Get historical news for a contract
+//! let news = client.data_news().get_historical_news(
+//!     12345,             // Contract ID
+//!     "BZ,DJ",           // Provider codes
+//!     None,              // Start time (None = default)
+//!     None,              // End time (None = now)
+//!     10,                // Max results
+//!     &[]                // No options
+//! )?;
+//!
+//! // Subscribe to live news bulletins
+//! client.data_news().request_news_bulletins(true)?; // true = all messages
+//! ```
+//!
+//! ## 7. Financial Fundamentals and Corporate Events
+//!
+//! The DataFundamentalsManager provides access to company financial data and corporate events:
+//!
+//! ```rust
+//! // Get fundamental data (returns XML)
+//! let fundamental_data = client.data_financials().get_fundamental_data(
+//!     &contract,
+//!     "ReportsFinSummary",  // Report type
+//!     &[]                   // No options
+//! )?;
+//!
+//! // Parse the XML data into structured format
+//! let parsed_data = parse_fundamental_xml(&fundamental_data, FundamentalReportType::ReportsFinSummary)?;
+//!
+//! // Get Wall Street Horizon events
+//! let wsh_request = WshEventDataRequest {
+//!     con_id: 12345,        // Contract ID
+//!     count: 10,            // Number of events per page
+//!     // Other filter parameters...
+//!     total_limit: Some(50) // Total events to retrieve
+//! };
+//!
+//! let wsh_events = client.data_financials().get_wsh_events(
+//!     &wsh_request,
+//!     Duration::from_secs(30)
+//! )?;
+//! ```
+//!
 //! ## Advanced Features
 //!
 //! ### 1. Session Recording and Replay
