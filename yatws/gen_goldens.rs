@@ -869,7 +869,7 @@ mod test_cases {
       // No last trade, use ask for now, assuming that the spreads are tight.
       let underlying_price = data_market.get_quote(&uc, Some(MarketDataType::Delayed), Duration::from_secs(10))?.1.unwrap();
       if underlying_price <= 0.0 {
-          warn!("Invalid price ({}) for {}, strike selection might be inaccurate.", underlying_price, symbol);
+        warn!("Invalid price ({}) for {}, strike selection might be inaccurate.", underlying_price, symbol);
       }
       log::info!("Underlying price: {} = {:.2}", symbol, underlying_price);
 
@@ -1079,40 +1079,40 @@ mod test_cases {
             Ok(ParsedFundamentalData::Snapshot(snapshot)) => {
               info!("Successfully parsed 'ReportSnapshot' for {}:", contract.symbol);
               if let Some(info) = &snapshot.company_info {
-                  info!("  Parsed Company Info:");
-                  info!("    Name: {}", info.company_name.as_deref().unwrap_or("N/A"));
-                  info!("    Ticker: {}", info.ticker.as_deref().unwrap_or("N/A"));
-                  info!("    ConID: {:?}", info.con_id);
-                  info!("    CIK: {}", info.cik.as_deref().unwrap_or("N/A"));
-                  info!("    Business Desc (start): {}...", info.business_description.as_deref().unwrap_or("N/A").chars().take(70).collect::<String>());
+                info!("  Parsed Company Info:");
+                info!("    Name: {}", info.company_name.as_deref().unwrap_or("N/A"));
+                info!("    Ticker: {}", info.ticker.as_deref().unwrap_or("N/A"));
+                info!("    ConID: {:?}", info.con_id);
+                info!("    CIK: {}", info.cik.as_deref().unwrap_or("N/A"));
+                info!("    Business Desc (start): {}...", info.business_description.as_deref().unwrap_or("N/A").chars().take(70).collect::<String>());
               } else {
-                  warn!("  No consolidated company information parsed from snapshot.");
+                warn!("  No consolidated company information parsed from snapshot.");
               }
               info!("  Number of Issues: {}", snapshot.issues.len());
               if let Some(issue) = snapshot.issues.first() {
-                  info!("    First Issue Ticker: {}", issue.ticker.as_deref().unwrap_or("N/A"));
+                info!("    First Issue Ticker: {}", issue.ticker.as_deref().unwrap_or("N/A"));
               }
               info!("  Number of Ratio Groups: {}", snapshot.ratio_groups.len());
               if let Some(group) = snapshot.ratio_groups.first() {
-                  info!("    First Ratio Group: '{}', Num Ratios: {}", group.id.as_deref().unwrap_or("N/A"), group.ratios.len());
-                  if let Some(ratio) = group.ratios.first() {
-                      info!("      Sample Ratio: Field='{}', Value='{}', Type='{}'",
-                            ratio.field_name,
-                            ratio.raw_value.as_deref().unwrap_or("N/A"),
-                            ratio.period_type.as_deref().unwrap_or("N/A")); // Note: XML uses 'Type' attr, mapped to period_type field
-                  }
+                info!("    First Ratio Group: '{}', Num Ratios: {}", group.id.as_deref().unwrap_or("N/A"), group.ratios.len());
+                if let Some(ratio) = group.ratios.first() {
+                  info!("      Sample Ratio: Field='{}', Value='{}', Type='{}'",
+                        ratio.field_name,
+                        ratio.raw_value.as_deref().unwrap_or("N/A"),
+                        ratio.period_type.as_deref().unwrap_or("N/A")); // Note: XML uses 'Type' attr, mapped to period_type field
+                }
               }
               info!("  Number of Officers: {}", snapshot.officers.len());
-               if let Some(officer) = snapshot.officers.first() {
-                  info!("    First Officer: {} {}", officer.first_name.as_deref().unwrap_or("?"), officer.last_name.as_deref().unwrap_or("?"));
+              if let Some(officer) = snapshot.officers.first() {
+                info!("    First Officer: {} {}", officer.first_name.as_deref().unwrap_or("?"), officer.last_name.as_deref().unwrap_or("?"));
               }
               if let Some(fc) = &snapshot.forecast_data {
-                  info!("  Forecast Data: {} items", fc.items.len());
-                  if let Some(item) = fc.items.first() {
-                      info!("    Sample Forecast: Field='{}', Value='{}'", item.field_name, item.value.as_deref().unwrap_or("N/A"));
-                  }
+                info!("  Forecast Data: {} items", fc.items.len());
+                if let Some(item) = fc.items.first() {
+                  info!("    Sample Forecast: Field='{}', Value='{}'", item.field_name, item.value.as_deref().unwrap_or("N/A"));
+                }
               } else {
-                  info!("  No Forecast Data found.");
+                info!("  No Forecast Data found.");
               }
 
             }
@@ -1140,6 +1140,99 @@ mod test_cases {
     }
   }
 
+  pub(super) fn historical_news_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Get Historical News ---");
+    let news_mgr = client.data_news();
+    let ref_data_mgr = client.data_ref();
+
+    // 1. Get News Providers
+    info!("Requesting news providers...");
+    let providers = news_mgr.get_news_providers().context("Failed to get news providers")?;
+
+    if providers.is_empty() {
+      // If run against a gateway without news subscriptions, this might be empty.
+      // The get_historical_news call will likely fail or return nothing if provider_codes is empty or invalid.
+      warn!("No news providers found. Historical news request might yield no results or fail.");
+      // Depending on strictness, one might return Err here or proceed.
+      // Let's proceed and let the historical_news call handle an empty/invalid provider string.
+    }
+
+    let provider_codes = providers.iter().map(|p| p.code.as_str()).collect::<Vec<&str>>().join(",");
+    if providers.is_empty() {
+      info!("Proceeding with empty provider codes string as no providers were returned.");
+    } else {
+      info!("Available news providers: {:?}", providers.iter().map(|p| &p.code).collect::<Vec<_>>());
+      info!("Using provider codes: {}", provider_codes);
+    }
+
+
+    // 2. Get Contract Details for AAPL to find con_id
+    info!("Fetching contract details for AAPL...");
+    let contract_spec = Contract::stock("AAPL");
+    // For specific contracts, you might need to set exchange, currency, etc.
+    // contract_spec.exchange = "SMART".to_string();
+    // contract_spec.currency = "USD".to_string();
+
+    let contract_details_list = ref_data_mgr.get_contract_details(&contract_spec)
+      .context("Failed to get contract details for AAPL")?;
+
+    if contract_details_list.is_empty() {
+      return Err(anyhow!("No contract details found for AAPL."));
+    }
+    // Assuming the first result is the primary listing.
+    let con_id = contract_details_list[0].contract.con_id;
+    if con_id == 0 {
+      return Err(anyhow!("Invalid con_id (0) received for AAPL."));
+    }
+    info!("Using con_id {} for AAPL.", con_id);
+
+    // 3. Request Historical News
+    // Define date range (e.g., last 7 days)
+    let end_date_time = Some(Utc::now());
+    // Note: TWS API expects format "yyyy-MM-dd HH:mm:ss" or "yyyyMMdd HH:mm:ss" for start/end time.
+    // The encoder handles formatting of chrono::DateTime<Utc>.
+    let start_date_time = Some(Utc::now() - ChronoDuration::days(7));
+    let total_results = 10; // Request up to 10 articles
+    let historical_news_options = &[]; // No specific options
+
+    info!(
+      "Requesting historical news for AAPL (con_id {}), providers [{}], last {} days, max {} results.",
+      con_id, provider_codes, 7, total_results
+    );
+
+    match news_mgr.get_historical_news(
+      con_id,
+      &provider_codes,
+      start_date_time,
+      end_date_time,
+      total_results,
+      historical_news_options,
+    ) {
+      Ok(news_items) => {
+        info!("Successfully received {} historical news articles.", news_items.len());
+        if news_items.is_empty() {
+          warn!("Received 0 historical news articles. This might be okay depending on providers/contract/timeframe/subscriptions.");
+        }
+        for (i, item) in news_items.iter().enumerate().take(5) { // Log first 5 or fewer
+          info!(
+            "  Item {}: Time={}, Provider={}, ID={}, Headline='{}'",
+            i + 1, item.time, item.provider_code, item.article_id, item.headline
+          );
+        }
+        Ok(())
+      }
+      Err(IBKRError::ApiError(code, msg)) if msg.contains("Historical news request requires subscription") || msg.contains("no news farm connection") => {
+        warn!("Historical news API error (likely subscription/connection issue): code={}, msg='{}'", code, msg);
+        warn!("This test may pass with a warning if data isn't available due to account/market data status.");
+        Ok(()) // Treat as a pass with warning for common subscription issues
+      }
+      Err(e) => {
+        error!("Failed to get historical news for AAPL: {:?}", e);
+        Err(e.into())
+      }
+    }
+  }
+
 } // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
@@ -1159,7 +1252,7 @@ inventory::submit! { TestDefinition { name: "historical-data", func: test_cases:
 inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
 inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
 inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
-inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
+inventory::submit! { TestDefinition { name: "historical-news", func: test_cases::historical_news_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 
