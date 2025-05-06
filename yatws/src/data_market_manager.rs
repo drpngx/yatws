@@ -803,7 +803,6 @@ impl DataMarketManager {
   }
 
 
-
   /// Gets a single quote (Bid, Ask, Last) for a contract using a snapshot request. Blocks until data is received or timeout.
   pub fn get_quote(
       &self,

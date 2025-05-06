@@ -839,7 +839,7 @@ mod test_cases {
 
     // Define underlyings and parameters - Use Futures now
     let underlyings = [
-        ("ES", SecType::Future, "CME", 5000.0), // Symbol, SecType, Exchange, Approx Price
+        ("ES", SecType::Future, "CME"), // Symbol, SecType, Exchange
         // ("RTY", SecType::Future, "CME", 2000.0), // Example: Russell 2000 E-mini (adjust symbol/price)
     ];
     let strike_diffs = [50.0, 100.0]; // Adjust strike diffs for futures scale
@@ -853,21 +853,29 @@ mod test_cases {
 
     let mut overall_success = true;
 
-    for (symbol, sec_type, _exchange, placeholder_price) in underlyings {
+    for (symbol, sec_type, exchange) in underlyings {
       info!("--- Testing Underlying: {} ({}) ---", symbol, sec_type);
 
-      // Use placeholder price from array
-      let placeholder_underlying_price = placeholder_price;
-      if placeholder_underlying_price <= 0.0 {
-          warn!("Invalid placeholder price ({}) for {}, strike selection might be inaccurate.", placeholder_underlying_price, symbol);
+      let mut uc = Contract::new();
+      uc.symbol = symbol.to_string();
+      uc.sec_type = SecType::Future;
+      uc.exchange = exchange.to_string();
+      // Take the nearest future. In theory we could take the one matching the option expiration date.
+      let futs: Vec<_> = data_ref.get_contract_details(&uc)?.into_iter().map(|d| d.contract_month).collect();
+      log::info!("Futures: {:?}", futs);
+      assert!(!futs.is_empty(), "No contracts found for future symbol: {}", symbol);
+      uc.last_trade_date_or_contract_month = futs.into_iter().min();
+      // No last trade, use ask for now, assuming that the spreads are tight.
+      let underlying_price = data_market.get_quote(&uc, Some(MarketDataType::Delayed), Duration::from_secs(10))?.1.unwrap();
+      if underlying_price <= 0.0 {
+          warn!("Invalid price ({}) for {}, strike selection might be inaccurate.", underlying_price, symbol);
       }
-
+      log::info!("Underlying price: {} = {:.2}", symbol, underlying_price);
 
       for target_expiry in &target_expiries {
         for &strike_diff in &strike_diffs {
-          // Target strikes around the placeholder price
-          let target_strike1 = placeholder_underlying_price - strike_diff / 2.0;
-          let target_strike2 = placeholder_underlying_price + strike_diff / 2.0;
+          let target_strike1 = underlying_price - strike_diff / 2.0;
+          let target_strike2 = underlying_price + strike_diff / 2.0;
 
           info!("Attempting Box for {} Exp~{}, Strikes~{:.2}/{:.2}",
                 symbol, target_expiry.format("%Y-%m-%d"), target_strike1, target_strike2);
@@ -876,7 +884,7 @@ mod test_cases {
           let builder_result = OptionsStrategyBuilder::new(
             data_ref.clone(), // Clone Arc
             symbol,
-            placeholder_underlying_price,
+            underlying_price,
             1.0, // Quantity = 1 box
             sec_type.clone(),
           )?
