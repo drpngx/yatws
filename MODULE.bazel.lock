@@ -3247,7 +3247,7 @@
         "usagesDigest": "HwoYpBaBjst8XFVZHZdsUoFo2mPfGqSpwtLQ1eOgVpY=",
         "recordedFileInputs": {
           "@@//Cargo.lock": "6d8522d341aec23b04ccbca42f278ccb04a7cfc73460c26025a5d3e23dffd2e7",
-          "@@//Cargo.toml": "129686d4c78bfb9871ccbdc4c03e97481f597815f45a457a571e908d1c57aeb5",
+          "@@//Cargo.toml": "5631b19d3e8721937c46db912ae0beea7cc2598252ace4156646c4ffdacefe64",
           "@@//yatws/Cargo.toml": "2770c0b8f4da713125fa134698ff91f8d350fb1d29f8bf3ad41cf299bf1850c1"
         },
         "recordedDirentsInputs": {},

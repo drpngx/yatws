@@ -1159,7 +1159,9 @@ inventory::submit! { TestDefinition { name: "historical-data", func: test_cases:
 inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
 inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
 inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
+inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
+// inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 
 
 // --- Helper Functions ---

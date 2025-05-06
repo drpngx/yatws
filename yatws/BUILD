@@ -63,6 +63,7 @@ rust_library(
         "@crates//:rusqlite",
         "@crates//:rust_decimal",
         "@crates//:serde",
+        "@crates//:serde_json",
         "@crates//:socket2",
         "@crates//:thiserror",
         "@crates//:tokio",
