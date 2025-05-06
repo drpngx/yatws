@@ -839,10 +839,10 @@ mod test_cases {
 
     // Define underlyings and parameters - Use Futures now
     let underlyings = [
-        ("ES", SecType::Future, "CME"), // Symbol, SecType, Exchange
-        // ("RTY", SecType::Future, "CME", 2000.0), // Example: Russell 2000 E-mini (adjust symbol/price)
+      ("ES", SecType::Future, "CME"), // S&P E-mini
+      ("RTY", SecType::Future, "CME"), // Russell 2000 E-mini
     ];
-    let strike_diffs = [50.0, 100.0]; // Adjust strike diffs for futures scale
+    let strike_diffs = [100.0, 200.0]; // Adjust strike diffs for futures scale
     let expiry_offsets_days = [30, 60, 90]; // Approx days from today
 
     let today = Utc::now().date_naive();
@@ -975,7 +975,7 @@ mod test_cases {
 
               let ratio = mid_price / actual_strike_diff;
               let yield_pct = -ratio.ln() / time_to_expiry_years * 100.0;
-              info!("  => Calculated Annual Yield: {:.4}%", yield_pct);
+              info!("  => {}:{}/{:.2} Calculated Annual Yield: {:.4}%", symbol, actual_expiry_date.format("%Y%m"), ratio, yield_pct);
 
             }
             Ok((bid, ask, _)) => {
@@ -1001,6 +1001,58 @@ mod test_cases {
     }
   }
 
+  pub(super) fn financial_reports_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Get Financial Reports (Summary & Snapshot) ---");
+    let fin_data_mgr = client.data_financials();
+    let contract = Contract::stock("AAPL"); // Test with AAPL stock
+    let fundamental_data_options = &[]; // No specific options for now
+
+    let mut overall_success = true;
+
+    // 1. Request Financial Summary
+    info!("Requesting 'ReportsFinSummary' for {}...", contract.symbol);
+    match fin_data_mgr.get_fundamental_data(&contract, "ReportsFinSummary", fundamental_data_options) {
+      Ok(data) => {
+        info!("Successfully received 'ReportsFinSummary' for {}: {}", contract.symbol, data);
+        // In a real test, you might validate the XML structure or content if feasible
+        if data.is_empty() {
+          warn!("Received empty 'ReportsFinSummary' data for {}.", contract.symbol);
+          // Depending on expectations, this could be an error
+        }
+      }
+      Err(e) => {
+        error!("Failed to get 'ReportsFinSummary' for {}: {:?}", contract.symbol, e);
+        overall_success = false;
+      }
+    }
+
+    // Add a small delay if running live to avoid pacing issues, though less critical for fundamental data
+    // if _is_live {
+    //   std::thread::sleep(Duration::from_secs(1));
+    // }
+
+    // 2. Request Report Snapshot
+    info!("Requesting 'ReportSnapshot' for {}...", contract.symbol);
+    match fin_data_mgr.get_fundamental_data(&contract, "ReportSnapshot", fundamental_data_options) {
+      Ok(data) => {
+        info!("Successfully received 'ReportSnapshot' for {}: {}", contract.symbol, data);
+        if data.is_empty() {
+          warn!("Received empty 'ReportSnapshot' data for {}.", contract.symbol);
+        }
+      }
+      Err(e) => {
+        error!("Failed to get 'ReportSnapshot' for {}: {:?}", contract.symbol, e);
+        overall_success = false;
+      }
+    }
+
+    if overall_success {
+      Ok(())
+    } else {
+      Err(anyhow!("One or more financial report requests failed for {}", contract.symbol))
+    }
+  }
+
 } // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
@@ -1019,6 +1071,7 @@ inventory::submit! { TestDefinition { name: "market-depth-blocking", func: test_
 inventory::submit! { TestDefinition { name: "historical-data", func: test_cases::historical_data_impl } }
 inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
 inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
+inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 
 
