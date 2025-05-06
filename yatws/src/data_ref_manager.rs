@@ -93,7 +93,7 @@ pub struct DataRefManager {
 }
 
 impl DataRefManager {
-  pub fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
+  pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
     Arc::new(DataRefManager {
       message_broker,
       request_states: Mutex::new(HashMap::new()),

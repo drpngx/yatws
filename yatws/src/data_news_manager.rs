@@ -37,7 +37,7 @@ pub struct DataNewsManager {
 }
 
 impl DataNewsManager {
-  pub fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
+  pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
     Arc::new(DataNewsManager {
       message_broker,
       request_states: Mutex::new(HashMap::new()),

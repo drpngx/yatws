@@ -57,7 +57,7 @@ pub struct AccountManager {
 }
 
 impl AccountManager {
-  pub fn new(message_broker: Arc<MessageBroker>, initial_account_id: Option<String>) -> Arc<Self> {
+  pub(crate) fn new(message_broker: Arc<MessageBroker>, initial_account_id: Option<String>) -> Arc<Self> {
     let initial_state = AccountState {
       account_id: initial_account_id.unwrap_or_default(),
       ..Default::default()

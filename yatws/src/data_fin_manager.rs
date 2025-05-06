@@ -33,7 +33,7 @@ pub struct DataFundamentalsManager {
 }
 
 impl DataFundamentalsManager {
-  pub fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
+  pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
     Arc::new(DataFundamentalsManager {
       message_broker,
       request_states: Mutex::new(HashMap::new()),

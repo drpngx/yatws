@@ -145,7 +145,7 @@ pub struct DataMarketManager {
 pub type Quote = (Option<f64>, Option<f64>, Option<f64>); // (Bid, Ask, Last)
 
 impl DataMarketManager {
-  pub fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
+  pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
     Arc::new(DataMarketManager {
       message_broker,
       subscriptions: Mutex::new(HashMap::new()),

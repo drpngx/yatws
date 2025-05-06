@@ -36,7 +36,7 @@ pub struct OrderManager {
 impl OrderManager {
   /// Creates a new OrderManager and returns it along with a closure
   /// that must be called *after* connection to wait for the initial nextValidId.
-  pub fn create(message_broker: Arc<MessageBroker>) -> (Arc<Self>, impl FnOnce() -> Result<(), IBKRError>) {
+  pub(crate) fn create(message_broker: Arc<MessageBroker>) -> (Arc<Self>, impl FnOnce() -> Result<(), IBKRError>) {
     let manager = Arc::new(OrderManager {
       message_broker,
       order_book: RwLock::new(HashMap::new()),

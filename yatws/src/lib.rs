@@ -11,52 +11,54 @@
 //! - High-level abstractions for orders, accounts, and market data
 //! - Logging and replay functionality
 
+mod account_manager;
 mod base;
-mod account;
 mod client;
-mod news;
-mod protocol_encoder;
-mod protocol_decoder;
-mod protocol_dec_parser;
-mod min_server_ver;
-mod message_parser;
-mod parser_client;
-mod parser_order;
-mod parser_account;
-mod parser_fin_adv;
-mod parser_data_ref;
-mod parser_data_market;
-mod parser_data_fin;
-mod parser_data_news;
-mod order_builder;
-mod options_strategy_builder;
+mod conn;
 mod conn_log;
 mod conn_mock;
+mod data_fin_manager;
+mod data_market_manager;
+mod data_news_manager;
+mod data_ref_manager;
 mod financial_report_parser;
+mod handler;
+mod message_parser;
+mod min_server_ver;
+mod news;
+mod options_strategy_builder;
+mod order_builder;
+mod order_manager;
+mod parser_account;
+mod parser_client;
+mod parser_data_fin;
+mod parser_data_market;
+mod parser_data_news;
+mod parser_data_ref;
+mod parser_fin_adv;
+mod parser_order;
+mod protocol_dec_parser;
+mod protocol_decoder;
+mod protocol_encoder;
+
+// Data structures.
+pub mod account;
 pub mod data;
 pub mod contract;
-pub mod order_manager;
-pub mod account_manager;
-pub mod data_ref_manager;
-pub mod data_market_manager;
-pub mod data_news_manager;
-pub mod data_fin_manager;
-pub mod handler;
-pub mod conn;
 pub mod order;
-pub mod data_wsh;  // For now, we just provide the structs.
+pub mod data_wsh;
 
 pub use order_builder::OrderBuilder;
-pub use options_strategy_builder::OptionsStrategyBuilder; // Re-export the new builder
+pub use options_strategy_builder::OptionsStrategyBuilder;
 pub use base::IBKRError;
 pub use financial_report_parser::parse_fundamental_xml;
 pub use client::IBKRClient;
-
-// Re-export the core data structures
-// pub use base::*;
-// pub use contract::*;
-// pub use order::*;
-// pub use account::*;
+pub use account_manager::AccountManager;
+pub use order_manager::OrderManager;
+pub use data_ref_manager::DataRefManager;
+pub use data_market_manager::DataMarketManager;
+pub use data_news_manager::DataNewsManager;
+pub use data_fin_manager::DataFundamentalsManager;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
