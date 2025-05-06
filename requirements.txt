@@ -1,2 +1,1 @@
 # If change: bazel run //:requirements.update
-google-genai==1.8.0

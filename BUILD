@@ -8,14 +8,6 @@ compile_pip_requirements(
     requirements_txt = "requirements_lock.txt",
 )
 
-py_binary(
-    name = "gemini",
-    srcs = ["gemini.py"],
-    deps = [
-        requirement("google-genai"),
-    ],
-)
-
 # For testing purposes only.
 # You have to download the toolkit from IBKR.
 py_library(

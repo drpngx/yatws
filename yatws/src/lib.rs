@@ -27,6 +27,7 @@
 //!
 //! **Cons of YATWS:**
 //! - Newer library with potentially fewer community examples
+//! - Does not provide the ergonomic `Subscription` (yet).
 //!
 //! ### YATWS vs. ib_insync (Python)
 //!
