@@ -119,7 +119,7 @@ impl DataFundamentalsManager {
   pub fn get_fundamental_data(
     &self,
     contract: &Contract,
-    report_type: &str, // e.g., "ReportsFinSummary", "ReportSnapshot", "RESC", "CalendarReport"
+    report_type: &str, // e.g., "ReportsFinSummary", "ReportSnapshot", "ReportsFinStatements", "RESC", "CalendarReport"
     fundamental_data_options: &[(String, String)], // Added in API v???, check docs/min_server_ver
   ) -> Result<String, IBKRError> {
     info!("Requesting fundamental data: Contract={}, ReportType={}", contract.symbol, report_type);
@@ -246,7 +246,7 @@ impl DataFundamentalsManager {
   }
 
 
-// --- Internal error handling (called by the trait method) ---
+  // --- Internal error handling (called by the trait method) ---
   fn _internal_handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
     if req_id <= 0 { return; } // Ignore general errors not tied to a request
 

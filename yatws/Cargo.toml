@@ -39,6 +39,7 @@ thiserror = "2.0.12"
 time = { version = "0.3.39", features = ["macros", "parsing", "serde", "serde-human-readable"] }
 tokio = { version = "1.43.0", features = ["full"] }
 uuid = { version = "1.16.0", features = ["v4"] }
+quick-xml = { version = "0.31", features = ["serialize"] }
 
 
 [dev-dependencies]

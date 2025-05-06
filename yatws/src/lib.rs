@@ -13,6 +13,7 @@
 
 mod base;
 mod account;
+mod client;
 mod news;
 mod protocol_encoder;
 mod protocol_decoder;
@@ -31,6 +32,7 @@ mod order_builder;
 mod options_strategy_builder;
 mod conn_log;
 mod conn_mock;
+mod financial_report_parser;
 pub mod data;
 pub mod contract;
 pub mod order_manager;
@@ -39,7 +41,6 @@ pub mod data_ref_manager;
 pub mod data_market_manager;
 pub mod data_news_manager;
 pub mod data_fin_manager;
-pub mod client;
 pub mod handler;
 pub mod conn;
 pub mod order;
@@ -48,6 +49,8 @@ pub mod data_wsh;  // For now, we just provide the structs.
 pub use order_builder::OrderBuilder;
 pub use options_strategy_builder::OptionsStrategyBuilder; // Re-export the new builder
 pub use base::IBKRError;
+pub use financial_report_parser::parse_fundamental_xml;
+pub use client::IBKRClient;
 
 // Re-export the core data structures
 // pub use base::*;

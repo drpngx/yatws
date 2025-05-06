@@ -6,159 +6,159 @@ use num_enum::TryFromPrimitive;
 
 
 /// Enum representing the different types of market data ticks.
-/// Based on https://interactivebrokers.github.io/tws-api/tick_types.html
+/// Based on `https://interactivebrokers.github.io/tws-api/tick_types.html`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive)]
 #[repr(i32)]
 pub enum TickType {
-    BidSize = 0,
-    BidPrice = 1,
-    AskPrice = 2,
-    AskSize = 3,
-    LastPrice = 4,
-    LastSize = 5,
-    High = 6,
-    Low = 7,
-    Volume = 8,
-    ClosePrice = 9,
-    BidOptionComputation = 10,
-    AskOptionComputation = 11,
-    LastOptionComputation = 12,
-    ModelOptionComputation = 13,
-    OpenTick = 14,
-    Low13Weeks = 15,
-    High13Weeks = 16,
-    Low26Weeks = 17,
-    High26Weeks = 18,
-    Low52Weeks = 19,
-    High52Weeks = 20,
-    AverageVolume = 21,
-    // OpenInterest = 22, // Deprecated
-    OptionHistoricalVolatility = 23,
-    OptionImpliedVolatility = 24,
-    // OptionBidExchange = 25, // Not Used
-    // OptionAskExchange = 26, // Not Used
-    OptionCallOpenInterest = 27,
-    OptionPutOpenInterest = 28,
-    OptionCallVolume = 29,
-    OptionPutVolume = 30,
-    IndexFuturePremium = 31,
-    BidExchange = 32,
-    AskExchange = 33,
-    AuctionVolume = 34,
-    AuctionPrice = 35,
-    AuctionImbalance = 36,
-    MarkPrice = 37,
-    BidEfpComputation = 38,
-    AskEfpComputation = 39,
-    LastEfpComputation = 40,
-    OpenEfpComputation = 41,
-    HighEfpComputation = 42,
-    LowEfpComputation = 43,
-    CloseEfpComputation = 44,
-    LastTimestamp = 45,
-    Shortable = 46,
-    // FundamentalRatios = 47, // Not listed as a tick type, but generic tick 258
-    RtVolume = 48, // Time & Sales
-    Halted = 49,
-    BidYield = 50,
-    AskYield = 51,
-    LastYield = 52,
-    CustomOptionComputation = 53,
-    TradeCount = 54,
-    TradeRate = 55,
-    VolumeRate = 56,
-    LastRthTrade = 57,
-    RtHistoricalVolatility = 58,
-    IbDividends = 59,
-    BondFactorMultiplier = 60,
-    RegulatoryImbalance = 61,
-    News = 62,
-    ShortTermVolume3Minutes = 63,
-    ShortTermVolume5Minutes = 64,
-    ShortTermVolume10Minutes = 65,
-    DelayedBid = 66,
-    DelayedAsk = 67,
-    DelayedLast = 68,
-    DelayedBidSize = 69,
-    DelayedAskSize = 70,
-    DelayedLastSize = 71,
-    DelayedHighPrice = 72,
-    DelayedLowPrice = 73,
-    DelayedVolume = 74,
-    DelayedClose = 75,
-    DelayedOpen = 76,
-    RtTradeVolume = 77, // RT Trd Vol
-    CreditmanMarkPrice = 78,
-    CreditmanSlowMarkPrice = 79,
-    DelayedBidOption = 80,
-    DelayedAskOption = 81,
-    DelayedLastOption = 82,
-    DelayedModelOption = 83,
-    LastExchange = 84,
-    LastRegulatoryTime = 85,
-    FuturesOpenInterest = 86,
-    AverageOptionVolume = 87,
-    DelayedLastTimestamp = 88,
-    ShortableShares = 89,
-    // 90, 91 unknown
-    EtfNavClose = 92,
-    EtfNavPriorClose = 93,
-    EtfNavBid = 94,
-    EtfNavAsk = 95,
-    EtfNavLast = 96,
-    EtfNavFrozenLast = 97,
-    EtfNavHigh = 98,
-    EtfNavLow = 99,
-    // 100 unknown? (Maybe Option Put Volume again?)
-    EstimatedIpoMidpoint = 101, // Note: Doc says 101, but also lists GenericTick101. Assuming direct ID.
-    FinalIpoPrice = 102, // Note: Doc says 102, but also lists GenericTick102. Assuming direct ID.
-    // Add generic tick IDs if needed, or handle them separately
-    // GenericTick100 = 100, // Option Volume
-    // GenericTick101 = 101, // Option Open Interest
-    // GenericTick104 = 104, // Historical Volatility
-    // GenericTick105 = 105, // Average Option Volume
-    // GenericTick106 = 106, // Option Implied Volatility
-    // GenericTick162 = 162, // Index Future Premium
-    // GenericTick165 = 165, // 13, 26, 52 week high/low, Avg Volume
-    // GenericTick225 = 225, // Auction data
-    // GenericTick232 = 232, // Mark Price
-    // GenericTick233 = 233, // RT Volume Timestamp
-    // GenericTick236 = 236, // Shortable
-    // GenericTick258 = 258, // Fundamental Ratios
-    // GenericTick292 = 292, // News
-    // GenericTick293 = 293, // Trade Count
-    // GenericTick294 = 294, // Trade Rate
-    // GenericTick295 = 295, // Volume Rate
-    // GenericTick318 = 318, // Last RTH Trade
-    // GenericTick375 = 375, // RT Trade Volume
-    // GenericTick411 = 411, // RT Historical Volatility
-    // GenericTick456 = 456, // IB Dividends
-    // GenericTick460 = 460, // Bond Factor Multiplier
-    // GenericTick576 = 576, // ETF NAV Bid/Ask
-    // GenericTick577 = 577, // ETF NAV Last
-    // GenericTick578 = 578, // ETF NAV Close/Prior Close
-    // GenericTick586 = 586, // IPO Prices
-    // GenericTick588 = 588, // Futures Open Interest
-    // GenericTick595 = 595, // Short Term Volume
-    // GenericTick614 = 614, // ETF NAV High/Low
-    // GenericTick619 = 619, // Creditman Slow Mark Price
-    // GenericTick623 = 623, // ETF NAV Frozen Last
-    Unknown = -1, // For unhandled cases
+  BidSize = 0,
+  BidPrice = 1,
+  AskPrice = 2,
+  AskSize = 3,
+  LastPrice = 4,
+  LastSize = 5,
+  High = 6,
+  Low = 7,
+  Volume = 8,
+  ClosePrice = 9,
+  BidOptionComputation = 10,
+  AskOptionComputation = 11,
+  LastOptionComputation = 12,
+  ModelOptionComputation = 13,
+  OpenTick = 14,
+  Low13Weeks = 15,
+  High13Weeks = 16,
+  Low26Weeks = 17,
+  High26Weeks = 18,
+  Low52Weeks = 19,
+  High52Weeks = 20,
+  AverageVolume = 21,
+  // OpenInterest = 22, // Deprecated
+  OptionHistoricalVolatility = 23,
+  OptionImpliedVolatility = 24,
+  // OptionBidExchange = 25, // Not Used
+  // OptionAskExchange = 26, // Not Used
+  OptionCallOpenInterest = 27,
+  OptionPutOpenInterest = 28,
+  OptionCallVolume = 29,
+  OptionPutVolume = 30,
+  IndexFuturePremium = 31,
+  BidExchange = 32,
+  AskExchange = 33,
+  AuctionVolume = 34,
+  AuctionPrice = 35,
+  AuctionImbalance = 36,
+  MarkPrice = 37,
+  BidEfpComputation = 38,
+  AskEfpComputation = 39,
+  LastEfpComputation = 40,
+  OpenEfpComputation = 41,
+  HighEfpComputation = 42,
+  LowEfpComputation = 43,
+  CloseEfpComputation = 44,
+  LastTimestamp = 45,
+  Shortable = 46,
+  // FundamentalRatios = 47, // Not listed as a tick type, but generic tick 258
+  RtVolume = 48, // Time & Sales
+  Halted = 49,
+  BidYield = 50,
+  AskYield = 51,
+  LastYield = 52,
+  CustomOptionComputation = 53,
+  TradeCount = 54,
+  TradeRate = 55,
+  VolumeRate = 56,
+  LastRthTrade = 57,
+  RtHistoricalVolatility = 58,
+  IbDividends = 59,
+  BondFactorMultiplier = 60,
+  RegulatoryImbalance = 61,
+  News = 62,
+  ShortTermVolume3Minutes = 63,
+  ShortTermVolume5Minutes = 64,
+  ShortTermVolume10Minutes = 65,
+  DelayedBid = 66,
+  DelayedAsk = 67,
+  DelayedLast = 68,
+  DelayedBidSize = 69,
+  DelayedAskSize = 70,
+  DelayedLastSize = 71,
+  DelayedHighPrice = 72,
+  DelayedLowPrice = 73,
+  DelayedVolume = 74,
+  DelayedClose = 75,
+  DelayedOpen = 76,
+  RtTradeVolume = 77, // RT Trd Vol
+  CreditmanMarkPrice = 78,
+  CreditmanSlowMarkPrice = 79,
+  DelayedBidOption = 80,
+  DelayedAskOption = 81,
+  DelayedLastOption = 82,
+  DelayedModelOption = 83,
+  LastExchange = 84,
+  LastRegulatoryTime = 85,
+  FuturesOpenInterest = 86,
+  AverageOptionVolume = 87,
+  DelayedLastTimestamp = 88,
+  ShortableShares = 89,
+  // 90, 91 unknown
+  EtfNavClose = 92,
+  EtfNavPriorClose = 93,
+  EtfNavBid = 94,
+  EtfNavAsk = 95,
+  EtfNavLast = 96,
+  EtfNavFrozenLast = 97,
+  EtfNavHigh = 98,
+  EtfNavLow = 99,
+  // 100 unknown? (Maybe Option Put Volume again?)
+  EstimatedIpoMidpoint = 101, // Note: Doc says 101, but also lists GenericTick101. Assuming direct ID.
+  FinalIpoPrice = 102, // Note: Doc says 102, but also lists GenericTick102. Assuming direct ID.
+  // Add generic tick IDs if needed, or handle them separately
+  // GenericTick100 = 100, // Option Volume
+  // GenericTick101 = 101, // Option Open Interest
+  // GenericTick104 = 104, // Historical Volatility
+  // GenericTick105 = 105, // Average Option Volume
+  // GenericTick106 = 106, // Option Implied Volatility
+  // GenericTick162 = 162, // Index Future Premium
+  // GenericTick165 = 165, // 13, 26, 52 week high/low, Avg Volume
+  // GenericTick225 = 225, // Auction data
+  // GenericTick232 = 232, // Mark Price
+  // GenericTick233 = 233, // RT Volume Timestamp
+  // GenericTick236 = 236, // Shortable
+  // GenericTick258 = 258, // Fundamental Ratios
+  // GenericTick292 = 292, // News
+  // GenericTick293 = 293, // Trade Count
+  // GenericTick294 = 294, // Trade Rate
+  // GenericTick295 = 295, // Volume Rate
+  // GenericTick318 = 318, // Last RTH Trade
+  // GenericTick375 = 375, // RT Trade Volume
+  // GenericTick411 = 411, // RT Historical Volatility
+  // GenericTick456 = 456, // IB Dividends
+  // GenericTick460 = 460, // Bond Factor Multiplier
+  // GenericTick576 = 576, // ETF NAV Bid/Ask
+  // GenericTick577 = 577, // ETF NAV Last
+  // GenericTick578 = 578, // ETF NAV Close/Prior Close
+  // GenericTick586 = 586, // IPO Prices
+  // GenericTick588 = 588, // Futures Open Interest
+  // GenericTick595 = 595, // Short Term Volume
+  // GenericTick614 = 614, // ETF NAV High/Low
+  // GenericTick619 = 619, // Creditman Slow Mark Price
+  // GenericTick623 = 623, // ETF NAV Frozen Last
+  Unknown = -1, // For unhandled cases
 }
 
 impl TickType {
-    /// Returns the corresponding size tick type for a given price tick type, if applicable.
-    pub fn get_corresponding_size_tick(&self) -> Option<TickType> {
-        match self {
-            TickType::BidPrice => Some(TickType::BidSize),
-            TickType::AskPrice => Some(TickType::AskSize),
-            TickType::LastPrice => Some(TickType::LastSize),
-            TickType::DelayedBid => Some(TickType::DelayedBidSize),
-            TickType::DelayedAsk => Some(TickType::DelayedAskSize),
-            TickType::DelayedLast => Some(TickType::DelayedLastSize),
-            _ => None,
-        }
+  /// Returns the corresponding size tick type for a given price tick type, if applicable.
+  pub fn get_corresponding_size_tick(&self) -> Option<TickType> {
+    match self {
+      TickType::BidPrice => Some(TickType::BidSize),
+      TickType::AskPrice => Some(TickType::AskSize),
+      TickType::LastPrice => Some(TickType::LastSize),
+      TickType::DelayedBid => Some(TickType::DelayedBidSize),
+      TickType::DelayedAsk => Some(TickType::DelayedAskSize),
+      TickType::DelayedLast => Some(TickType::DelayedLastSize),
+      _ => None,
     }
+  }
 }
 
 impl Default for TickType {
@@ -499,4 +499,327 @@ pub struct TickNewsData {
   pub article_id: String,
   pub headline: String,
   pub extra_data: String,
+}
+
+// --- Financial Report Structures ---
+
+/// Represents the type of fundamental report being parsed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FundamentalReportType {
+  ReportSnapshot,
+  ReportsFinSummary,
+  // Add other types as needed, e.g.:
+  // ReportsFinStatements,
+  // Resc, // Analyst Estimates
+  // ReportsOwnership,
+  // CalendarReport,
+}
+
+/// General company identification information, aggregated from various XML parts.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CompanyInformation {
+  pub con_id: Option<i64>,
+  pub ticker: Option<String>,
+  pub company_name: Option<String>,
+  pub cik: Option<String>,
+  pub exchange_code: Option<String>, // e.g., "NASDAQ" from <Exchange Code="NASDAQ">
+  pub exchange_name: Option<String>, // e.g., "NASDAQ" from <Exchange>NASDAQ</Exchange>
+  pub irs_number: Option<String>,
+  pub sic_code: Option<String>,
+  pub business_description: Option<String>,
+  pub country: Option<String>, // From <CoAddress Country="United States">
+  pub web_url: Option<String>, // From <WebURL>
+  pub last_split_date: Option<chrono::NaiveDate>,
+  pub last_split_ratio: Option<String>, // e.g., "1-for-2"
+}
+
+// --- Structures for "ReportSnapshot" ---
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct Ratio {
+  pub group_name: String, // From parent <Group Name="...">
+  pub field_name: String, // From <Ratio FieldName="...">
+  pub raw_value: Option<String>, // The value as a string from the XML
+  pub period_type: Option<String>, // e.g., "TTM", "3YAVG", "Latest", "PENEPS"
+  // You might add an `as_f64: Option<f64>` field if you parse `raw_value`
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct Issue {
+  pub id: Option<String>,
+  pub issue_type: Option<String>, // "C" for Common, "P" for Preferred
+  pub description: Option<String>,
+  pub order: Option<i32>,
+  pub name: Option<String>,
+  pub ticker: Option<String>,
+  pub ric: Option<String>,
+  pub display_ric: Option<String>,
+  pub instrument_pi: Option<String>,
+  pub quote_pi: Option<String>,
+  pub instrument_perm_id: Option<String>,
+  pub quote_perm_id: Option<String>,
+  pub exchange_code: Option<String>,
+  pub exchange_country: Option<String>,
+  pub exchange_name: Option<String>,
+  pub global_listing_type: Option<String>,
+  pub most_recent_split_date: Option<chrono::NaiveDate>,
+  pub most_recent_split_factor: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct CoGeneralInfo {
+  pub co_status_code: Option<i32>,
+  pub co_status_desc: Option<String>,
+  pub co_type_code: Option<String>,
+  pub co_type_desc: Option<String>,
+  pub last_modified: Option<chrono::NaiveDate>,
+  pub latest_available_annual: Option<chrono::NaiveDate>,
+  pub latest_available_interim: Option<chrono::NaiveDate>,
+  pub employees: Option<i64>,
+  pub employees_last_updated: Option<chrono::NaiveDate>,
+  pub shares_out: Option<f64>,
+  pub shares_out_date: Option<chrono::NaiveDate>,
+  pub total_float: Option<f64>,
+  pub reporting_currency_code: Option<String>,
+  pub reporting_currency_name: Option<String>,
+  pub most_recent_exchange_rate: Option<f64>,
+  pub most_recent_exchange_rate_date: Option<chrono::NaiveDate>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TextInfoItem {
+  pub text_type: Option<String>, // "Business Summary", "Financial Summary"
+  pub last_modified: Option<chrono::DateTime<chrono::Utc>>, // Note: Includes time
+  pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ContactInfo {
+  pub last_updated: Option<chrono::DateTime<chrono::Utc>>,
+  pub address_line1: Option<String>,
+  pub address_line2: Option<String>,
+  pub address_line3: Option<String>,
+  pub city: Option<String>,
+  pub state_region: Option<String>,
+  pub postal_code: Option<String>,
+  pub country_code: Option<String>,
+  pub country_name: Option<String>,
+  pub contact_name: Option<String>,
+  pub contact_title: Option<String>,
+  pub main_phone_country_code: Option<String>,
+  pub main_phone_area_code: Option<String>,
+  pub main_phone_number: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct WebLink {
+  pub last_updated: Option<chrono::DateTime<chrono::Utc>>,
+  pub home_page: Option<String>,
+  pub email: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct Industry {
+  pub industry_type: Option<String>, // "TRBC", "NAICS", "SIC"
+  pub order: Option<i32>,
+  pub reported: Option<bool>,
+  pub code: Option<String>,
+  pub mnemonic: Option<String>,
+  pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PeerInfo {
+  pub last_updated: Option<chrono::DateTime<chrono::Utc>>,
+  pub industries: Vec<Industry>,
+  pub index_constituents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct Officer {
+  pub rank: Option<i32>,
+  pub since: Option<String>, // Could parse to date if format is consistent
+  pub first_name: Option<String>,
+  pub middle_initial: Option<String>,
+  pub last_name: Option<String>,
+  pub age: Option<String>, // Keep as string due to trailing space?
+  pub title_start_year: Option<i32>,
+  pub title_start_month: Option<i32>,
+  pub title_start_day: Option<i32>,
+  pub title_id1: Option<String>,
+  pub title_abbr1: Option<String>,
+  pub title_id2: Option<String>,
+  pub title_abbr2: Option<String>,
+  pub title_full: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct RatioGroup {
+  pub id: Option<String>, // e.g., "Price and Volume"
+  pub ratios: Vec<Ratio>, // Re-use the existing Ratio struct
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ForecastDataItem {
+  pub field_name: String,
+  pub value_type: Option<String>, // "N" for numeric, "D" for date?
+  pub period_type: Option<String>, // "CURR"
+  pub value: Option<String>, // Keep as string, parse later if needed
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ForecastData {
+  pub consensus_type: Option<String>,
+  pub cur_fiscal_year: Option<i32>,
+  pub cur_fiscal_year_end_month: Option<i32>,
+  pub cur_interim_end_cal_year: Option<i32>,
+  pub cur_interim_end_month: Option<i32>,
+  pub earnings_basis: Option<String>,
+  pub items: Vec<ForecastDataItem>,
+}
+
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ReportSnapshot {
+  // Top-level CoIDs might exist, merge with Issue CoIDs?
+  pub top_level_coids: HashMap<String, String>, // e.g., RepNo, CompanyName, IRSNo, CIKNo
+  pub issues: Vec<Issue>,
+  pub co_general_info: Option<CoGeneralInfo>,
+  pub text_info: Vec<TextInfoItem>,
+  pub contact_info: Option<ContactInfo>,
+  pub web_links: Option<WebLink>,
+  pub peer_info: Option<PeerInfo>,
+  pub officers: Vec<Officer>,
+  // Ratios section attributes
+  pub ratios_price_currency: Option<String>,
+  pub ratios_reporting_currency: Option<String>,
+  pub ratios_exchange_rate: Option<f64>,
+  pub ratios_latest_available_date: Option<chrono::NaiveDate>,
+  pub ratio_groups: Vec<RatioGroup>,
+  pub forecast_data: Option<ForecastData>,
+  // Add CompanyInformation if needed, populated from CoIDs/Issues
+  pub company_info: Option<CompanyInformation>,
+}
+
+// --- Structures for "ReportsFinSummary" ---
+
+/// Represents an EPS (Earnings Per Share) record from FinancialSummary.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct EPSRecord {
+  pub as_of_date: Option<chrono::NaiveDate>,
+  pub report_type: Option<String>, // e.g., "R", "TTM", "A", "P"
+  pub period: Option<String>,      // e.g., "12M", "3M"
+  pub value: Option<f64>,
+  pub currency: Option<String>, // From parent <EPSs currency="USD">
+}
+
+/// Represents a Dividend Per Share record from FinancialSummary.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct DividendPerShareRecord {
+  pub as_of_date: Option<chrono::NaiveDate>,
+  pub report_type: Option<String>,
+  pub period: Option<String>,
+  pub value: Option<f64>,
+  pub currency: Option<String>,
+}
+
+/// Represents a Total Revenue record from FinancialSummary.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct TotalRevenueRecord {
+  pub as_of_date: Option<chrono::NaiveDate>,
+  pub report_type: Option<String>,
+  pub period: Option<String>,
+  pub value: Option<f64>,
+  pub currency: Option<String>,
+}
+
+/// Represents an individual announced dividend from FinancialSummary.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AnnouncedDividendRecord {
+  pub dividend_type: Option<String>, // e.g., "CD" (Cash Dividend)
+  pub ex_date: Option<chrono::NaiveDate>,
+  pub record_date: Option<chrono::NaiveDate>,
+  pub pay_date: Option<chrono::NaiveDate>,
+  pub declaration_date: Option<chrono::NaiveDate>,
+  pub value: Option<f64>,
+  pub currency: Option<String>,
+}
+
+// --- Structures for "ReportsFinStatements" (DIFFERENT from ReportsFinSummary) ---
+// This section remains for the other report type that uses <ReportFinancialStatements>
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FinancialStatementType {
+  INC, // IncomeStatement
+  BAL, // BalanceSheet
+  CAS, // CashFlow
+}
+
+impl Default for FinancialStatementType {
+  fn default() -> Self {
+    FinancialStatementType::INC // Or a specific 'Unknown' variant if you add one
+  }
+}
+
+impl TryFrom<&str> for FinancialStatementType {
+  type Error = IBKRError;
+
+  fn try_from(value: &str) -> Result<Self, Self::Error> {
+    match value {
+      "INC" => Ok(FinancialStatementType::INC),
+      "BAL" => Ok(FinancialStatementType::BAL),
+      "CAS" => Ok(FinancialStatementType::CAS),
+      _ => Err(IBKRError::ParseError(format!("Unknown FinancialStatementType: {}", value))),
+    }
+  }
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PeriodType {
+  Annual,
+  Quarterly, // "Interim" in IBKR XML
+}
+
+impl Default for PeriodType {
+  fn default() -> Self {
+    PeriodType::Annual // Or a specific 'Unknown' variant if you add one
+  }
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct FinancialStatement {
+  pub statement_type: FinancialStatementType,
+  pub period_type: PeriodType, // Annual or Interim/Quarterly
+  pub end_date: Option<chrono::NaiveDate>,
+  pub fiscal_year: Option<i32>,
+  pub period_length: Option<i32>, // e.g., 3 for quarter, 12 for annual (from FiscalPeriod/@FiscalPeriodNumber or calculated)
+  pub currency: Option<String>, // From <Statement Currency="USD">
+  // Using HashMap for flexibility with coaItem codes
+  // Key: COAItem code (e.g., "SREV", "ATCA"), Value: the numeric value
+  pub items: HashMap<String, Option<f64>>,
+  // Raw items if needed for unconverted values or different types
+  // pub raw_items: HashMap<String, Option<String>>,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ReportsFinSummary {
+  // CompanyInfo might be sourced from a higher level if this XML is part of a larger document.
+  // For now, assuming it's not directly in this <FinancialSummary> snippet.
+  // pub company_info: Option<CompanyInformation>,
+  pub eps_records: Vec<EPSRecord>,
+  pub dividend_per_share_records: Vec<DividendPerShareRecord>,
+  pub total_revenue_records: Vec<TotalRevenueRecord>,
+  pub announced_dividend_records: Vec<AnnouncedDividendRecord>,
+}
+
+
+/// Top-level enum for parsed fundamental report data.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+// #[serde(untagged)] // Consider if you want to deserialize without a type field, might make errors harder.
+pub enum ParsedFundamentalData {
+  Snapshot(ReportSnapshot),
+  FinancialSummary(ReportsFinSummary),
+  // Add other variants as more report types are supported
+  // Error(String), // Could be useful for returning parsing errors directly
 }
