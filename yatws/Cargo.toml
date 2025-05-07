@@ -2,9 +2,9 @@
 name = "yatws"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Patrick Nguyen <pub+yatws@drpng.com>"]
 description = "Yet Another TWS (Interactive Brokers TWS API) Implementation"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/drpngx/yatws"
 readme = "../README.md"
 keywords = ["finance", "trading", "interactive-brokers", "tws"]

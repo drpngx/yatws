@@ -6,7 +6,7 @@ A comprehensive, thread-safe, type-safe, and ergonomic Rust interface to the Int
 
 YATWS provides a modern Rust implementation for interacting with Interactive Brokers' Trader Workstation (TWS) and Gateway. The library's manager-based architecture and support for both synchronous and asynchronous patterns make it suitable for various trading applications, from simple data retrieval to complex automated trading systems.
 
-This library was born out of the need to place orders in rapid succession in response to market events, which is not easily accomplished with existing Rust crates. While order management was the primary focus, other interfaces (market data, account information, etc.) have been implemented for completeness.
+This library was born out of the need to place orders in rapid succession in response to market events, which is not easily accomplished with existing Rust crates. It takes about 3ms to place an order with this library. While order management was the primary focus, other interfaces (market data, account information, etc.) have been implemented for completeness.
 
 **Current Status**: Early stage but production-ready. The API has been used to trade millions of dollars in volume.
 

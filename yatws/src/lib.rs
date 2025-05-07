@@ -9,7 +9,7 @@
 //!
 //! This is a very early stage of the API and it may change at any time.
 //!
-//! This library was born out of my need to place orders in rapid succession in response to market events. That is not easily done with existing rust crates. This was the primary goal and other interfaces (market data, etc) have been implemented for the sake of completeness. This library is in production and has traded millions of dollar volume.
+//! This library was born out of my need to place orders in rapid succession in response to market events. That is not easily done with existing rust crates. It takes about 3ms to send an order with this library. This was the primary goal and other interfaces (market data, etc) have been implemented for the sake of completeness. This library is in production and has traded millions of dollar volume.
 //!
 //!
 //! ## Comparison with Alternative Libraries

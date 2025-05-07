@@ -1,0 +1,99 @@
+* Use the API
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/web https://github.com/drpngx/yatws/doc/api.md
+I want to start a client, place a market order for AAPL, and wait until it executes.
+#+END_SRC
+
+* TODO
+
+** Clean up interface
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/add yatws/src/order_manager.rs
+/add yatws/src/account_manager.rs
+/add yatws/src/data_ref_manager.rs
+/add yatws/src/data_market_manager.rs
+/add yatws/src/data_news_manager.rs
+/add yatws/src/data_fin_manager.rs
+Make sure the API does not have pass strings as enums, for instance tick types.
+#+END_SRC
+
+** More features
+*** ibapi parity
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/model flash
+/web https://docs.rs/ibapi/latest/ibapi/client/struct.Client.html
+/add yatws/src/order_manager.rs
+/add yatws/src/account_manager.rs
+/add yatws/src/data_ref_manager.rs
+/add yatws/src/data_market_manager.rs
+/add yatws/src/data_news_manager.rs
+/add yatws/src/data_fin_manager.rs
+Tell me what interface I am missing to reach feature parity.
+#+END_SRC
+
+*** ib insync parity
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/model flash
+/web https://ib-insync.readthedocs.io/api.html
+/add yatws/src/order_manager.rs
+/add yatws/src/account_manager.rs
+/add yatws/src/data_ref_manager.rs
+/add yatws/src/data_market_manager.rs
+/add yatws/src/data_news_manager.rs
+/add yatws/src/data_fin_manager.rs
+Tell me what interface I am missing to reach feature parity.
+#+END_SRC
+
+* Workflow
+** Add a test to goldens
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/add yatws/src/base.rs
+/add yatws/gen_goldens.rs
+/add yatws/src/order_manager.rs
+I need a test harness for xxx.
+#+END_SRC
+
+** Add new request
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/add yatws/src/base.rs
+/add yatws/src/protocol_decoder.rs
+/add yatws/src/protocol_dec_parser.rs
+/add yatws/src/protocol_encoder.rs
+/add yatws/src/parser_order.rs
+/add yatws/src/order_manager.rs
+I need to add <some feature> in order_manager.
+#+END_SRC
+
+* Release
+** Sync the API with the docs
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/model gemini-flish
+/add yatws/src/order_manager.rs
+/add yatws/src/account_manager.rs
+/add yatws/src/data_ref_manager.rs
+/add yatws/src/data_market_manager.rs
+/add yatws/src/data_news_manager.rs
+/add yatws/src/data_fin_manager.rs
+/add yatws/src/lib.rs
+/add yatws/doc/api.md
+/add yatws/README.md
+Make sure that the API documentation in lib.rs, api.md and README.md is up to date, as well as the docstrings preceding the functions. You don't need to check the logic, just the API signatures. Make sure all the functions are there.
+#+END_SRC
+
+** Run the replay tests.
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/run bazel-bin/yatws/gen_goldens replay current-quote
+#+END_SRC
+
+** Increment version, tag and push
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/add MODULE.bazel
+/add yatws/Cargo.toml
+/run cargo build
+#+END_SRC
+
+# Local Variables:
+# eval: (visual-line-mode 1)
+# org-src-preserve-indentation: t
+# org-edit-src-content-indentation: 0
+# End:

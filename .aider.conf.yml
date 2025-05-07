@@ -8,7 +8,8 @@ gitignore: false
 # Default aliases: https://aider.chat/docs/config/model-aliases.html#built-in-aliases
 alias:
   - "gemini:gemini/gemini-2.5-pro-exp-03-25"
-  - "gemini-pay:gemini/gemini-2.5-pro-preview-03-25"
+  - "gemini-pay:gemini/gemini-2.5-pro-preview-05-06"
+  - "flash:gemini/gemini-2.5-flash-preview-04-17"
 # thinking-tokens, reasoning-effort
 # Default models: https://aider.chat/docs/config/adv-model-settings.html
 # Note it already has suitable weak-model configs subordinated to the main model.
