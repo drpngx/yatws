@@ -70,7 +70,7 @@ use chrono::Utc;
 use log::{debug, error, info, warn};
 
 use crate::order::{Order, OrderRequest, OrderUpdates, OrderState, OrderStatus, OrderCancel};
-use crate::contract::Contract;
+use crate::contract::{Contract, SecType};
 use crate::conn::MessageBroker;
 use crate::base::IBKRError;
 use crate::handler::OrderHandler;
@@ -526,6 +526,69 @@ impl OrderManager {
     info!("Global cancel request sent.");
     // Note: TWS will send individual orderStatus messages for affected orders.
     // The local state will be updated by the orderStatus handler.
+    Ok(())
+  }
+
+  /// Exercises or lapses an option contract.
+  ///
+  /// This method sends an "exercise options" request to TWS.
+  /// Note that this is not an "order" in the typical sense and does not go through
+  /// the regular order lifecycle or use client order IDs. TWS uses a `reqId` (ticker ID)
+  /// for this request, similar to market data requests.
+  ///
+  /// The outcome of this operation is typically observed through account and position updates,
+  /// or via error messages if the request is invalid.
+  ///
+  /// # Arguments
+  /// * `req_id` - A unique request identifier (like a ticker ID, not an order ID).
+  /// * `contract` - The option [`Contract`] to exercise or lapse. Must be an OPT or FOP.
+  /// * `action` - The [`ExerciseAction`] to perform (Exercise or Lapse).
+  /// * `quantity` - The number of contracts to exercise/lapse.
+  /// * `account` - The account holding the option.
+  /// * `override_action` - Set to `true` to override TWS's default exercise behavior (e.g., for OTM options).
+  ///   Set to `false` (0) for default behavior.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the server version does not support this feature,
+  /// if the contract is not an option, or if there's an issue encoding or sending the message.
+  pub fn exercise_option(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    action: crate::order::ExerciseAction,
+    quantity: i32,
+    account: &str,
+    override_action: bool,
+  ) -> Result<(), IBKRError> {
+    info!(
+      "Requesting to {:?} {} contracts of {} in account {}",
+      action, quantity, contract.symbol, account
+    );
+
+    if contract.sec_type != SecType::Option && contract.sec_type != SecType::FutureOption {
+      return Err(IBKRError::InvalidContract(
+        "exercise_option can only be used for Option (OPT) or FutureOption (FOP) contracts.".to_string()
+      ));
+    }
+    if quantity <= 0 {
+      return Err(IBKRError::InvalidParameter("Exercise quantity must be positive.".to_string()));
+    }
+
+    let encoder = Encoder::new(self.message_broker.get_server_version()?);
+    let exercise_msg = encoder.encode_exercise_options(
+      req_id,
+      contract,
+      action,
+      quantity,
+      account,
+      if override_action { 1 } else { 0 },
+    )?;
+    self.message_broker.send_message(&exercise_msg)?;
+
+    info!(
+      "Exercise/Lapse request sent for {} (ReqID: {}). Monitor account/position updates for confirmation.",
+      contract.symbol, req_id
+    );
     Ok(())
   }
 

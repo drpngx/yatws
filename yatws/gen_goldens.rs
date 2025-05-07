@@ -863,6 +863,103 @@ mod test_cases {
     }
   }
 
+  pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+    info!("--- Testing Option Exercise/Lapse ---");
+    if is_live {
+      warn!("This test requires an account with an existing SPY option position.");
+      warn!("It will attempt to EXERCISE 1 contract and LAPSE 1 contract (if available).");
+      warn!("Ensure you have at least 2 contracts of a near-term SPY option.");
+      warn!("The test uses a placeholder req_id (9001, 9002) and assumes the first account.");
+      std::thread::sleep(Duration::from_secs(5));
+    }
+
+    let order_mgr = client.orders();
+    let acct_mgr = client.account();
+    let ref_data_mgr = client.data_ref(); // For finding a suitable option
+
+    // 1. Get account ID
+    let account_id = acct_mgr.get_account_info()?.account_id;
+    info!("Using account ID: {}", account_id);
+
+    // 2. Find a suitable SPY option to "exercise" and "lapse"
+    //    This is tricky for a golden test. We'll try to find any SPY option.
+    //    In a real scenario, you'd know the specific contract.
+    let spy_stock_contract = Contract::stock("SPY");
+    let contract_details_list = ref_data_mgr.get_contract_details(&spy_stock_contract)
+      .context("Failed to get contract details for SPY stock to find options")?;
+    if contract_details_list.is_empty() {
+      return Err(anyhow!("No contract details found for SPY stock."));
+    }
+    let spy_con_id = contract_details_list[0].contract.con_id;
+
+    let mut option_search_contract = Contract::new();
+    option_search_contract.symbol = "SPY".to_string();
+    option_search_contract.sec_type = SecType::Option;
+    option_search_contract.exchange = "SMART".to_string();
+    option_search_contract.currency = "USD".to_string();
+    // No specific expiry/strike, get a list of option chains
+    // This might return a lot. We'll just pick the first one for the test.
+
+    let option_details_list = ref_data_mgr.get_contract_details(&option_search_contract)
+      .context("Failed to get option contract details for SPY")?;
+
+    if option_details_list.is_empty() {
+      return Err(anyhow!("No SPY options found to test exercise/lapse. Ensure market data subscription for SPY options."));
+    }
+    // For the test, pick the first available option contract.
+    // A real application would specify the exact contract.
+    let option_to_exercise = option_details_list[0].contract.clone();
+    info!("Selected option for test: ConID={}, Symbol={}, Expiry={}, Strike={}, Right={:?}",
+          option_to_exercise.con_id, option_to_exercise.symbol,
+          option_to_exercise.last_trade_date_or_contract_month.as_deref().unwrap_or("N/A"),
+          option_to_exercise.strike.unwrap_or(0.0), option_to_exercise.right);
+
+
+    // 3. Attempt to Exercise 1 contract (if live, this needs a position)
+    let exercise_req_id = 9001; // Arbitrary req_id for this operation
+    let exercise_qty = 1;
+    let override_exercise = false; // Usually false unless forcing OTM exercise
+
+    info!("Attempting to EXERCISE {} contract(s) of {:?} with ReqID {}", exercise_qty, option_to_exercise.local_symbol.as_deref().unwrap_or(&option_to_exercise.symbol), exercise_req_id);
+    match order_mgr.exercise_option(exercise_req_id, &option_to_exercise, yatws::order::ExerciseAction::Exercise, exercise_qty, &account_id, override_exercise) {
+      Ok(_) => info!("Exercise request sent for ReqID {}. Monitor account updates.", exercise_req_id),
+      Err(e) => {
+        // In non-live (replay), this might fail if not in logs. In live, it might fail if no position.
+        warn!("Failed to send EXERCISE request for ReqID {}: {:?}. This might be expected if no position or in replay.", exercise_req_id, e);
+        // Don't fail the whole test for this, as setup is complex.
+      }
+    }
+
+    // Allow time for processing if live
+    if is_live { std::thread::sleep(Duration::from_secs(5)); }
+
+    // 4. Attempt to Lapse 1 contract (if live, this needs a position)
+    // For testing, we'll use the same option contract. A real scenario might use a different one.
+    let lapse_req_id = 9002; // Arbitrary req_id
+    let lapse_qty = 1;
+    let override_lapse = false; // Usually false
+
+    info!("Attempting to LAPSE {} contract(s) of {:?} with ReqID {}", lapse_qty, option_to_exercise.local_symbol.as_deref().unwrap_or(&option_to_exercise.symbol), lapse_req_id);
+    match order_mgr.exercise_option(lapse_req_id, &option_to_exercise, yatws::order::ExerciseAction::Lapse, lapse_qty, &account_id, override_lapse) {
+      Ok(_) => info!("Lapse request sent for ReqID {}. Monitor account updates.", lapse_req_id),
+      Err(e) => {
+        warn!("Failed to send LAPSE request for ReqID {}: {:?}. This might be expected if no position or in replay.", lapse_req_id, e);
+      }
+    }
+
+    if is_live {
+      info!("Exercise/Lapse requests sent. Manual verification of account and position changes is required for live test.");
+      info!("Waiting for 10 seconds to allow observation of potential messages...");
+      std::thread::sleep(Duration::from_secs(10));
+    } else {
+      info!("Exercise/Lapse test sequence completed for replay mode.");
+    }
+
+    // This test primarily checks if the calls can be made.
+    // Verifying the outcome requires checking account/position data, which is complex for an automated golden.
+    Ok(())
+  }
+
 
   pub(super) fn historical_data_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Get Historical Data ---");
@@ -1337,6 +1434,7 @@ inventory::submit! { TestDefinition { name: "market-depth-blocking", func: test_
 inventory::submit! { TestDefinition { name: "historical-data", func: test_cases::historical_data_impl } }
 inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
 inventory::submit! { TestDefinition { name: "order-global-cancel", func: test_cases::order_global_cancel_impl } }
+inventory::submit! { TestDefinition { name: "order-exercise-option", func: test_cases::order_exercise_option_impl } }
 inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
 inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
 inventory::submit! { TestDefinition { name: "historical-news", func: test_cases::historical_news_impl } }

@@ -1541,6 +1541,64 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
+  pub fn encode_exercise_options(
+    &self,
+    req_id: i32, // Ticker ID of the request (not order ID)
+    contract: &Contract,
+    exercise_action: crate::order::ExerciseAction, // 1 for exercise, 2 for lapse
+    exercise_quantity: i32,
+    account: &str,
+    override_action: i32, // 0 for no override, 1 for override
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!(
+      "Encoding exercise options: ReqID={}, Contract={}, Action={:?}, Qty={}, Acct={}, Override={}",
+      req_id, contract.symbol, exercise_action, exercise_quantity, account, override_action
+    );
+
+    if self.server_version < min_server_ver::SERVER_VERSION_EXERCISE_OPTIONS {
+      return Err(IBKRError::Unsupported(
+        "Server version does not support exercising options.".to_string(),
+      ));
+    }
+    if self.server_version < min_server_ver::TRADING_CLASS && (!contract.trading_class.is_none() || contract.con_id > 0) {
+      return Err(IBKRError::Unsupported(
+        "Server version does not support conId and tradingClass parameters in exerciseOptions.".to_string()
+      ));
+    }
+
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ExerciseOptions as i32)?;
+    let version = 2; // Version supporting override
+
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // Contract fields
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_int_to_cursor(&mut cursor, contract.con_id)?;
+    }
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
+    if self.server_version >= min_server_ver::TRADING_CLASS {
+      self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    }
+
+    // Exercise parameters
+    self.write_int_to_cursor(&mut cursor, exercise_action as i32)?;
+    self.write_int_to_cursor(&mut cursor, exercise_quantity)?;
+    self.write_str_to_cursor(&mut cursor, account)?;
+    self.write_int_to_cursor(&mut cursor, override_action)?; // 0 for no override, 1 for override
+
+    Ok(self.finish_encoding(cursor))
+  }
+
   pub fn _encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request open orders");
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqOpenOrders as i32)?;

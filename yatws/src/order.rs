@@ -737,3 +737,12 @@ impl OrderStatus {
     matches!(self, OrderStatus::Filled | OrderStatus::Cancelled | OrderStatus::Inactive | OrderStatus::ApiCancelled)
   }
 }
+
+/// Action to be taken on an option contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExerciseAction {
+  /// Exercise the option.
+  Exercise = 1,
+  /// Lapse the option (let it expire worthless).
+  Lapse = 2,
+}
