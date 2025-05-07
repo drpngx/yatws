@@ -841,6 +841,15 @@ impl OrderBuilder {
     self
   }
 
+  /// Marks the order as a "What-If" order.
+  /// When submitted, TWS will calculate margin and commission impact without actually placing the order.
+  /// The results are returned via the `openOrder` message.
+  /// Requires server version `WHAT_IF_ORDERS`.
+  pub fn what_if(mut self) -> Self {
+    self.order.what_if = true;
+    self
+  }
+
   /// If true, conditions are also valid outside Regular Trading Hours.
   pub fn with_conditions_ignore_rth(mut self, ignore_rth: bool) -> Self {
     self.order.conditions_ignore_rth = ignore_rth;

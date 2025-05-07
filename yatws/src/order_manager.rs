@@ -592,6 +592,101 @@ impl OrderManager {
     Ok(())
   }
 
+  /// Checks the margin and commission impact of a potential order without placing it.
+  ///
+  /// This sends a "What-If" order request to TWS. TWS calculates the impact and
+  /// returns the details (initial/maintenance margin, commission) via an `openOrder`
+  /// message associated with the temporary order ID used for the check.
+  ///
+  /// This method blocks until the `openOrder` message with the results is received
+  /// or the specified timeout occurs.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for the instrument.
+  /// * `request` - The [`OrderRequest`] describing the potential order.
+  /// * `timeout` - The maximum duration to wait for the What-If results.
+  ///
+  /// # Returns
+  /// * `Ok(OrderState)` - The [`OrderState`] containing the calculated margin and commission
+  ///   details received from TWS via the `openOrder` message.
+  /// * `Err(IBKRError::Timeout)` - If the timeout was reached before results were received.
+  /// * `Err(IBKRError::...)` - For other errors, such as placing the initial request,
+  ///   API errors returned by TWS for the What-If order, or if the required server
+  ///   version is not met.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, OrderBuilder, contract::Contract, order::OrderSide};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let order_mgr = client.orders();
+  /// let (contract, order_req) = OrderBuilder::new(OrderSide::Buy, 100.0)
+  ///     .limit(250.50)
+  ///     .for_stock("AAPL")
+  ///     .build()?;
+  ///
+  /// match order_mgr.check_what_if_order(&contract, &order_req, Duration::from_secs(10)) {
+  ///     Ok(state) => {
+  ///         println!("What-If Results for AAPL order:");
+  ///         println!("  Initial Margin After: {:?}", state.initial_margin_after);
+  ///         println!("  Maintenance Margin After: {:?}", state.maintenance_margin_after);
+  ///         println!("  Commission: {:?} {}", state.commission, state.commission_currency.as_deref().unwrap_or(""));
+  ///     }
+  ///     Err(e) => eprintln!("What-If check failed: {:?}", e),
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn check_what_if_order(
+    &self,
+    contract: &Contract,
+    request: &OrderRequest,
+    timeout: Duration,
+  ) -> Result<OrderState, IBKRError> {
+    info!("Checking What-If order: {:?} x {:.0} for {}", request.side, request.quantity, contract.symbol);
+
+    if self.message_broker.get_server_version()? < min_server_ver::WHAT_IF_ORDERS {
+      return Err(IBKRError::Unsupported("Server version does not support What-If orders.".to_string()));
+    }
+
+    // Clone the request and set the what_if flag
+    let mut what_if_request = request.clone();
+    what_if_request.what_if = true;
+    // What-if orders must have transmit=true according to some docs, but builder defaults to true.
+    // Let's ensure it here for safety, although the builder should handle it.
+    if !what_if_request.transmit {
+      warn!("What-if order request had transmit=false, forcing to true.");
+      what_if_request.transmit = true;
+    }
+
+
+    // Place the what-if order. This uses the next available order ID.
+    // The order manager will store it temporarily.
+    let order_id = self.place_order(contract.clone(), what_if_request)?;
+    info!("What-If order placed with temporary ID: {}. Waiting for results...", order_id);
+
+    // Wait for the openOrder message containing the margin/commission details.
+    match self._wait_for_what_if_state(&order_id, timeout) {
+      Ok(state) => {
+        info!("Received What-If results for order ID: {}", order_id);
+        // Optionally, clean up the temporary order entry from the book?
+        // TWS doesn't track it permanently, but it might linger locally.
+        // For now, leave it, it will eventually be overwritten or ignored.
+        // self.order_book.write().remove(&order_id);
+        // self.order_update_condvars.write().remove(&order_id);
+        Ok(state)
+      }
+      Err(e) => {
+        error!("Failed to get What-If results for order ID {}: {:?}", order_id, e);
+        // Cleanup might still be relevant on error
+        // self.order_book.write().remove(&order_id);
+        // self.order_update_condvars.write().remove(&order_id);
+        Err(e)
+      }
+    }
+  }
+
 
   /// Refreshes the local order book by requesting all open orders from TWS.
   ///
@@ -649,6 +744,89 @@ impl OrderManager {
 
     info!("Order book refresh completed (received openOrderEnd).");
     Ok(())
+  }
+
+  /// Internal helper specifically for waiting for the `OrderState` fields populated
+  /// by an `openOrder` message in response to a What-If request.
+  ///
+  /// It waits until the state contains margin or commission information, or until
+  /// an error occurs or the timeout elapses.
+  fn _wait_for_what_if_state(&self, order_id: &str, timeout_duration: Duration) -> Result<OrderState, IBKRError> {
+    debug!("Waiting for What-If state for order {} (timeout: {:?})", order_id, timeout_duration);
+
+    // Get or create the condvar pair
+    let condvar_pair = {
+      let condvars_read = self.order_update_condvars.read();
+      if let Some(pair) = condvars_read.get(order_id) {
+        pair.clone()
+      } else {
+        drop(condvars_read);
+        let mut condvars_write = self.order_update_condvars.write();
+        condvars_write.entry(order_id.to_string())
+          .or_insert_with(|| Arc::new((Mutex::new(()), Condvar::new())))
+          .clone()
+      }
+    };
+
+    let (lock, cvar) = &*condvar_pair;
+    let mut guard = lock.lock();
+    let start_time = std::time::Instant::now();
+
+    loop {
+      // --- Check current state ---
+      let current_order_state = {
+        let book = self.order_book.read();
+        book.get(order_id).map(|order_arc| order_arc.read().state.clone()) // Clone the state
+      };
+
+      match current_order_state {
+        None => {
+          // Should not happen if place_order succeeded before calling wait
+          error!("Order {} disappeared while waiting for What-If state", order_id);
+          return Err(IBKRError::InternalError(format!("Order {} lost during What-If wait", order_id)));
+        }
+        Some(state) => {
+          // Check for error first
+          if let Some(err) = &state.error {
+            error!("Order {} (What-If) failed while waiting for state: {:?}", order_id, err);
+            return Err(err.clone());
+          }
+          // Check if the state contains the expected What-If info (margin or commission)
+          // These fields are populated by the openOrder message.
+          if state.initial_margin_after.is_some() || state.maintenance_margin_after.is_some() || state.commission.is_some() {
+            info!("Order {} received What-If state.", order_id);
+            return Ok(state); // Success condition met
+          }
+          // If not yet populated and no error, continue waiting
+          debug!("Order {} What-If state not yet populated, continuing wait...", order_id);
+        }
+      }
+      // --- End Check current state ---
+
+      // --- Wait or Timeout ---
+      let elapsed = start_time.elapsed();
+      if elapsed >= timeout_duration {
+        warn!("Timeout waiting for order {} What-If state", order_id);
+        // Re-check one last time
+        let final_state_after_timeout = {
+          let book = self.order_book.read();
+          book.get(order_id).map(|o| o.read().state.clone())
+        };
+        match final_state_after_timeout {
+          Some(state) if state.error.is_some() => return Err(state.error.unwrap()),
+          Some(state) if state.initial_margin_after.is_some() || state.maintenance_margin_after.is_some() || state.commission.is_some() => return Ok(state),
+          _ => return Err(IBKRError::Timeout(format!("Timeout waiting for order {} What-If state", order_id))),
+        }
+      }
+      let remaining_wait = timeout_duration - elapsed;
+      let result = cvar.wait_for(&mut guard, remaining_wait);
+      if result.timed_out() {
+        debug!("Condvar wait timed out for order {} (What-If), re-checking conditions...", order_id);
+      } else {
+        debug!("Wait for order {} (What-If) notified, re-checking status...", order_id);
+      }
+      // --- End Wait or Timeout ---
+    }
   }
 
 

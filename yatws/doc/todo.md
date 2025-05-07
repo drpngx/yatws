@@ -59,4 +59,4 @@ method returning a subscription).
 19. `reqScannerData`: Performs a blocking market scanner request.
 20. `reqScannerSubscription`: Subscribes to streaming market scanner data.
 21. `cancelScannerSubscription`: Cancels a market scanner subscription.
-22. `whatIfOrder`: Requests TWS to calculate margin and commission impact for a potential order without placing it.
+22. ~~`whatIfOrder`: Requests TWS to calculate margin and commission impact for a potential order without placing it.~~

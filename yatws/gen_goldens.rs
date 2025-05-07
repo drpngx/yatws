@@ -960,6 +960,55 @@ mod test_cases {
     Ok(())
   }
 
+  pub(super) fn order_what_if_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing What-If Order Check ---");
+    let order_mgr = client.orders();
+
+    // Define a potential order (e.g., buy 100 shares of AAPL limit 150)
+    let (contract, order_req) = OrderBuilder::new(OrderSide::Buy, 100.0)
+      .limit(150.00)
+      .for_stock("AAPL")
+      .with_tif(TimeInForce::Day)
+    // .with_account("YOUR_ACCOUNT_ID") // Optional: Specify account if needed
+      .build()?;
+
+    info!("Checking What-If for: {:?} {} {} @ {}",
+          order_req.side, order_req.quantity, contract.symbol,
+          order_req.limit_price.map_or("MKT".to_string(), |p| p.to_string()));
+
+    let timeout = Duration::from_secs(15);
+    match order_mgr.check_what_if_order(&contract, &order_req, timeout) {
+      Ok(state) => {
+        info!("Successfully received What-If results:");
+        info!("  Status (should be PreSubmitted/Submitted): {:?}", state.status);
+        info!("  Initial Margin Before: {:?}", state.initial_margin_before);
+        info!("  Maintenance Margin Before: {:?}", state.maintenance_margin_before);
+        info!("  Equity With Loan Before: {:?}", state.equity_with_loan_before);
+        info!("  Initial Margin Change: {:?}", state.initial_margin_change);
+        info!("  Maintenance Margin Change: {:?}", state.maintenance_margin_change);
+        info!("  Equity With Loan Change: {:?}", state.equity_with_loan_change);
+        info!("  Initial Margin After: {:?}", state.initial_margin_after);
+        info!("  Maintenance Margin After: {:?}", state.maintenance_margin_after);
+        info!("  Equity With Loan After: {:?}", state.equity_with_loan_after);
+        info!("  Commission: {:?} {}", state.commission, state.commission_currency.as_deref().unwrap_or(""));
+        info!("  Min Commission: {:?}", state.min_commission);
+        info!("  Max Commission: {:?}", state.max_commission);
+        info!("  Warning Text: {:?}", state.warning_text);
+
+        // Basic validation: Check if some key fields were populated
+        if state.initial_margin_after.is_none() && state.commission.is_none() {
+          warn!("What-If check returned state, but key fields (margin, commission) are missing.");
+          // Depending on strictness, could return Err here.
+        }
+        Ok(())
+      }
+      Err(e) => {
+        error!("What-If check failed: {:?}", e);
+        Err(e.into())
+      }
+    }
+  }
+
 
   pub(super) fn historical_data_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Get Historical Data ---");
@@ -1435,6 +1484,7 @@ inventory::submit! { TestDefinition { name: "historical-data", func: test_cases:
 inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
 inventory::submit! { TestDefinition { name: "order-global-cancel", func: test_cases::order_global_cancel_impl } }
 inventory::submit! { TestDefinition { name: "order-exercise-option", func: test_cases::order_exercise_option_impl } }
+inventory::submit! { TestDefinition { name: "order-what-if", func: test_cases::order_what_if_impl } }
 inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
 inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
 inventory::submit! { TestDefinition { name: "historical-news", func: test_cases::historical_news_impl } }
