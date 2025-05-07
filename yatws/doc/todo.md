@@ -5,7 +5,7 @@
 4.  `calculate_implied_volatility`: Calculate implied volatility for an option.
 5.  `calculate_option_price`: Calculate option price based on volatility and underlying price.
 6.  `exercise_options`: Exercise an options contract.
-7.  `global_cancel`: Cancel all open orders.
+7.  ~~`global_cancel`: Cancel all open orders.~~
 8.  `head_timestamp`: Request the timestamp of the earliest available historical data for a contract and data type.
 9.  `histogram_data`: Request data histogram for a contract. (Handlers exist, but no public request method).
 10. `historical_schedules`: Request historical schedules for a contract and time interval. (Handlers exist, but no public request
@@ -15,10 +15,10 @@ method).
 13. `historical_ticks_mid_point`: Request historical Midpoint ticks. (Handlers exist, but no public request method).
 14. `historical_ticks_trade`: Request historical Trade ticks. (Handlers exist, but no public request method).
 15. `managed_accounts`: Request the list of accounts managed by the logged-in user. (Handler exists, but no public request method).
-16. `next_order_id`: Public method to get and increment the client's internal order ID sequence. (Internal logic exists, but no
-public method with this specific behavior).
-17. `next_valid_order_id`: Public method to request the next valid order ID from the TWS server. (Initial fetch is handled
-internally, but no public method to re-request).
+16. ~~`next_order_id`: Public method to get and increment the client's internal order ID sequence. (Internal logic exists, but no
+public method with this specific behavior).~~
+17. ~~`next_valid_order_id`: Public method to request the next valid order ID from the TWS server. (Initial fetch is handled
+internally, but no public method to re-request).~~
 18. `open_orders`: Request all open orders placed by this specific API client ID.
 19. `pnl`: Explicit subscription request for real-time daily PnL and unrealized PnL updates. (Data is received via account
 subscription, but no dedicated request method returning a subscription).
@@ -52,7 +52,7 @@ method returning a subscription).
 12. `calculateImpliedVolatility`: Requests TWS to calculate implied volatility for an option.
 13. `calculateOptionPrice`: Requests TWS to calculate the option price based on volatility.
 14. `exerciseOptions`: Requests TWS to exercise or lapse an option.
-15. `reqGlobalCancel`: Requests TWS to cancel all active orders across all clients.
+15. ~~`reqGlobalCancel`: Requests TWS to cancel all active orders across all clients.~~
 16. `requestFA`: Requests Financial Advisor configuration (Groups, Profiles, Aliases).
 17. `replaceFA`: Replaces Financial Advisor configuration.
 18. `reqUserInfo`: Requests the user's white branding ID.

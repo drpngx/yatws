@@ -778,6 +778,92 @@ mod test_cases {
   }
 
 
+  pub(super) fn order_global_cancel_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+    info!("--- Testing Global Order Cancel ---");
+    if is_live {
+      warn!("This test will place two GTC limit orders for SPY and then attempt a global cancel.");
+      warn!("Ensure SPY is liquid and the limit prices are away from the market to prevent immediate fills.");
+      std::thread::sleep(Duration::from_secs(3));
+    }
+
+    let order_mgr = client.orders();
+    let contract = Contract::stock("SPY");
+
+    // Place two GTC limit orders that are unlikely to fill immediately
+    let (spy_contract_ref, order1_req) = OrderBuilder::new(OrderSide::Buy, 1.0)
+      .limit(100.00) // Far from market
+      .with_tif(TimeInForce::GoodTillCancelled)
+      .for_contract(contract.clone()) // Use the cloned contract
+      .build()?;
+    let order1_id = order_mgr.place_order(spy_contract_ref.clone(), order1_req).context("Failed to place order 1")?;
+    info!("Order 1 (BUY SPY @ 100.00 GTC) placed with ID: {}", order1_id);
+
+    let (_spy_contract_ref, order2_req) = OrderBuilder::new(OrderSide::Sell, 1.0)
+      .limit(999.00) // Far from market
+      .with_tif(TimeInForce::GoodTillCancelled)
+      .for_contract(contract.clone()) // Use the cloned contract
+      .build()?;
+    let order2_id = order_mgr.place_order(spy_contract_ref, order2_req).context("Failed to place order 2")?;
+    info!("Order 2 (SELL SPY @ 999.00 GTC) placed with ID: {}", order2_id);
+
+    // Wait for orders to be submitted
+    let submit_timeout = Duration::from_secs(10);
+    info!("Waiting for orders to be submitted (timeout: {:?})...", submit_timeout);
+    match order_mgr.try_wait_order_submitted(&order1_id, submit_timeout) {
+      Ok(status) => info!("Order {} submitted with status: {:?}", order1_id, status),
+      Err(e) => {
+        error!("Error waiting for order {} submission: {:?}", order1_id, e);
+        // Attempt to cancel individually if global cancel might fail or for cleanup
+        let _ = order_mgr.cancel_order(&order1_id);
+        let _ = order_mgr.cancel_order(&order2_id);
+        return Err(e).context(format!("Order {} submission failed", order1_id));
+      }
+    }
+    match order_mgr.try_wait_order_submitted(&order2_id, submit_timeout) {
+      Ok(status) => info!("Order {} submitted with status: {:?}", order2_id, status),
+      Err(e) => {
+        error!("Error waiting for order {} submission: {:?}", order2_id, e);
+        let _ = order_mgr.cancel_order(&order1_id);
+        let _ = order_mgr.cancel_order(&order2_id);
+        return Err(e).context(format!("Order {} submission failed", order2_id));
+      }
+    }
+
+    // Perform global cancel
+    info!("Requesting global cancel...");
+    order_mgr.cancel_all_orders_globally().context("Failed to send global cancel request")?;
+    info!("Global cancel request sent. Waiting for orders to be cancelled...");
+
+    // Wait for orders to be cancelled
+    let cancel_timeout = Duration::from_secs(15);
+    let mut all_cancelled_successfully = true;
+
+    for order_id_str in [&order1_id, &order2_id] {
+      info!("Waiting for order {} to be cancelled (timeout: {:?})...", order_id_str, cancel_timeout);
+      match order_mgr.try_wait_order_canceled(order_id_str, cancel_timeout) {
+        Ok(status) if status == OrderStatus::Cancelled || status == OrderStatus::ApiCancelled => {
+          info!("Order {} successfully cancelled with status: {:?}", order_id_str, status);
+        }
+        Ok(status) => {
+          error!("Order {} reached unexpected status after global cancel: {:?}", order_id_str, status);
+          all_cancelled_successfully = false;
+        }
+        Err(e) => {
+          error!("Error waiting for order {} cancellation: {:?}", order_id_str, e);
+          all_cancelled_successfully = false;
+        }
+      }
+    }
+
+    if all_cancelled_successfully {
+      info!("Global cancel test completed successfully. Both orders cancelled.");
+      Ok(())
+    } else {
+      Err(anyhow!("One or more orders were not successfully cancelled after global cancel request."))
+    }
+  }
+
+
   pub(super) fn historical_data_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
     info!("--- Testing Get Historical Data ---");
     let data_mgr = client.data_market();
@@ -1250,6 +1336,7 @@ inventory::submit! { TestDefinition { name: "tick-by-tick-blocking", func: test_
 inventory::submit! { TestDefinition { name: "market-depth-blocking", func: test_cases::market_depth_blocking_impl } }
 inventory::submit! { TestDefinition { name: "historical-data", func: test_cases::historical_data_impl } }
 inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
+inventory::submit! { TestDefinition { name: "order-global-cancel", func: test_cases::order_global_cancel_impl } }
 inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
 inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
 inventory::submit! { TestDefinition { name: "historical-news", func: test_cases::historical_news_impl } }

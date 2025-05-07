@@ -270,6 +270,14 @@ impl OrderBuilder {
     self
   }
 
+  /// Sets the contract for the order directly.
+  /// This is useful when you already have a fully defined `Contract` object.
+  pub fn for_contract(mut self, contract: Contract) -> Self {
+    self.contract = contract;
+    self.is_combo = self.contract.is_combo();
+    self
+  }
+
   pub fn for_combo(mut self) -> Self {
     self.contract.sec_type = SecType::Combo;
     self.contract.symbol = "".to_string(); // Symbol often derived or not primary ID

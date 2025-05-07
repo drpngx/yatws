@@ -76,6 +76,7 @@ use crate::base::IBKRError;
 use crate::handler::OrderHandler;
 use crate::protocol_encoder::Encoder;
 use crate::protocol_decoder::ClientErrorCode; // Added import
+use crate::min_server_ver::min_server_ver; // Added for REQ_GLOBAL_CANCEL
 // Removed unused import: crate::parser_order;
 
 
@@ -497,6 +498,37 @@ impl OrderManager {
     // We don't update the local OrderRequest immediately. We wait for OrderStatus updates.
     Ok(order_arc)
   }
+
+  /// Sends a global cancel request to TWS.
+  ///
+  /// This request will instruct TWS to cancel all open orders for the current client ID.
+  /// TWS will send `orderStatus` messages for each order that is cancelled as a result.
+  /// The local order book will be updated based on these incoming messages.
+  ///
+  /// This method returns immediately after sending the request and does not wait for
+  /// confirmation of cancellations.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the server version does not support global cancel,
+  /// or if there's an issue encoding or sending the message.
+  pub fn cancel_all_orders_globally(&self) -> Result<(), IBKRError> {
+    info!("Requesting global cancellation of all orders.");
+    if self.message_broker.get_server_version()? < min_server_ver::REQ_GLOBAL_CANCEL {
+      return Err(IBKRError::Unsupported(
+        "Server version does not support global cancel requests.".to_string()
+      ));
+    }
+
+    let encoder = Encoder::new(self.message_broker.get_server_version()?);
+    let global_cancel_msg = encoder.encode_request_global_cancel()?;
+    self.message_broker.send_message(&global_cancel_msg)?;
+
+    info!("Global cancel request sent.");
+    // Note: TWS will send individual orderStatus messages for affected orders.
+    // The local state will be updated by the orderStatus handler.
+    Ok(())
+  }
+
 
   /// Refreshes the local order book by requesting all open orders from TWS.
   ///

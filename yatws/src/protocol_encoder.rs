@@ -1528,6 +1528,19 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
+  pub fn encode_request_global_cancel(&self) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request global cancel message");
+    if self.server_version < min_server_ver::REQ_GLOBAL_CANCEL {
+      return Err(IBKRError::Unsupported(
+        "Server version does not support global cancel requests.".to_string(),
+      ));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqGlobalCancel as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
   pub fn _encode_request_open_orders(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request open orders");
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqOpenOrders as i32)?;
@@ -2321,7 +2334,7 @@ impl Encoder {
   pub fn encode_request_market_data_type(&self, market_data_type: MarketDataType) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request market data type: Type={:?}", market_data_type);
     if self.server_version < min_server_ver::REQ_MARKET_DATA_TYPE {
-        return Err(IBKRError::Unsupported("Server version does not support reqMarketDataType.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support reqMarketDataType.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqMarketDataType as i32)?;
     let version = 1;
