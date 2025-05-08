@@ -1,8 +1,7 @@
 // yatws/src/parser_data_market.rs
 use std::sync::Arc;
-use chrono::{Utc, TimeZone}; // Added TimeZone
+use chrono::{Utc, TimeZone};
 use std::convert::TryFrom;
-use num_traits::FromPrimitive; // Import FromPrimitive
 use crate::handler::MarketDataHandler;
 use crate::base::IBKRError;
 use crate::protocol_dec_parser::FieldParser;
@@ -56,10 +55,10 @@ pub fn process_tick_price(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fie
   let attr_mask = parser.read_int()?; // Read attribute mask
 
   let tick_type = TickType::try_from(tick_type_int)
-      .unwrap_or_else(|_| {
-          log::warn!("Received unknown TickType integer {} in process_tick_price", tick_type_int);
-          TickType::Unknown // Fallback to Unknown
-      });
+    .unwrap_or_else(|_| {
+      log::warn!("Received unknown TickType integer {} in process_tick_price", tick_type_int);
+      TickType::Unknown // Fallback to Unknown
+    });
 
   let attrib = parse_tick_attrib(attr_mask, server_version);
 
@@ -86,10 +85,10 @@ pub fn process_tick_size(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fiel
   let size = parser.read_decimal_max()?.unwrap_or(0.0); // Read as optional decimal
 
   let tick_type = TickType::try_from(tick_type_int)
-      .unwrap_or_else(|_| {
-          log::warn!("Received unknown TickType integer {} in process_tick_size", tick_type_int);
-          TickType::Unknown // Fallback to Unknown
-      });
+    .unwrap_or_else(|_| {
+      log::warn!("Received unknown TickType integer {} in process_tick_size", tick_type_int);
+      TickType::Unknown // Fallback to Unknown
+    });
 
   log::trace!("Tick Size: ID={}, Type={:?}({}), Size={}", ticker_id, tick_type, tick_type_int, size);
   handler.tick_size(ticker_id, tick_type, size);
@@ -195,63 +194,6 @@ pub fn process_market_depth_l2(handler: &Arc<dyn MarketDataHandler>, parser: &mu
   Ok(())
 }
 
-
-/// Process scanner parameters message
-pub fn process_scanner_parameters(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let xml = parser.read_string()?;
-  log::debug!("Scanner Parameters Received ({} bytes)", xml.len());
-  handler.scanner_parameters(&xml);
-  Ok(())
-}
-
-/// Process scanner data message (individual rows)
-pub fn process_scanner_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let version = parser.read_int()?;
-  let req_id = parser.read_int()?; // Ticker ID in Java code, but maps to request ID
-
-  let number_of_elements = parser.read_int()?;
-  log::trace!("Scanner Data: ReqID={}, Elements={}", req_id, number_of_elements);
-
-  // If number_of_elements is -1, it signals the end
-  if number_of_elements == -1 {
-    log::debug!("Scanner Data End: ReqID={}", req_id);
-    handler.scanner_data_end(req_id);
-    return Ok(());
-  }
-
-
-  for _ in 0..number_of_elements {
-    let rank = parser.read_int()?;
-    let mut contract_details = ContractDetails::default(); // Use ContractDetails struct
-
-    if version >= 3 {
-      contract_details.contract.con_id = parser.read_int()?;
-    }
-    contract_details.contract.symbol = parser.read_string()?;
-    contract_details.contract.sec_type = SecType::from_str(&parser.read_string()?).unwrap_or(SecType::Stock);
-    contract_details.contract.last_trade_date_or_contract_month = parser.read_string_opt()?;
-    contract_details.contract.strike = Some(parser.read_double()?);
-    contract_details.contract.right = OptionRight::from_str(&parser.read_string()?).ok();
-    contract_details.contract.exchange = parser.read_string()?;
-    contract_details.contract.currency = parser.read_string()?;
-    contract_details.contract.local_symbol = parser.read_string_opt()?;
-    contract_details.market_name = parser.read_string()?;
-    contract_details.contract.trading_class = parser.read_string_opt()?;
-
-    let distance = parser.read_string()?;
-    let benchmark = parser.read_string()?;
-    let projection = parser.read_string()?;
-    let legs_str = if version >= 2 { parser.read_string_opt()? } else { None };
-
-    log::trace!("--> Scanner Row: Rank={}, ConID={}, Symbol={}, Dist={}, Bench={}, Proj={}",
-                rank, contract_details.contract.con_id, contract_details.contract.symbol, distance, benchmark, projection);
-
-    handler.scanner_data(req_id, rank, &contract_details, &distance, &benchmark, &projection, legs_str.as_deref());
-  }
-  Ok(())
-}
-
 /// Process tick EFP message
 pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int()?;
@@ -266,10 +208,10 @@ pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, parser: &mut Field
   let dividends_to_last_trade_date = parser.read_double()?;
 
   let tick_type = TickType::try_from(tick_type_int)
-      .unwrap_or_else(|_| {
-          log::warn!("Received unknown TickType integer {} in process_tick_efp", tick_type_int);
-          TickType::Unknown // Fallback to Unknown
-      });
+    .unwrap_or_else(|_| {
+      log::warn!("Received unknown TickType integer {} in process_tick_efp", tick_type_int);
+      TickType::Unknown // Fallback to Unknown
+    });
 
   log::trace!("Tick EFP: ID={}, Type={:?}({}), BasisPts={}, FmtBasisPts={}, ImpFutPx={}, HoldDays={}, FutLastTrade={}, DivImpact={}, DivsToDate={}",
               req_id, tick_type, tick_type_int, basis_points, formatted_basis_points, implied_futures_price, hold_days, future_last_trade_date, dividend_impact, dividends_to_last_trade_date);
@@ -364,10 +306,10 @@ pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, par
   let mut und_price = None;
 
   let tick_type = TickType::try_from(tick_type_int)
-      .unwrap_or_else(|_| {
-          log::warn!("Received unknown TickType integer {} in process_tick_option_computation", tick_type_int);
-          TickType::Unknown // Fallback to Unknown
-      });
+    .unwrap_or_else(|_| {
+      log::warn!("Received unknown TickType integer {} in process_tick_option_computation", tick_type_int);
+      TickType::Unknown // Fallback to Unknown
+    });
 
   // Fields introduced in version 6 OR for specific model tick types
   let is_model_tick = matches!(tick_type, TickType::BidOptionComputation | TickType::AskOptionComputation | TickType::LastOptionComputation | TickType::ModelOptionComputation | TickType::CustomOptionComputation | TickType::DelayedBidOption | TickType::DelayedAskOption | TickType::DelayedLastOption | TickType::DelayedModelOption);
@@ -599,10 +541,10 @@ pub fn process_tick_generic(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
   let value = parser.read_double()?;
 
   let tick_type = TickType::try_from(tick_type_int)
-      .unwrap_or_else(|_| {
-          log::warn!("Received unknown TickType integer {} in process_tick_generic", tick_type_int);
-          TickType::Unknown // Fallback to Unknown
-      });
+    .unwrap_or_else(|_| {
+      log::warn!("Received unknown TickType integer {} in process_tick_generic", tick_type_int);
+      TickType::Unknown // Fallback to Unknown
+    });
 
   log::trace!("Tick Generic: ID={}, Type={:?}({}), Value={}", req_id, tick_type, tick_type_int, value);
   handler.tick_generic(req_id, tick_type, value);
@@ -617,12 +559,69 @@ pub fn process_tick_string(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fi
   let value = parser.read_string()?;
 
   let tick_type = TickType::try_from(tick_type_int)
-      .unwrap_or_else(|_| {
-          log::warn!("Received unknown TickType integer {} in process_tick_string", tick_type_int);
-          TickType::Unknown // Fallback to Unknown
-      });
+    .unwrap_or_else(|_| {
+      log::warn!("Received unknown TickType integer {} in process_tick_string", tick_type_int);
+      TickType::Unknown // Fallback to Unknown
+    });
 
   log::trace!("Tick String: ID={}, Type={:?}({}), Value='{}'", req_id, tick_type, tick_type_int, value);
   handler.tick_string(req_id, tick_type, &value);
+  Ok(())
+}
+
+/// Process scanner parameters message (XML string)
+// AI: Process the XML into a rustr struct, for example: <ScannerSubscription instrument="STK" locationCode="STK.US.MAJOR" scanCode="TOP_PERC_GAIN" numberOfRows="50" abovePrice="10" belowPrice="200" aboveVolume="1000000"/>
+pub fn process_scanner_parameters(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
+  let _version = parser.read_int()?; // Version is typically 1
+  let xml_data = parser.read_string()?;
+  log::debug!("Scanner Parameters XML received (length: {})", xml_data.len());
+  handler.scanner_parameters(&xml_data);
+  Ok(())
+}
+
+/// Process scanner data message
+pub fn process_scanner_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(),
+                                                                                                                           IBKRError> {
+  let _version = parser.read_int()?; // Version of the message format
+  let req_id = parser.read_int()?;
+  let num_elements = parser.read_int()?;
+
+  log::debug!("Scanner Data: ReqID={}, NumElements={}", req_id, num_elements);
+
+  for _ in 0..num_elements {
+    let rank = parser.read_int()?;
+    let mut contract_details = ContractDetails::default();
+
+    // Populate Contract part of ContractDetails
+    contract_details.contract.con_id = parser.read_int()?;
+    contract_details.contract.symbol = parser.read_string()?;
+    contract_details.contract.sec_type = SecType::from_str(&parser.read_string()?).map_err(|e| IBKRError::ParseError(e.to_string()))?;
+    contract_details.contract.last_trade_date_or_contract_month = parser.read_string_opt()?;
+    contract_details.contract.strike = parser.read_double_max()?;
+    let opt_right_str = parser.read_string()?;
+    if !opt_right_str.is_empty() {
+      contract_details.contract.right = Some(OptionRight::from_str(&opt_right_str)?);
+    }
+    contract_details.contract.exchange = parser.read_string()?;
+    contract_details.contract.currency = parser.read_string()?;
+    contract_details.contract.local_symbol = parser.read_string_opt()?;
+
+    // Populate ContractDetails specific fields
+    contract_details.market_name = parser.read_string()?;
+    contract_details.contract.trading_class = parser.read_string_opt()?;
+
+    let distance = parser.read_string()?;
+    let benchmark = parser.read_string()?;
+    let projection = parser.read_string()?;
+    let mut legs_str = String::new();
+    if server_version >= min_server_ver::SCANNER_GENERIC_OPTS {
+      legs_str = parser.read_string()?;
+    }
+
+    handler.scanner_data(req_id, rank, &contract_details, &distance, &benchmark, &projection, Some(&legs_str));
+  }
+
+  // After all elements are processed, call scanner_data_end
+  handler.scanner_data_end(req_id);
   Ok(())
 }

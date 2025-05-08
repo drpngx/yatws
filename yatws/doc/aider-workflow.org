@@ -6,6 +6,21 @@ I want to start a client, place a market order for AAPL, and wait until it execu
 
 * TODO
 
+** Finish MarketScanner
+#+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
+/add yatws/gen_goldens.rs
+/add yatws/src/base.rs
+/add yatws/src/contract.rs
+/add yatws/src/data.rs
+/add yatws/src/data_market_manager.rs
+/add yatws/src/handler.rs
+/add yatws/src/message_parser.rs
+/add yatws/src/parser_data_market.rs
+/add yatws/src/protocol_dec_parser.rs
+/add yatws/src/protocol_decoder.rs
+/add yatws/src/protocol_encoder.rs
+#+END_SRC
+
 ** Clean up interface
 #+BEGIN_SRC text :tangle aider_prompt.txt :no-indent
 /add yatws/src/order_manager.rs

@@ -3,7 +3,7 @@
 
 use std::io::Cursor;
 use crate::base::IBKRError;
-use crate::contract::{Contract, SecType, ComboLeg};
+use crate::contract::{Contract, SecType, ComboLeg, ScannerSubscription};
 use crate::order::{OrderRequest, OrderType, OrderCancel};
 use crate::account::ExecutionFilter;
 use crate::data_wsh::WshEventDataRequest;
@@ -97,6 +97,7 @@ pub enum OutgoingMessageType {
   ReqWshEventData = 102,
   CancelWshEventData = 103,
   ReqUserInfo = 104,
+  // Note: ReqScannerParameters = 24 is handled by its own function, not typically identified this way.
 }
 
 /// Identifies an outgoing message type based on its raw byte payload prefix.
@@ -218,6 +219,9 @@ pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
     Ok(OutgoingMessageType::ReqWshEventData) => Some("REQ_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::CancelWshEventData) => Some("CANCEL_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::ReqUserInfo) => Some("REQ_USER_INFO"),
+    Ok(OutgoingMessageType::ReqScannerSubscription) => Some("REQ_SCANNER_SUBSCRIPTION"),
+    Ok(OutgoingMessageType::CancelScannerSubscription) => Some("CANCEL_SCANNER_SUBSCRIPTION"),
+    Ok(OutgoingMessageType::ReqScannerParameters) => Some("REQ_SCANNER_PARAMETERS"),
     Err(_) => None, // Unknown type ID
   }
 }
@@ -308,6 +312,9 @@ impl TryFrom<i32> for OutgoingMessageType {
       x if x == OutgoingMessageType::ReqWshEventData as i32 => Ok(OutgoingMessageType::ReqWshEventData),
       x if x == OutgoingMessageType::CancelWshEventData as i32 => Ok(OutgoingMessageType::CancelWshEventData),
       x if x == OutgoingMessageType::ReqUserInfo as i32 => Ok(OutgoingMessageType::ReqUserInfo),
+      x if x == OutgoingMessageType::ReqScannerSubscription as i32 => Ok(OutgoingMessageType::ReqScannerSubscription),
+      x if x == OutgoingMessageType::CancelScannerSubscription as i32 => Ok(OutgoingMessageType::CancelScannerSubscription),
+      x if x == OutgoingMessageType::ReqScannerParameters as i32 => Ok(OutgoingMessageType::ReqScannerParameters),
       _ => Err(()),
     }
   }
@@ -1791,6 +1798,91 @@ impl Encoder {
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqManagedAccts as i32)?;
     let version = 1;
     self.write_int_to_cursor(&mut cursor, version)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for scanner parameters.
+  pub fn encode_request_scanner_parameters(&self) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request scanner parameters");
+    if self.server_version < min_server_ver::SERVER_VERSION_SCANNER_PARAMETERS {
+      return Err(IBKRError::Unsupported("Server version does not support scanner parameters request.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqScannerParameters as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for a scanner subscription.
+  pub fn encode_request_scanner_subscription(
+    &self,
+    req_id: i32,
+    subscription: &ScannerSubscription,
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request scanner subscription: ReqID={}, Subscription={:?}", req_id, subscription);
+
+    if self.server_version < min_server_ver::SERVER_VERSION_SCANNER_SUBSCRIPTION {
+      return Err(IBKRError::Unsupported("Server version does not support scanner subscriptions.".to_string()));
+    }
+    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && subscription.average_option_volume_above.is_some() {
+      return Err(IBKRError::Unsupported("Server version does not support averageOptionVolumeAbove in scanner
+subscription.".to_string()));
+    }
+    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && subscription.scanner_setting_pairs.is_some() {
+      return Err(IBKRError::Unsupported("Server version does not support scannerSettingPairs in scanner
+subscription.".to_string()));
+    }
+    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && subscription.stock_type_filter.is_some() {
+      return Err(IBKRError::Unsupported("Server version does not support stockTypeFilter in scanner subscription.".to_string()));
+    }
+
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqScannerSubscription as i32)?;
+    let version = 4; // Current version for this message
+    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS {
+      self.write_int_to_cursor(&mut cursor, version)?;
+    }
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // Subscription fields
+    self.write_optional_int_to_cursor(&mut cursor, Some(subscription.number_of_rows).filter(|&n| n != i32::MAX))?;
+    self.write_str_to_cursor(&mut cursor, &subscription.instrument)?;
+    self.write_str_to_cursor(&mut cursor, &subscription.location_code)?;
+    self.write_str_to_cursor(&mut cursor, &subscription.scan_code)?;
+    self.write_optional_double_to_cursor(&mut cursor, subscription.above_price)?;
+    self.write_optional_double_to_cursor(&mut cursor, subscription.below_price)?;
+    self.write_optional_int_to_cursor(&mut cursor, subscription.above_volume)?;
+    self.write_optional_double_to_cursor(&mut cursor, subscription.market_cap_above)?;
+    self.write_optional_double_to_cursor(&mut cursor, subscription.market_cap_below)?;
+    self.write_optional_str_to_cursor(&mut cursor, subscription.moody_rating_above.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, subscription.moody_rating_below.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, subscription.sp_rating_above.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, subscription.sp_rating_below.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, subscription.maturity_date_above.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, subscription.maturity_date_below.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, subscription.coupon_rate_above)?;
+    self.write_optional_double_to_cursor(&mut cursor, subscription.coupon_rate_below)?;
+    self.write_optional_str_to_cursor(&mut cursor, Some(if subscription.exclude_convertible { "1" } else { "0" }))?;
+
+    if self.server_version >= min_server_ver::SCANNER_GENERIC_OPTS {
+      self.write_optional_int_to_cursor(&mut cursor, subscription.average_option_volume_above)?;
+      self.write_optional_str_to_cursor(&mut cursor, subscription.scanner_setting_pairs.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, subscription.stock_type_filter.as_deref())?;
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel a scanner subscription.
+  pub fn encode_cancel_scanner_subscription(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel scanner subscription: ReqID={}", req_id);
+    if self.server_version < min_server_ver::SERVER_VERSION_SCANNER_SUBSCRIPTION { // Same min version as req
+      return Err(IBKRError::Unsupported("Server version does not support scanner subscription cancellation.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelScannerSubscription as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
     Ok(self.finish_encoding(cursor))
   }
 

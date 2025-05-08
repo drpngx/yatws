@@ -1,5 +1,5 @@
 use crate::base::IBKRError;
-use crate::contract::{Contract, Bar};
+use crate::contract::{Contract, Bar, ScannerSubscription, ScanData};
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use num_enum::TryFromPrimitive;
@@ -322,6 +322,18 @@ pub struct TickByTickSubscription {
   pub latest_tick: Option<TickByTickData>,
   pub ticks: Vec<TickByTickData>, // History for blocking requests
   pub completed: bool, // Flag for completion
+  pub error_code: Option<i32>,
+  pub error_message: Option<String>,
+}
+
+/// State for a market scanner subscription.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct ScannerSubscriptionState {
+  pub req_id: i32,
+  pub subscription: ScannerSubscription,
+  pub results: Vec<ScanData>,
+  pub completed: bool,
   pub error_code: Option<i32>,
   pub error_message: Option<String>,
 }

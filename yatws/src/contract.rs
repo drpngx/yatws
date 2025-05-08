@@ -65,6 +65,43 @@ impl fmt::Display for SecType {
   }
 }
 
+/// Defines the parameters for a market scanner subscription.
+#[derive(Debug, Clone, Default)]
+pub struct ScannerSubscription {
+  pub number_of_rows: i32,
+  pub instrument: String,
+  pub location_code: String,
+  pub scan_code: String,
+  pub above_price: Option<f64>,
+  pub below_price: Option<f64>,
+  pub above_volume: Option<i32>,
+  pub market_cap_above: Option<f64>,
+  pub market_cap_below: Option<f64>,
+  pub moody_rating_above: Option<String>,
+  pub moody_rating_below: Option<String>,
+  pub sp_rating_above: Option<String>,
+  pub sp_rating_below: Option<String>,
+  pub maturity_date_above: Option<String>, // Format: YYYYMMDD
+  pub maturity_date_below: Option<String>, // Format: YYYYMMDD
+  pub coupon_rate_above: Option<f64>,
+  pub coupon_rate_below: Option<f64>,
+  pub exclude_convertible: bool,
+  pub average_option_volume_above: Option<i32>,
+  pub scanner_setting_pairs: Option<String>, // e.g., "Annual,true"
+  pub stock_type_filter: Option<String>,     // e.g., "ALL", "CORP", "ADR"
+}
+
+/// Represents a single item returned from a market scanner.
+#[derive(Debug, Clone)]
+pub struct ScanData {
+  pub rank: i32,
+  pub contract_details: ContractDetails,
+  pub distance: String,
+  pub benchmark: String,
+  pub projection: String,
+  pub legs_str: String,
+}
+
 impl std::str::FromStr for SecType {
   type Err = String;
 
@@ -539,8 +576,8 @@ pub struct ContractDetails {
 /// Represents a reason why a contract might be ineligible for certain actions.
 #[derive(Debug, Clone, Default)]
 pub struct IneligibilityReason {
-    pub id: String,
-    pub description: String,
+  pub id: String,
+  pub description: String,
 }
 
 /// Bond-specific details

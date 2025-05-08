@@ -70,12 +70,12 @@
 
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
-use crate::contract::{Bar, Contract, ContractDetails};
+use crate::contract::{Bar, Contract, ContractDetails, ScanData, ScannerSubscription}; // Added ScanData, ScannerSubscription
 use crate::data::{
   MarketDataSubscription, MarketDataType, MarketDepthRow, MarketDepthSubscription,
   RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData,
-  TickByTickSubscription, TickNewsData, TickOptionComputationData, TickType, // Added TickType
-  HistoricalDataRequestState,
+  TickByTickSubscription, TickOptionComputationData, TickType, // Removed TickNewsData
+  HistoricalDataRequestState, ScannerSubscriptionState, // Added ScannerSubscriptionState
 };
 use crate::handler::MarketDataHandler;
 use crate::protocol_encoder::Encoder;
@@ -149,6 +149,16 @@ impl CompletableState for MarketDepthSubscription {
 }
 // Note: HistoricalDataRequestState uses a different wait mechanism, so doesn't need this trait currently.
 
+impl CompletableState for ScannerSubscriptionState {
+  fn is_completed(&self) -> bool { self.completed }
+  fn mark_completed(&mut self) { self.completed = true; }
+  fn get_error(&self) -> Option<IBKRError> {
+    match (self.error_code, self.error_message.as_ref()) {
+      (Some(code), Some(msg)) => Some(IBKRError::ApiError(code, msg.clone())),
+      _ => None,
+    }
+  }
+}
 
 // --- Helper Trait for Downcasting MarketSubscription Enum ---
 
@@ -181,8 +191,12 @@ impl TryIntoStateHelper<MarketDepthSubscription> for MarketSubscription {
     match self { MarketSubscription::MarketDepth(s) => Some(s), _ => None }
   }
 }
+impl TryIntoStateHelper<ScannerSubscriptionState> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut ScannerSubscriptionState> {
+    match self { MarketSubscription::Scanner(s) => Some(s), _ => None }
+  }
+}
 // Add others if needed
-
 
 // Helper methods on the enum to simplify access in the generic wait function
 impl MarketSubscription {
@@ -209,7 +223,8 @@ enum MarketSubscription {
   TickByTick(TickByTickSubscription),
   MarketDepth(MarketDepthSubscription),
   HistoricalData(HistoricalDataRequestState),
-  // Add Scanner, Histogram etc. if needed
+  Scanner(ScannerSubscriptionState), // Added Scanner variant
+  // Add Histogram etc. if needed
 }
 
 /// Manages requests for real-time and historical market data from TWS.
@@ -275,7 +290,7 @@ impl DataMarketManager {
     timeout: Duration,
   ) -> Result<(), IBKRError> {
     if desired_type == MarketDataType::Unknown {
-        return Err(IBKRError::ConfigurationError("Cannot request Unknown market data type".to_string()));
+      return Err(IBKRError::ConfigurationError("Cannot request Unknown market data type".to_string()));
     }
 
     let start_time = std::time::Instant::now();
@@ -289,10 +304,10 @@ impl DataMarketManager {
     info!("Current market data type is {:?}, requesting change to {:?}", *current_type_guard, desired_type);
     let server_version = self.message_broker.get_server_version()?;
     if server_version < crate::min_server_ver::min_server_ver::REQ_MARKET_DATA_TYPE {
-        return Err(IBKRError::Unsupported(format!(
-            "Server version {} does not support changing market data type (requires {}).",
-            server_version, crate::min_server_ver::min_server_ver::REQ_MARKET_DATA_TYPE
-        )));
+      return Err(IBKRError::Unsupported(format!(
+        "Server version {} does not support changing market data type (requires {}).",
+        server_version, crate::min_server_ver::min_server_ver::REQ_MARKET_DATA_TYPE
+      )));
     }
 
     let encoder = Encoder::new(server_version);
@@ -301,38 +316,38 @@ impl DataMarketManager {
 
     return Ok(());
     // Wait for the handler to update the type
-    loop {
-      if *current_type_guard == desired_type {
-        info!("Market data type successfully changed to {:?}", desired_type);
-        return Ok(());
-      }
+    // loop {
+    //   if *current_type_guard == desired_type {
+    //     info!("Market data type successfully changed to {:?}", desired_type);
+    //     return Ok(());
+    //   }
 
-      let elapsed = start_time.elapsed();
-      if elapsed >= timeout {
-        warn!("Timeout waiting for market data type change to {:?}. Current type is {:?}.", desired_type, *current_type_guard);
-        return Err(Timeout(format!(
-            "Timed out waiting for market data type change to {:?} after {:?}", desired_type, timeout
-        )));
-      }
-      let remaining_timeout = timeout - elapsed;
+    //   let elapsed = start_time.elapsed();
+    //   if elapsed >= timeout {
+    //     warn!("Timeout waiting for market data type change to {:?}. Current type is {:?}.", desired_type, *current_type_guard);
+    //     return Err(Timeout(format!(
+    //         "Timed out waiting for market data type change to {:?} after {:?}", desired_type, timeout
+    //     )));
+    //   }
+    //   let remaining_timeout = timeout - elapsed;
 
-      trace!("Waiting for market data type change confirmation (remaining: {:?})...", remaining_timeout);
-      let wait_result = self.market_data_type_cond.wait_for(&mut current_type_guard, remaining_timeout);
+    //   trace!("Waiting for market data type change confirmation (remaining: {:?})...", remaining_timeout);
+    //   let wait_result = self.market_data_type_cond.wait_for(&mut current_type_guard, remaining_timeout);
 
-      if wait_result.timed_out() {
-        // Re-check after timeout just in case the notification happened right before timeout
-        if *current_type_guard == desired_type {
-          info!("Market data type successfully changed to {:?} just before timeout.", desired_type);
-          return Ok(());
-        } else {
-          warn!("Timeout waiting for market data type change to {:?}. Current type is {:?}.", desired_type, *current_type_guard);
-          return Err(Timeout(format!(
-              "Timed out waiting for market data type change to {:?} after wait", desired_type
-          )));
-        }
-      }
-      // If not timed out, loop continues to check the condition
-    }
+    //   if wait_result.timed_out() {
+    //     // Re-check after timeout just in case the notification happened right before timeout
+    //     if *current_type_guard == desired_type {
+    //       info!("Market data type successfully changed to {:?} just before timeout.", desired_type);
+    //       return Ok(());
+    //     } else {
+    //       warn!("Timeout waiting for market data type change to {:?}. Current type is {:?}.", desired_type, *current_type_guard);
+    //       return Err(Timeout(format!(
+    //           "Timed out waiting for market data type change to {:?} after wait", desired_type
+    //       )));
+    //     }
+    //   }
+    //   // If not timed out, loop continues to check the condition
+    // }
   }
 
   // --- Helper to wait for completion (mainly for historical data) ---
@@ -1135,10 +1150,10 @@ impl DataMarketManager {
   /// # }
   /// ```
   pub fn get_quote(
-      &self,
-      contract: &Contract,
-      market_data_type: Option<MarketDataType>, // Added parameter
-      timeout: Duration
+    &self,
+    contract: &Contract,
+    market_data_type: Option<MarketDataType>, // Added parameter
+    timeout: Duration
   ) -> Result<Quote, IBKRError> {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
     info!("Requesting quote snapshot for: Contract={}, Type={:?}", contract.symbol, desired_mkt_data_type);
@@ -1874,39 +1889,42 @@ impl DataMarketManager {
       // Convert code to i32 for storage
       let error_code_int = code as i32;
 
-      // Extract error fields
-      let (err_code_field, err_msg_field) = match sub_state {
-        MarketSubscription::TickData(s) => (&mut s.error_code, &mut s.error_message),
-        MarketSubscription::RealTimeBars(s) => (&mut s.error_code, &mut s.error_message),
-        MarketSubscription::TickByTick(s) => (&mut s.error_code, &mut s.error_message),
-        MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message),
-        MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message),
+      // Determine if the request is blocking *before* taking mutable borrows
+      let is_blocking = match sub_state {
+        MarketSubscription::TickData(s) => s.is_blocking_quote_request || s.completed,
+        MarketSubscription::RealTimeBars(s) => s.target_bar_count.is_some() || s.completed,
+        MarketSubscription::TickByTick(s) => s.completed,
+        MarketSubscription::MarketDepth(s) => s.completed,
+        MarketSubscription::HistoricalData(_) => true, // Historical is always blocking in this context
+        MarketSubscription::Scanner(s) => s.completed, // Scanner blocking depends on its completed state
+      };
+
+      // Extract error fields and completion flag (now safe)
+      let (err_code_field, err_msg_field, completion_flag_field) = match sub_state {
+        MarketSubscription::TickData(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
+        MarketSubscription::RealTimeBars(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
+        MarketSubscription::TickByTick(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
+        MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
+        MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, &mut s.end_received),
+        MarketSubscription::Scanner(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
       };
 
       *err_code_field = Some(error_code_int); // Store the integer code
       *err_msg_field = Some(msg.to_string()); // Store the cloned message string
 
-      // Determine if it's any kind of blocking request (historical, quote, or flexible closure-based)
-      let is_blocking = match sub_state {
-        MarketSubscription::HistoricalData(_) => true, // Always blocking
-        MarketSubscription::TickData(s) => s.is_blocking_quote_request || s.completed, // Quote or flexible
-        MarketSubscription::RealTimeBars(s) => s.target_bar_count.is_some() || s.completed, // Fixed count or flexible
-        MarketSubscription::TickByTick(s) => s.completed, // Flexible only
-        MarketSubscription::MarketDepth(s) => s.completed, // Flexible only
-      };
-
-
+      // is blocking: (historical, quote, or flexible closure-based)
       // If it's a blocking request, mark end and notify waiter
       if is_blocking {
-        match sub_state {
-          MarketSubscription::HistoricalData(s) => { s.end_received = true; },
-          MarketSubscription::TickData(s) => { s.completed = true; s.quote_received = true; }, // Mark both flags
-          MarketSubscription::RealTimeBars(s) => { s.completed = true; },
-          MarketSubscription::TickByTick(s) => { s.completed = true; },
-          MarketSubscription::MarketDepth(s) => { s.completed = true; },
+        // Use the completion flag variable we extracted earlier
+        *completion_flag_field = true; // This line caused E0425, now fixed by the previous block
+        // Special handling for TickData quote requests
+        if let MarketSubscription::TickData(s) = sub_state {
+          if s.is_blocking_quote_request {
+            s.quote_received = true; // Mark quote flag too
+          }
         }
         debug!("Error received for blocking request {}, marking complete and notifying waiter.", req_id);
-        self.request_cond.notify_all();
+        self.request_cond.notify_all(); // Notify waiter immediately
       }
       // For non-blocking streaming requests, the error is just stored.
     } else {
@@ -1919,8 +1937,122 @@ impl DataMarketManager {
   // pub fn add_observer(&self, observer: Weak<dyn MarketDataObserver>) { ... }
   // pub fn remove_observer(&self, observer: Weak<dyn MarketDataObserver>) { ... }
   // fn notify_observers(&self, req_id: i32) { ... }
-}
 
+  // --- Scanner Methods ---
+
+  /// Requests a market scanner subscription. This is a non-blocking call.
+  ///
+  /// Scan results are delivered via the `scanner_data` method of the `MarketDataHandler` trait,
+  /// followed by `scanner_data_end` when the initial list is complete.
+  ///
+  /// # Arguments
+  /// * `subscription` - A [`ScannerSubscription`] struct defining the scan parameters.
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this scanner request.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded or sent.
+  pub fn request_scanner_subscription(
+    &self,
+    subscription: &ScannerSubscription,
+  ) -> Result<i32, IBKRError> {
+    info!("Requesting scanner subscription: ScanCode={}, Instrument={}, Location={}",
+          subscription.scan_code, subscription.instrument, subscription.location_code);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_scanner_subscription(req_id, subscription)?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
+      let state = ScannerSubscriptionState {
+        req_id,
+        subscription: subscription.clone(),
+        results: Vec::new(),
+        completed: false,
+        error_code: None,
+        error_message: None,
+      };
+      subs.insert(req_id, MarketSubscription::Scanner(state));
+      debug!("Scanner subscription added for ReqID: {}", req_id);
+    }
+
+    self.message_broker.send_message(&request_msg)?;
+    Ok(req_id)
+  }
+
+  /// Requests market scanner results and blocks until the results are received,
+  /// an error occurs, or the timeout is reached.
+  ///
+  /// # Arguments
+  /// * `subscription` - A [`ScannerSubscription`] struct defining the scan parameters.
+  /// * `timeout` - Maximum duration to wait for the scan results.
+  ///
+  /// # Returns
+  /// A `Vec<ScanData>` containing the results of the market scan.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the results are not received within the timeout.
+  /// Returns other `IBKRError` variants for communication or encoding issues.
+  pub fn get_scanner_results(
+    &self,
+    subscription: &ScannerSubscription,
+    timeout: Duration,
+  ) -> Result<Vec<ScanData>, IBKRError> {
+    info!("Requesting blocking scanner results: ScanCode={}, Timeout={:?}",
+          subscription.scan_code, timeout);
+
+    // 1. Initiate the non-blocking request
+    let req_id = self.request_scanner_subscription(subscription)?;
+    debug!("Blocking scanner request initiated with ReqID: {}", req_id);
+
+    // 2. Wait for completion (signaled by scanner_data_end)
+    let result_state = self.wait_for_completion(
+      req_id,
+      timeout,
+      |state: &ScannerSubscriptionState| state.completed, // Completion check
+      "Scanner",
+    );
+
+    // 3. Best effort cancel (scanner subscriptions are often one-shot, but cancel anyway)
+    if let Err(e) = self.cancel_scanner_subscription(req_id) {
+      warn!("Failed to cancel scanner request {} after blocking wait: {:?}", req_id, e);
+    }
+
+    // 4. Extract results from the final state
+    result_state.map(|state| state.results)
+  }
+
+  /// Cancels an active market scanner subscription.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID obtained from `request_scanner_subscription()` or `get_scanner_results()`.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the cancellation message cannot be encoded or sent.
+  pub fn cancel_scanner_subscription(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling scanner subscription: ReqID={}", req_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_scanner_subscription(req_id)?;
+
+    self.message_broker.send_message(&request_msg)?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed scanner subscription state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel scanner for unknown or already removed ReqID: {}", req_id);
+      }
+    }
+    Ok(())
+  }
+
+}
 
 // --- Implement MarketDataHandler Trait for DataMarketManager ---
 impl MarketDataHandler for DataMarketManager {
@@ -2027,14 +2159,14 @@ impl MarketDataHandler for DataMarketManager {
         TickType::RtTradeVolume => { /* Parse RTTradeVolume string */ },
         TickType::IbDividends => { /* Parse dividend string: past12m,next12m,nextDate,nextAmt */ },
         TickType::News => { /* Parse news string: time;provider;articleId;headline;extraData */
-            // Example parsing (adjust based on actual format)
-            let parts: Vec<&str> = value.split(';').collect();
-            if parts.len() >= 4 {
-                if let Ok(ts) = parts[0].parse::<i64>() {
-                    state.latest_news_time = Some(ts);
-                    // Could store full TickNewsData if needed
-                }
-            }
+                               // Example parsing (adjust based on actual format)
+                               let parts: Vec<&str> = value.split(';').collect();
+                               if parts.len() >= 4 {
+                                 if let Ok(ts) = parts[0].parse::<i64>() {
+                                   state.latest_news_time = Some(ts);
+                                   // Could store full TickNewsData if needed
+                                 }
+                               }
         },
         TickType::BidExchange | TickType::AskExchange | TickType::LastExchange => state.last_exchange = Some(value.to_string()),
         _ => trace!("Unhandled string tick_type {:?} in tick_string", tick_type),
@@ -2113,15 +2245,15 @@ impl MarketDataHandler for DataMarketManager {
 
     // Update the manager's current market data type state
     {
-        let mut current_type_guard = self.current_market_data_type.lock();
-        if *current_type_guard != market_data_type {
-            info!("Updating connection market data type from {:?} to {:?}", *current_type_guard, market_data_type);
-            *current_type_guard = market_data_type;
-            // Notify any threads waiting for this specific type change
-            self.market_data_type_cond.notify_all();
-        } else {
-            trace!("Received market data type confirmation for current type: {:?}", market_data_type);
-        }
+      let mut current_type_guard = self.current_market_data_type.lock();
+      if *current_type_guard != market_data_type {
+        info!("Updating connection market data type from {:?} to {:?}", *current_type_guard, market_data_type);
+        *current_type_guard = market_data_type;
+        // Notify any threads waiting for this specific type change
+        self.market_data_type_cond.notify_all();
+      } else {
+        trace!("Received market data type confirmation for current type: {:?}", market_data_type);
+      }
     }
 
     // We don't need to update individual subscription states here, as they
@@ -2411,18 +2543,41 @@ impl MarketDataHandler for DataMarketManager {
 
   fn scanner_parameters(&self, xml: &str) {
     debug!("Handler: Scanner Parameters received ({} bytes)", xml.len());
-    // Usually handled by a one-off request, not stored in subscription state.
+    // This is usually received in response to reqScannerParameters.
+    // For now, we just log it. A dedicated request/response mechanism could be added.
+    // If needed, parse the XML here and store/process it.
   }
 
-  fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, _distance: &str,
-                  _benchmark: &str, _projection: &str, _legs_str: Option<&str>) {
+  fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, distance: &str,
+                  benchmark: &str, projection: &str, legs_str: Option<&str>) {
     trace!("Handler: Scanner Data Row: ID={}, Rank={}, Symbol={}", req_id, rank, contract_details.contract.symbol);
-    // Needs state management if scanner results are tracked.
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::Scanner(state)) = subs.get_mut(&req_id) {
+      let scan_data = ScanData {
+        rank,
+        contract_details: contract_details.clone(),
+        distance: distance.to_string(),
+        benchmark: benchmark.to_string(),
+        projection: projection.to_string(),
+        legs_str: legs_str.unwrap_or("").to_string(),
+      };
+      state.results.push(scan_data);
+      // Don't notify here, wait for scanner_data_end
+    } else {
+      // warn!("Received scanner_data for unknown or non-scanner subscription ID: {}", req_id);
+    }
   }
 
   fn scanner_data_end(&self, req_id: i32) {
     debug!("Handler: Scanner Data End: ID={}", req_id);
-    // Signal completion if scanner request state is managed.
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::Scanner(state)) = subs.get_mut(&req_id) {
+      state.completed = true;
+      info!("Scanner data end received for request {}. Notifying waiter.", req_id);
+      self.request_cond.notify_all(); // Signal waiting thread (for get_scanner_results)
+    } else {
+      // warn!("Received scanner_data_end for unknown or non-scanner subscription ID: {}", req_id);
+    }
   }
 
   /// Handles errors related to market data requests.

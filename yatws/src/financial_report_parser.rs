@@ -1,12 +1,12 @@
 use crate::base::IBKRError;
 use crate::data::{
-  CompanyInformation, FinancialStatement, FinancialStatementType, FundamentalReportType,
-  ParsedFundamentalData, PeriodType, Ratio, ReportSnapshot, ReportsFinSummary,
+  CompanyInformation, FundamentalReportType, // Removed FinancialStatement, FinancialStatementType
+  ParsedFundamentalData, Ratio, ReportSnapshot, ReportsFinSummary, // Removed PeriodType
 };
 use chrono::NaiveDate;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
-use std::collections::HashMap;
+// Removed unused HashMap import
 use std::str;
 
 // Helper to extract attribute value
@@ -1078,7 +1078,7 @@ mod tests {
 
   #[test]
   fn test_parse_simple_finsummary() {
-    let xml = r#"
+    let _fin_statement_xml = r#"
 <ReportFinancialStatements>
     <Issue>
         <CoIDs>

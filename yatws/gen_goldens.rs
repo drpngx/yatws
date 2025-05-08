@@ -1465,6 +1465,71 @@ mod test_cases {
     }
   }
 
+
+  pub(super) fn scanner_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Market Scanner (Blocking) ---");
+    let data_mgr = client.data_market();
+
+    // Define the scanner subscription parameters
+    let subscription = yatws::contract::ScannerSubscription {
+      number_of_rows: 10, // Request top 10 results
+      instrument: "STK".to_string(),
+      location_code: "STK.US.MAJOR".to_string(), // Major US exchanges
+      scan_code: "TOP_PERC_GAIN".to_string(), // Top % gainers
+      above_price: Some(1.0), // Price above $1
+      below_price: None,
+      above_volume: Some(10000), // Volume above 10k
+      market_cap_above: None,
+      market_cap_below: None,
+      moody_rating_above: None,
+      moody_rating_below: None,
+      sp_rating_above: None,
+      sp_rating_below: None,
+      maturity_date_above: None,
+      maturity_date_below: None,
+      coupon_rate_above: None,
+      coupon_rate_below: None,
+      exclude_convertible: false,
+      average_option_volume_above: None,
+      scanner_setting_pairs: None,
+      stock_type_filter: Some("ALL".to_string()), // All stock types (Common, ADR, etc.)
+    };
+
+    let timeout = Duration::from_secs(30); // Timeout for the scan
+
+    info!("Requesting scanner results: {:?}", subscription.scan_code);
+
+    match data_mgr.get_scanner_results(&subscription, timeout) {
+      Ok(results) => {
+        info!("Successfully received {} scanner results.", results.len());
+        if results.is_empty() {
+          warn!("Received 0 scanner results. This might be okay depending on market conditions/scan parameters.");
+        }
+        for item in results.iter().take(5) { // Log first 5 or fewer
+          info!(
+            "  Rank: {}, Symbol: {}, MarketName: {}, Distance: {}, Benchmark: {}",
+            item.rank,
+            item.contract_details.contract.symbol,
+            item.contract_details.market_name,
+            item.distance,
+            item.benchmark
+          );
+        }
+        Ok(())
+      }
+      Err(IBKRError::ApiError(code, msg)) if msg.contains("scanner subscription") || msg.contains("market data subscription") => {
+        warn!("Scanner API error (likely subscription issue): code={}, msg='{}'", code, msg);
+        warn!("This test may pass with a warning if data isn't available due to account/market data status.");
+        Ok(()) // Treat as a pass with warning for common subscription issues
+      }
+      Err(e) => {
+        error!("Failed to get scanner results: {:?}", e);
+        Err(e.into())
+      }
+    }
+  }
+
+
 } // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
@@ -1488,6 +1553,7 @@ inventory::submit! { TestDefinition { name: "order-what-if", func: test_cases::o
 inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
 inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
 inventory::submit! { TestDefinition { name: "historical-news", func: test_cases::historical_news_impl } }
+inventory::submit! { TestDefinition { name: "scanner", func: test_cases::scanner_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 
