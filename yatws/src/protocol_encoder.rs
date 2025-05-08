@@ -3,6 +3,7 @@
 
 use std::io::Cursor;
 use crate::base::IBKRError;
+use crate::message_parser::msg_to_string;
 use crate::contract::{Contract, SecType, ComboLeg, ScannerSubscription};
 use crate::order::{OrderRequest, OrderType, OrderCancel};
 use crate::account::ExecutionFilter;
@@ -340,7 +341,9 @@ impl Encoder {
   }
 
   fn finish_encoding(&self, cursor: Cursor<Vec<u8>>) -> Vec<u8> {
-    cursor.into_inner()
+    let ret = cursor.into_inner();
+    log::debug!("Request: {}", msg_to_string(&ret));
+    ret
   }
 
   fn is_empty(s: Option<&str>) -> bool {
@@ -1865,6 +1868,11 @@ subscription.".to_string()));
       self.write_optional_int_to_cursor(&mut cursor, subscription.average_option_volume_above)?;
       self.write_optional_str_to_cursor(&mut cursor, subscription.scanner_setting_pairs.as_deref())?;
       self.write_optional_str_to_cursor(&mut cursor, subscription.stock_type_filter.as_deref())?;
+    }
+    if self.server_version >= min_server_ver::LINKING {
+      // TODO: implement subscription_options.
+      self.write_str_to_cursor(&mut cursor, "");
+      self.write_str_to_cursor(&mut cursor, "");
     }
 
     Ok(self.finish_encoding(cursor))

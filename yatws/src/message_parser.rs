@@ -14,7 +14,7 @@ use crate::parser_data_market::*;
 use crate::parser_data_fin::*;
 use crate::parser_data_news::*;
 
-fn msg_to_string(data: &[u8]) -> String {
+pub(crate) fn msg_to_string(data: &[u8]) -> String {
   match std::str::from_utf8(data) {
     Ok(s) => s.replace('\0', "·"),
     Err(_) => "Non-UTF8/Binary Data".to_string(),

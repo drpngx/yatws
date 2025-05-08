@@ -28,6 +28,7 @@ rust_library(
         "src/parser_data_market.rs",
         "src/parser_data_fin.rs",
         "src/parser_data_news.rs",
+        "src/scan_parameters.rs",
         "src/min_server_ver.rs",
         "src/conn.rs",
         "src/conn_log.rs",

@@ -71,6 +71,7 @@
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
 use crate::contract::{Bar, Contract, ContractDetails, ScanData, ScannerSubscription}; // Added ScanData, ScannerSubscription
+use crate::scan_parameters::ScanParameterResponse;
 use crate::data::{
   MarketDataSubscription, MarketDataType, MarketDepthRow, MarketDepthSubscription,
   RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData,
@@ -86,7 +87,7 @@ use chrono::{Utc, TimeZone};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use log::{debug, info, trace, warn}; // Removed unused 'error'
+use log::{debug, info, trace, error, warn};
 
 
 // --- Helper Trait for Generic Waiting ---
@@ -1909,6 +1910,11 @@ impl DataMarketManager {
 
   // --- Scanner Methods ---
 
+  fn parse_scan_parameters_xml(xml: &str) -> Result<ScanParameterResponse, IBKRError> {
+    // from_str does not track line/col.
+    quick_xml::de::from_str(xml).map_err(|e| IBKRError::ParseError(e.to_string()))
+  }
+
   /// Requests the XML document containing valid scanner parameters. This is a blocking call.
   ///
   /// The TWS API provides scanner parameters as a single XML string in response to this request.
@@ -1923,7 +1929,7 @@ impl DataMarketManager {
   /// # Errors
   /// Returns `IBKRError::Timeout` if the XML is not received within the timeout.
   /// Returns other `IBKRError` variants for communication or encoding issues.
-  pub fn get_scanner_parameters(&self, timeout: Duration) -> Result<String, IBKRError> {
+  pub fn get_scanner_parameters(&self, timeout: Duration) -> Result<ScanParameterResponse, IBKRError> {
     info!("Requesting scanner parameters XML...");
 
     let server_version = self.message_broker.get_server_version()?;
@@ -1934,7 +1940,7 @@ impl DataMarketManager {
     let mut params_guard = self.scanner_parameters_xml.lock();
     if let Some(xml) = params_guard.as_ref() {
       info!("Scanner parameters already available, returning cached XML.");
-      return Ok(xml.clone());
+      return Self::parse_scan_parameters_xml(xml);
     }
 
     // Parameters not cached, send request and wait
@@ -1945,7 +1951,7 @@ impl DataMarketManager {
     loop {
       // Check if parameters arrived *before* waiting
       if let Some(xml) = params_guard.as_ref() {
-        return Ok(xml.clone());
+        return Self::parse_scan_parameters_xml(xml);
       }
 
       // Calculate remaining timeout
@@ -1961,7 +1967,7 @@ impl DataMarketManager {
       if wait_result.timed_out() {
         // Re-check after timeout just in case it arrived right at the end
         if let Some(xml) = params_guard.as_ref() {
-          return Ok(xml.clone());
+          return Self::parse_scan_parameters_xml(xml);
         } else {
           return Err(Timeout(format!("Scanner parameters request timed out after wait", )));
         }

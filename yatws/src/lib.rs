@@ -389,6 +389,7 @@ pub mod data_market_manager;
 pub mod data_news_manager;
 pub mod data_ref_manager;
 pub mod order_manager;
+pub mod scan_parameters;
 
 pub use order_builder::OrderBuilder;
 pub use options_strategy_builder::OptionsStrategyBuilder;

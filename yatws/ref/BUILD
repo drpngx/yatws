@@ -43,3 +43,9 @@ py_binary(
     srcs = ["broker_order_market.py"],
     deps = ["//:ibapi"],
 )
+
+py_binary(
+    name = "market_scanner",
+    srcs = ["market_scanner.py"],
+    deps = ["//:ibapi"],
+)

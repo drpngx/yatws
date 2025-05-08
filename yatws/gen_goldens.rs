@@ -1475,11 +1475,8 @@ mod test_cases {
     let params_timeout = Duration::from_secs(15);
     info!("Requesting scanner parameters XML (Timeout: {:?})...", params_timeout);
     match data_mgr.get_scanner_parameters(params_timeout) {
-      Ok(xml) => {
-        info!("Successfully received scanner parameters XML ({} bytes).", xml.len());
-        // Log a snippet for verification
-        let snippet_len = xml.chars().take(200).collect::<String>().len(); // Get actual length of first 200 chars
-        info!("  XML Snippet: {}...", &xml[..snippet_len]);
+      Ok(params) => {
+        info!("Successfully received scanner parameters ({} instrs).", params.instrument_lists.len());
       }
       Err(e) => {
         error!("Failed to get scanner parameters: {:?}", e);
@@ -1514,7 +1511,7 @@ mod test_cases {
       stock_type_filter: Some("ALL".to_string()), // All stock types (Common, ADR, etc.)
     };
 
-    let timeout = Duration::from_secs(30); // Timeout for the scan
+    let timeout = Duration::from_secs(60); // Timeout for the scan
 
     info!("Requesting scanner results: {:?}", subscription.scan_code);
 
