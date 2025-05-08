@@ -499,8 +499,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::ClientVersionOutOfDate |
     ClientErrorCode::DdeDllNeedsUpgrade | // DDE specific
     ClientErrorCode::InvalidDdeArrayRequest | // DDE specific
-    ClientErrorCode::ApplicationLocked | // Deprecated
-    ClientErrorCode::UnknownCode => { // Catch-all for explicitly unknown or default
+    ClientErrorCode::ApplicationLocked => {
       handler.client.handle_error(id, error_code, &error_msg);
     }
 

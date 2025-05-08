@@ -286,15 +286,13 @@ impl DataMarketManager {
   /// Returns other `IBKRError` variants for communication issues.
   fn set_market_data_type_if_needed(
     &self,
-    desired_type: MarketDataType,
-    timeout: Duration,
+    desired_type: MarketDataType
   ) -> Result<(), IBKRError> {
     if desired_type == MarketDataType::Unknown {
       return Err(IBKRError::ConfigurationError("Cannot request Unknown market data type".to_string()));
     }
 
-    let start_time = std::time::Instant::now();
-    let mut current_type_guard = self.current_market_data_type.lock();
+    let current_type_guard = self.current_market_data_type.lock();
 
     if *current_type_guard == desired_type {
       debug!("Market data type already set to {:?}, no change needed.", desired_type);
@@ -315,39 +313,6 @@ impl DataMarketManager {
     self.message_broker.send_message(&request_msg)?;
 
     return Ok(());
-    // Wait for the handler to update the type
-    // loop {
-    //   if *current_type_guard == desired_type {
-    //     info!("Market data type successfully changed to {:?}", desired_type);
-    //     return Ok(());
-    //   }
-
-    //   let elapsed = start_time.elapsed();
-    //   if elapsed >= timeout {
-    //     warn!("Timeout waiting for market data type change to {:?}. Current type is {:?}.", desired_type, *current_type_guard);
-    //     return Err(Timeout(format!(
-    //         "Timed out waiting for market data type change to {:?} after {:?}", desired_type, timeout
-    //     )));
-    //   }
-    //   let remaining_timeout = timeout - elapsed;
-
-    //   trace!("Waiting for market data type change confirmation (remaining: {:?})...", remaining_timeout);
-    //   let wait_result = self.market_data_type_cond.wait_for(&mut current_type_guard, remaining_timeout);
-
-    //   if wait_result.timed_out() {
-    //     // Re-check after timeout just in case the notification happened right before timeout
-    //     if *current_type_guard == desired_type {
-    //       info!("Market data type successfully changed to {:?} just before timeout.", desired_type);
-    //       return Ok(());
-    //     } else {
-    //       warn!("Timeout waiting for market data type change to {:?}. Current type is {:?}.", desired_type, *current_type_guard);
-    //       return Err(Timeout(format!(
-    //           "Timed out waiting for market data type change to {:?} after wait", desired_type
-    //       )));
-    //     }
-    //   }
-    //   // If not timed out, loop continues to check the condition
-    // }
   }
 
   // --- Helper to wait for completion (mainly for historical data) ---
@@ -859,8 +824,7 @@ impl DataMarketManager {
           contract.symbol, snapshot, regulatory_snapshot, desired_mkt_data_type);
 
     // Set market data type if needed before sending the request
-    // Use a shorter timeout for the type change itself
-    self.set_market_data_type_if_needed(desired_mkt_data_type, Duration::from_secs(10))?;
+    self.set_market_data_type_if_needed(desired_mkt_data_type)?;
 
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?; // Re-fetch in case it changed? Unlikely.
@@ -1159,7 +1123,7 @@ impl DataMarketManager {
     info!("Requesting quote snapshot for: Contract={}, Type={:?}", contract.symbol, desired_mkt_data_type);
 
     // Set market data type if needed before sending the request
-    self.set_market_data_type_if_needed(desired_mkt_data_type, Duration::from_secs(10))?;
+    self.set_market_data_type_if_needed(desired_mkt_data_type)?;
 
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
@@ -1790,7 +1754,7 @@ impl DataMarketManager {
     use_rth: bool,
     format_date: i32, // 1 for yyyyMMdd HH:mm:ss, 2 for system time (seconds)
     keep_up_to_date: bool, // Subscribe to updates after initial load
-    market_data_type: Option<MarketDataType>, // Added parameter
+    market_data_type: Option<MarketDataType>,
     chart_options: &[(String, String)], // TagValue list
   ) -> Result<Vec<Bar>, IBKRError> {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
@@ -1798,7 +1762,7 @@ impl DataMarketManager {
           contract.symbol, duration_str, bar_size_setting, what_to_show, keep_up_to_date, desired_mkt_data_type);
 
     // Set market data type if needed before sending the request
-    self.set_market_data_type_if_needed(desired_mkt_data_type, Duration::from_secs(10))?;
+    self.set_market_data_type_if_needed(desired_mkt_data_type)?;
 
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;

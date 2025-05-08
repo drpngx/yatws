@@ -308,7 +308,7 @@ pub enum ClientErrorCode {
   OutsideRthAttributeIgnored = 2109,
   /// Connectivity between TWS and server is broken. It will be restored automatically.
   TwsToServerConnectionBroken = 2110,
-  ///
+  /// Connecting to data farm.
   MarketDataFarmConnecting = 2119,
   /// Cross Side Warning
   CrossSideWarning = 2137,
@@ -895,10 +895,6 @@ pub enum ClientErrorCode {
   FailRequestWshEventData = 10283,
   /// Fail cancel WSH event data
   FailCancelWshEventData = 10284,
-
-  // --- Placeholder for unknown codes ---
-  /// Unknown error code received from TWS/IBG or client library.
-  UnknownCode = 0, // Or another suitable default/sentinel value
 }
 
 impl fmt::Display for ClientErrorCode {
@@ -1300,8 +1296,6 @@ impl fmt::Display for ClientErrorCode {
       ClientErrorCode::WshMetadataNotRequested => "WSH metadata not requested",
       ClientErrorCode::FailRequestWshEventData => "Fail request WSH event data",
       ClientErrorCode::FailCancelWshEventData => "Fail cancel WSH event data",
-      // Unknown/Default
-      ClientErrorCode::UnknownCode => "Unknown error code received",
     };
     write!(f, "{}", msg)
   }
@@ -1417,6 +1411,7 @@ impl TryFrom<i32> for ClientErrorCode {
       2108 => Ok(ClientErrorCode::MarketDataFarmInactive),
       2109 => Ok(ClientErrorCode::OutsideRthAttributeIgnored),
       2110 => Ok(ClientErrorCode::TwsToServerConnectionBroken),
+      2119 => Ok(ClientErrorCode::MarketDataFarmConnecting),
       2137 => Ok(ClientErrorCode::CrossSideWarning),
       2158 => Ok(ClientErrorCode::SecurityDefinitionDataFarmConnected),
       2168 => Ok(ClientErrorCode::EtradeOnlyNotSupportedWarning),
@@ -1667,7 +1662,7 @@ impl TryFrom<i32> for ClientErrorCode {
       10025 => Ok(ClientErrorCode::InvalidLeg2ToMktTime1Api),
       10026 => Ok(ClientErrorCode::InvalidLeg2ToMktTime2Api),
       10027 => Ok(ClientErrorCode::InvalidComboRoutingTagApi),
-      10089 => Ok(ClientErrorCode::NotSubscribedToMarketData),
+      10089 => Ok(ClientErrorCode::NotSubscribedMarketData),
       10090 => Ok(ClientErrorCode::PartiallySubscribedMarketData),
       10147 => Ok(ClientErrorCode::CannotCancelNotFoundOrder),
       10148 => Ok(ClientErrorCode::CannotCancelFilledOrder),

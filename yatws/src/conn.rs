@@ -60,6 +60,7 @@ impl MessageBroker {
     Ok(conn_guard.get_server_version())
   }
 
+  #[allow(dead_code)]
   pub fn is_connected(&self) -> Result<bool, IBKRError> {
     let conn_guard = self.connection.lock();
     Ok(conn_guard.is_connected())
@@ -364,7 +365,7 @@ mod socket {
             Err(IBKRError::ConnectionFailed(msg)) | Err(IBKRError::SocketError(msg)) => {
               if msg.contains("timed out") || msg.contains("reset") || msg.contains("broken pipe") || msg.contains("refused") || msg.contains("closed") || msg.contains("EOF") || msg.contains("network") || msg.contains("host is down") {
                 error!("Connection lost/error in reader thread: {}", msg);
-                handler.connection_closed(); // Notify handler
+                handler.client.connection_closed(); // Notify handler
                 break; // Exit loop
               } else {
                 warn!("Unhandled socket/connection error in reader: {}", msg);

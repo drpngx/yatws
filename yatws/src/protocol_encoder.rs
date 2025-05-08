@@ -219,9 +219,6 @@ pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
     Ok(OutgoingMessageType::ReqWshEventData) => Some("REQ_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::CancelWshEventData) => Some("CANCEL_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::ReqUserInfo) => Some("REQ_USER_INFO"),
-    Ok(OutgoingMessageType::ReqScannerSubscription) => Some("REQ_SCANNER_SUBSCRIPTION"),
-    Ok(OutgoingMessageType::CancelScannerSubscription) => Some("CANCEL_SCANNER_SUBSCRIPTION"),
-    Ok(OutgoingMessageType::ReqScannerParameters) => Some("REQ_SCANNER_PARAMETERS"),
     Err(_) => None, // Unknown type ID
   }
 }
@@ -1562,7 +1559,7 @@ impl Encoder {
       req_id, contract.symbol, exercise_action, exercise_quantity, account, override_action
     );
 
-    if self.server_version < min_server_ver::SERVER_VERSION_EXERCISE_OPTIONS {
+    if self.server_version < min_server_ver::EXERCISE_OPTIONS {
       return Err(IBKRError::Unsupported(
         "Server version does not support exercising options.".to_string(),
       ));
@@ -1804,7 +1801,7 @@ impl Encoder {
   /// Encodes a request for scanner parameters.
   pub fn encode_request_scanner_parameters(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request scanner parameters");
-    if self.server_version < min_server_ver::SERVER_VERSION_SCANNER_PARAMETERS {
+    if self.server_version < min_server_ver::SCANNER_PARAMETERS {
       return Err(IBKRError::Unsupported("Server version does not support scanner parameters request.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqScannerParameters as i32)?;
@@ -1821,7 +1818,7 @@ impl Encoder {
   ) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request scanner subscription: ReqID={}, Subscription={:?}", req_id, subscription);
 
-    if self.server_version < min_server_ver::SERVER_VERSION_SCANNER_SUBSCRIPTION {
+    if self.server_version < min_server_ver::SCANNER_SUBSCRIPTION {
       return Err(IBKRError::Unsupported("Server version does not support scanner subscriptions.".to_string()));
     }
     if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && subscription.average_option_volume_above.is_some() {
@@ -1876,7 +1873,7 @@ subscription.".to_string()));
   /// Encodes a request to cancel a scanner subscription.
   pub fn encode_cancel_scanner_subscription(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel scanner subscription: ReqID={}", req_id);
-    if self.server_version < min_server_ver::SERVER_VERSION_SCANNER_SUBSCRIPTION { // Same min version as req
+    if self.server_version < min_server_ver::SCANNER_SUBSCRIPTION { // Same min version as req
       return Err(IBKRError::Unsupported("Server version does not support scanner subscription cancellation.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelScannerSubscription as i32)?;

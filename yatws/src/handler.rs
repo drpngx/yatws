@@ -343,9 +343,5 @@ impl MessageHandler {
       fin_adv: dummy.clone(),
     }
   }
-  // TODO: move this to ClientManager.
-  pub fn connection_closed(&mut self) {
-  }
-
   pub fn get_server_version(&self) -> i32 { self.server_version }
 }
