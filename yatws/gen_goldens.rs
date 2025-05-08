@@ -1467,9 +1467,28 @@ mod test_cases {
 
 
   pub(super) fn scanner_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
-    info!("--- Testing Market Scanner (Blocking) ---");
+    info!("--- Testing Market Scanner (Parameters & Blocking Results) ---");
     let data_mgr = client.data_market();
+    let mut overall_success = true;
 
+    // 1. Get Scanner Parameters
+    let params_timeout = Duration::from_secs(15);
+    info!("Requesting scanner parameters XML (Timeout: {:?})...", params_timeout);
+    match data_mgr.get_scanner_parameters(params_timeout) {
+      Ok(xml) => {
+        info!("Successfully received scanner parameters XML ({} bytes).", xml.len());
+        // Log a snippet for verification
+        let snippet_len = xml.chars().take(200).collect::<String>().len(); // Get actual length of first 200 chars
+        info!("  XML Snippet: {}...", &xml[..snippet_len]);
+      }
+      Err(e) => {
+        error!("Failed to get scanner parameters: {:?}", e);
+        overall_success = false; // Mark failure but continue to results test
+      }
+    }
+
+    // 2. Get Scanner Results (Blocking)
+    info!("Proceeding to test blocking scanner results...");
     // Define the scanner subscription parameters
     let subscription = yatws::contract::ScannerSubscription {
       number_of_rows: 10, // Request top 10 results
@@ -1515,20 +1534,25 @@ mod test_cases {
             item.benchmark
           );
         }
-        Ok(())
       }
       Err(IBKRError::ApiError(code, msg)) if msg.contains("scanner subscription") || msg.contains("market data subscription") => {
         warn!("Scanner API error (likely subscription issue): code={}, msg='{}'", code, msg);
         warn!("This test may pass with a warning if data isn't available due to account/market data status.");
-        Ok(()) // Treat as a pass with warning for common subscription issues
       }
       Err(e) => {
         error!("Failed to get scanner results: {:?}", e);
-        Err(e.into())
+        overall_success = false; // Mark failure
       }
+    };
+
+    // Final result based on overall success
+    if overall_success {
+      info!("Scanner test (parameters and results) completed successfully.");
+      Ok(())
+    } else {
+      Err(anyhow!("One or more parts of the scanner test failed."))
     }
   }
-
 
 } // <-- This brace closes the test_cases module
 

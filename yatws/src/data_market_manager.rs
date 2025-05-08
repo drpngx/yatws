@@ -246,6 +246,9 @@ pub struct DataMarketManager {
   current_market_data_type: Mutex<MarketDataType>,
   // Condvar for waiting on market data type changes
   market_data_type_cond: Condvar,
+  // State for scanner parameters request (global, as response has no req_id)
+  scanner_parameters_xml: Mutex<Option<String>>,
+  scanner_parameters_cond: Condvar,
   // Optional: Observer pattern for streaming data
   // observers: RwLock<Vec<Weak<dyn MarketDataObserver>>>,
 }
@@ -266,6 +269,8 @@ impl DataMarketManager {
       request_cond: Condvar::new(),
       current_market_data_type: Mutex::new(MarketDataType::RealTime), // Default to RealTime
       market_data_type_cond: Condvar::new(),
+      scanner_parameters_xml: Mutex::new(None), // Initialize scanner params state
+      scanner_parameters_cond: Condvar::new(),
       // observers: RwLock::new(Vec::new()),
     })
   }
@@ -1904,6 +1909,68 @@ impl DataMarketManager {
 
   // --- Scanner Methods ---
 
+  /// Requests the XML document containing valid scanner parameters. This is a blocking call.
+  ///
+  /// The TWS API provides scanner parameters as a single XML string in response to this request.
+  /// The response doesn't include a request ID, so this method manages state globally.
+  ///
+  /// # Arguments
+  /// * `timeout` - Maximum duration to wait for the XML response.
+  ///
+  /// # Returns
+  /// A `String` containing the scanner parameters XML.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the XML is not received within the timeout.
+  /// Returns other `IBKRError` variants for communication or encoding issues.
+  pub fn get_scanner_parameters(&self, timeout: Duration) -> Result<String, IBKRError> {
+    info!("Requesting scanner parameters XML...");
+
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_request_scanner_parameters()?;
+
+    // Lock and check if parameters are already cached
+    let mut params_guard = self.scanner_parameters_xml.lock();
+    if let Some(xml) = params_guard.as_ref() {
+      info!("Scanner parameters already available, returning cached XML.");
+      return Ok(xml.clone());
+    }
+
+    // Parameters not cached, send request and wait
+    self.message_broker.send_message(&request_msg)?;
+    debug!("Scanner parameters request sent. Waiting for response...");
+
+    let start_time = std::time::Instant::now();
+    loop {
+      // Check if parameters arrived *before* waiting
+      if let Some(xml) = params_guard.as_ref() {
+        return Ok(xml.clone());
+      }
+
+      // Calculate remaining timeout
+      let elapsed = start_time.elapsed();
+      if elapsed >= timeout {
+        return Err(Timeout(format!("Scanner parameters request timed out after {:?}", timeout)));
+      }
+      let remaining_timeout = timeout - elapsed;
+
+      // Wait for notification from the handler
+      let wait_result = self.scanner_parameters_cond.wait_for(&mut params_guard, remaining_timeout);
+
+      if wait_result.timed_out() {
+        // Re-check after timeout just in case it arrived right at the end
+        if let Some(xml) = params_guard.as_ref() {
+          return Ok(xml.clone());
+        } else {
+          return Err(Timeout(format!("Scanner parameters request timed out after wait", )));
+        }
+      }
+      // If not timed out, loop continues (parameters should be Some now)
+    }
+  }
+
+
   /// Requests a market scanner subscription. This is a non-blocking call.
   ///
   /// Scan results are delivered via the `scanner_data` method of the `MarketDataHandler` trait,
@@ -2506,10 +2573,12 @@ impl MarketDataHandler for DataMarketManager {
   }
 
   fn scanner_parameters(&self, xml: &str) {
-    debug!("Handler: Scanner Parameters received ({} bytes)", xml.len());
-    // This is usually received in response to reqScannerParameters.
-    // For now, we just log it. A dedicated request/response mechanism could be added.
-    // If needed, parse the XML here and store/process it.
+    info!("Handler: Scanner Parameters XML received ({} bytes)", xml.len());
+    // Store the received XML and notify any waiting threads (get_scanner_parameters)
+    let mut params_guard = self.scanner_parameters_xml.lock();
+    *params_guard = Some(xml.to_string());
+    self.scanner_parameters_cond.notify_all();
+    debug!("Scanner parameters stored and condition notified.");
   }
 
   fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, distance: &str,
