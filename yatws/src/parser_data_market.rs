@@ -361,15 +361,14 @@ pub fn process_tick_req_params(handler: &Arc<dyn MarketDataHandler>, parser: &mu
 pub fn process_histogram_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let req_id = parser.read_int()?;
   let n = parser.read_int()?;
-  // let mut items = Vec::with_capacity(n as usize);
+  let mut items = Vec::with_capacity(n as usize);
   for _ in 0..n {
-    let _price = parser.read_double()?;
-    let _size = parser.read_decimal_max()?.unwrap_or(0.0);
-    // items.push((price, size));
+    let price = parser.read_double()?;
+    let size = parser.read_decimal_max()?.unwrap_or(0.0); // Assuming size is decimal
+    items.push((price, size));
   }
   log::debug!("Histogram Data: ReqID={}, Count={}", req_id, n);
-  // handler.histogram_data(req_id, &items); // Uncomment when handler accepts it
-  handler.histogram_data(req_id); // Placeholder call
+  handler.histogram_data(req_id, &items);
   Ok(())
 }
 

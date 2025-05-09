@@ -75,8 +75,8 @@ use crate::scan_parameters::ScanParameterResponse;
 use crate::data::{
   MarketDataSubscription, MarketDataType, MarketDepthRow, MarketDepthSubscription,
   RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData,
-  TickByTickSubscription, TickOptionComputationData, TickType, // Removed TickNewsData
-  HistoricalDataRequestState, ScannerSubscriptionState, // Added ScannerSubscriptionState
+  TickByTickSubscription, TickOptionComputationData, TickType, HistogramEntry, HistogramDataRequestState, // Added HistogramEntry, HistogramDataRequestState
+  HistoricalDataRequestState, ScannerSubscriptionState,
 };
 use crate::handler::MarketDataHandler;
 use crate::protocol_encoder::Encoder;
@@ -88,7 +88,7 @@ use chrono::{Utc, TimeZone};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use log::{debug, info, trace, error, warn};
+use log::{debug, info, trace, warn};
 
 
 // --- Helper Trait for Generic Waiting ---
@@ -162,6 +162,18 @@ impl CompletableState for ScannerSubscriptionState {
   }
 }
 
+impl CompletableState for HistogramDataRequestState {
+  fn is_completed(&self) -> bool { self.completed }
+  fn mark_completed(&mut self) { self.completed = true; }
+  fn get_error(&self) -> Option<IBKRError> {
+    match (self.error_code, self.error_message.as_ref()) {
+      (Some(code), Some(msg)) => Some(IBKRError::ApiError(code, msg.clone())),
+      _ => None,
+    }
+  }
+}
+
+
 // --- Helper Trait for Downcasting MarketSubscription Enum ---
 
 /// Internal helper trait to enable downcasting from the `MarketSubscription` enum
@@ -198,6 +210,11 @@ impl TryIntoStateHelper<ScannerSubscriptionState> for MarketSubscription {
     match self { MarketSubscription::Scanner(s) => Some(s), _ => None }
   }
 }
+impl TryIntoStateHelper<HistogramDataRequestState> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut HistogramDataRequestState> {
+    match self { MarketSubscription::HistogramData(s) => Some(s), _ => None }
+  }
+}
 // Add others if needed
 
 // Helper methods on the enum to simplify access in the generic wait function
@@ -226,8 +243,8 @@ enum MarketSubscription {
   MarketDepth(MarketDepthSubscription),
   HistoricalData(HistoricalDataRequestState),
   Scanner(ScannerSubscriptionState), // Added Scanner variant
-  OptionCalc(OptionCalculationState), // Added Option Calculation variant
-  // Add Histogram etc. if needed
+  OptionCalc(OptionCalculationState),
+  HistogramData(HistogramDataRequestState), // Added HistogramData variant
 }
 
 /// Holds the state for an option calculation request (implied volatility or option price).
@@ -1912,6 +1929,7 @@ impl DataMarketManager {
         MarketSubscription::HistoricalData(_) => true, // Historical is always blocking in this context
         MarketSubscription::Scanner(s) => s.completed, // Scanner blocking depends on its completed state
         MarketSubscription::OptionCalc(s) => s.completed, // Option calculation blocking depends on its completed state
+        MarketSubscription::HistogramData(s) => s.completed,
       };
 
       // Extract error fields and completion flag (now safe)
@@ -1923,6 +1941,7 @@ impl DataMarketManager {
         MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, &mut s.end_received),
         MarketSubscription::Scanner(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
         MarketSubscription::OptionCalc(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
+        MarketSubscription::HistogramData(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
       };
 
       *err_code_field = Some(error_code_int); // Store the integer code
@@ -2160,7 +2179,7 @@ impl DataMarketManager {
           contract.local_symbol.as_deref().unwrap_or(&contract.symbol), option_price, under_price, timeout);
 
     if self.message_broker.get_server_version()? < min_server_ver::REQ_CALC_IMPLIED_VOLAT {
-        return Err(IBKRError::Unsupported("Server version does not support implied volatility calculation.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support implied volatility calculation.".to_string()));
     }
 
     let req_id = self.message_broker.next_request_id();
@@ -2168,7 +2187,7 @@ impl DataMarketManager {
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_calculate_implied_volatility(
-        req_id, contract, option_price, under_price
+      req_id, contract, option_price, under_price
     )?;
 
     // Initialize and store state
@@ -2198,7 +2217,7 @@ impl DataMarketManager {
     }
 
     result_state.and_then(|state| {
-        state.result.ok_or_else(|| IBKRError::InternalError(format!("Implied volatility result missing for ReqID {}", req_id)))
+      state.result.ok_or_else(|| IBKRError::InternalError(format!("Implied volatility result missing for ReqID {}", req_id)))
     })
   }
 
@@ -2245,7 +2264,7 @@ impl DataMarketManager {
           contract.local_symbol.as_deref().unwrap_or(&contract.symbol), volatility, under_price, timeout);
 
     if self.message_broker.get_server_version()? < min_server_ver::REQ_CALC_OPTION_PRICE {
-        return Err(IBKRError::Unsupported("Server version does not support option price calculation.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support option price calculation.".to_string()));
     }
 
     let req_id = self.message_broker.next_request_id();
@@ -2253,7 +2272,7 @@ impl DataMarketManager {
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_calculate_option_price(
-        req_id, contract, volatility, under_price
+      req_id, contract, volatility, under_price
     )?;
 
     // Initialize and store state
@@ -2283,7 +2302,7 @@ impl DataMarketManager {
     }
 
     result_state.and_then(|state| {
-        state.result.ok_or_else(|| IBKRError::InternalError(format!("Option price result missing for ReqID {}", req_id)))
+      state.result.ok_or_else(|| IBKRError::InternalError(format!("Option price result missing for ReqID {}", req_id)))
     })
   }
 
@@ -2302,6 +2321,139 @@ impl DataMarketManager {
         debug!("Removed option price calculation state for ReqID: {}", req_id);
       } else {
         warn!("Attempted to cancel option price for unknown or already removed ReqID: {}", req_id);
+      }
+    }
+    Ok(())
+  }
+
+  // --- Histogram Data Methods ---
+
+  /// Requests histogram data for a contract. This is a non-blocking call.
+  ///
+  /// Histogram data provides price distribution over a specified time period.
+  /// Data is delivered via the `histogram_data` method of the `MarketDataHandler` trait.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request histogram data.
+  /// * `use_rth` - If `true`, include only data from regular trading hours.
+  /// * `time_period` - The time period for the histogram (e.g., "3 days", "1 week", "2 months").
+  /// * `_histogram_options` - Currently unused for `reqHistogramData`. Reserved for future use or alternative methods.
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this histogram data request.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded or sent, or if the server version is too low.
+  pub fn request_histogram_data(
+    &self,
+    contract: &Contract,
+    use_rth: bool,
+    time_period: &str,
+    _histogram_options: &[(String, String)], // Currently unused for REQ_HISTOGRAM_DATA
+  ) -> Result<i32, IBKRError> {
+    info!("Requesting histogram data: Contract={}, UseRTH={}, TimePeriod={}",
+          contract.symbol, use_rth, time_period);
+
+    if self.message_broker.get_server_version()? < min_server_ver::REQ_HISTOGRAM {
+      return Err(IBKRError::Unsupported("Server version does not support histogram data requests.".to_string()));
+    }
+
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_histogram_data(
+      req_id, contract, use_rth, time_period
+    )?;
+
+    // Initialize and store state
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) {
+        return Err(IBKRError::DuplicateRequestId(req_id));
+      }
+      let state = HistogramDataRequestState {
+        req_id,
+        contract: contract.clone(),
+        use_rth,
+        time_period: time_period.to_string(),
+        items: Vec::new(),
+        completed: false,
+        error_code: None,
+        error_message: None,
+      };
+      subs.insert(req_id, MarketSubscription::HistogramData(state));
+      debug!("Histogram data request added for ReqID: {}", req_id);
+    }
+
+    self.message_broker.send_message(&request_msg)?;
+    Ok(req_id)
+  }
+
+  /// Requests histogram data for a contract and blocks until the data is received,
+  /// an error occurs, or the timeout is reached.
+  ///
+  /// # Arguments
+  /// * `contract`, `use_rth`, `time_period`, `_histogram_options`: Same as for `request_histogram_data`.
+  /// * `timeout` - Maximum duration to wait for the histogram data.
+  ///
+  /// # Returns
+  /// A `Vec<HistogramEntry>` containing the histogram data points.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request fails, times out, or other issues occur.
+  pub fn get_histogram_data(
+    &self,
+    contract: &Contract,
+    use_rth: bool,
+    time_period: &str,
+    _histogram_options: &[(String, String)], // Currently unused for REQ_HISTOGRAM_DATA
+    timeout: Duration,
+  ) -> Result<Vec<HistogramEntry>, IBKRError> {
+    info!("Requesting blocking histogram data: Contract={}, UseRTH={}, TimePeriod={}, Timeout={:?}",
+          contract.symbol, use_rth, time_period, timeout);
+
+    // 1. Initiate the non-blocking request
+    let req_id = self.request_histogram_data(
+      contract, use_rth, time_period, _histogram_options
+    )?;
+    debug!("Blocking histogram data request initiated with ReqID: {}", req_id);
+
+    // 2. Wait for completion (signaled by histogram_data handler setting completed=true)
+    let result_state = self.wait_for_completion(
+      req_id,
+      timeout,
+      |s: &HistogramDataRequestState| s.completed, // Completion check
+      "HistogramData",
+    );
+
+    // 3. Best effort cancel
+    if let Err(e) = self.cancel_histogram_data(req_id) {
+      warn!("Failed to cancel histogram data request {} after blocking wait: {:?}", req_id, e);
+    }
+
+    // 4. Extract results from the final state
+    result_state.map(|state| state.items)
+  }
+
+  /// Cancels an ongoing histogram data request.
+  pub fn cancel_histogram_data(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling histogram data request: ReqID={}", req_id);
+    if self.message_broker.get_server_version()? < min_server_ver::CANCEL_HISTOGRAM_DATA {
+      return Err(IBKRError::Unsupported("Server version does not support histogram data cancellation.".to_string()));
+    }
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_histogram_data(req_id)?;
+
+    self.message_broker.send_message(&request_msg)?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed histogram data subscription state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel histogram data for unknown or already removed ReqID: {}", req_id);
       }
     }
     Ok(())
@@ -2467,23 +2619,23 @@ impl MarketDataHandler for DataMarketManager {
     trace!("Handler: Tick Option Computation: ID={}, Type={:?}", req_id, data.tick_type);
     let mut subs = self.subscriptions.lock();
     match subs.get_mut(&req_id) {
-        Some(MarketSubscription::TickData(state)) => {
-            // Store the whole computation data struct for regular market data stream
-            state.option_computation = Some(data);
-            // self.notify_observers(req_id); // If observers are used for streaming option computations
-            // Notify general waiters if this tick was part of a broader request
-            self.request_cond.notify_all();
-        }
-        Some(MarketSubscription::OptionCalc(state)) => {
-            // This is a dedicated option calculation request
-            state.result = Some(data);
-            state.completed = true; // Mark as completed since we got the result
-            debug!("Option calculation result received for ReqID {}. Notifying waiter.", req_id);
-            self.request_cond.notify_all(); // Notify the specific waiter for this calculation
-        }
-        _ => {
-            warn!("Received tick_option_computation for unknown or mismatched subscription ID: {}", req_id);
-        }
+      Some(MarketSubscription::TickData(state)) => {
+        // Store the whole computation data struct for regular market data stream
+        state.option_computation = Some(data);
+        // self.notify_observers(req_id); // If observers are used for streaming option computations
+        // Notify general waiters if this tick was part of a broader request
+        self.request_cond.notify_all();
+      }
+      Some(MarketSubscription::OptionCalc(state)) => {
+        // This is a dedicated option calculation request
+        state.result = Some(data);
+        state.completed = true; // Mark as completed since we got the result
+        debug!("Option calculation result received for ReqID {}. Notifying waiter.", req_id);
+        self.request_cond.notify_all(); // Notify the specific waiter for this calculation
+      }
+      _ => {
+        warn!("Received tick_option_computation for unknown or mismatched subscription ID: {}", req_id);
+      }
     }
   }
 
@@ -2796,14 +2948,22 @@ impl MarketDataHandler for DataMarketManager {
   }
 
   // --- Other Market Data ---
-  fn delta_neutral_validation(&self, req_id: i32) {
+  fn delta_neutral_validation(&self, req_id: i32, /* con_id: i32, delta: f64, price: f64 */) {
     debug!("Handler: Delta Neutral Validation: ID={}", req_id);
     // Usually just logged, doesn't update typical subscription state.
   }
 
-  fn histogram_data(&self, req_id: i32) {
-    debug!("Handler: Histogram Data Received: ID={}", req_id);
-    // Placeholder, needs HistogramEntry struct and state handling if blocking needed.
+  fn histogram_data(&self, req_id: i32, items: &[(f64, f64)]) {
+    debug!("Handler: Histogram Data Received: ID={}, ItemCount={}", req_id, items.len());
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::HistogramData(state)) = subs.get_mut(&req_id) {
+      state.items = items.iter().map(|&(price, size)| HistogramEntry { price, size }).collect();
+      state.completed = true; // Mark as completed once data is received
+      info!("Histogram data received for request {}. Notifying waiter.", req_id);
+      self.request_cond.notify_all(); // Signal waiting thread (for get_histogram_data)
+    } else {
+      warn!("Received histogram_data for unknown or non-histogram subscription ID: {}", req_id);
+    }
   }
 
   fn scanner_parameters(&self, xml: &str) {

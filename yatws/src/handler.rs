@@ -234,7 +234,7 @@ pub trait MarketDataHandler: Send + Sync {
 
   // --- Other Market Data ---
   fn delta_neutral_validation(&self, req_id: i32, /* con_id: i32, delta: f64, price: f64 */); // Add DeltaNeutralContract if needed
-  fn histogram_data(&self, req_id: i32, /* items: &[(f64, f64)] */); // Add HistogramEntry if needed
+  fn histogram_data(&self, req_id: i32, items: &[(f64, f64)]); // Add HistogramEntry if needed
   fn scanner_parameters(&self, xml: &str);
   fn scanner_data(&self, req_id: i32, rank: i32, contract_details: &ContractDetails, distance: &str,
                   benchmark: &str, projection: &str, legs_str: Option<&str>);

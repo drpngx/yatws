@@ -80,8 +80,8 @@ pub enum OutgoingMessageType {
   ReqNewsArticle = 84,
   ReqNewsProviders = 85,
   ReqHistoricalNews = 86,
-  ReqHeadTimestamp = 87,
-  ReqHistogramData = 88,
+  ReqHeadTimestamp = 87, // Message ID for request head timestamp
+  ReqHistogramData = 88, // Message ID for request histogram data
   CancelHistogramData = 89,
   CancelHeadTimestamp = 90,
   ReqMarketRule = 91,
@@ -204,7 +204,7 @@ pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
     Ok(OutgoingMessageType::ReqNewsProviders) => Some("REQ_NEWS_PROVIDERS"),
     Ok(OutgoingMessageType::ReqHistoricalNews) => Some("REQ_HISTORICAL_NEWS"),
     Ok(OutgoingMessageType::ReqHeadTimestamp) => Some("REQ_HEAD_TIMESTAMP"),
-    Ok(OutgoingMessageType::ReqHistogramData) => Some("REQ_HISTOGRAM_DATA"),
+    Ok(OutgoingMessageType::ReqHistogramData) => Some("REQ_HISTOGRAM_DATA"), // Corrected from placeholder
     Ok(OutgoingMessageType::CancelHistogramData) => Some("CANCEL_HISTOGRAM_DATA"),
     Ok(OutgoingMessageType::CancelHeadTimestamp) => Some("CANCEL_HEAD_TIMESTAMP"),
     Ok(OutgoingMessageType::ReqMarketRule) => Some("REQ_MARKET_RULE"),
@@ -221,11 +221,6 @@ pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
     Ok(OutgoingMessageType::ReqWshEventData) => Some("REQ_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::CancelWshEventData) => Some("CANCEL_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::ReqUserInfo) => Some("REQ_USER_INFO"),
-    // Added Option Calc messages
-    Ok(OutgoingMessageType::ReqCalcImpliedVolat) => Some("REQ_CALC_IMPLIED_VOLAT"),
-    Ok(OutgoingMessageType::ReqCalcOptionPrice) => Some("REQ_CALC_OPTION_PRICE"),
-    Ok(OutgoingMessageType::CancelCalcImpliedVolat) => Some("CANCEL_CALC_IMPLIED_VOLAT"),
-    Ok(OutgoingMessageType::CancelCalcOptionPrice) => Some("CANCEL_CALC_OPTION_PRICE"),
     Err(_) => None, // Unknown type ID
   }
 }
@@ -299,7 +294,7 @@ impl TryFrom<i32> for OutgoingMessageType {
       x if x == OutgoingMessageType::ReqNewsProviders as i32 => Ok(OutgoingMessageType::ReqNewsProviders),
       x if x == OutgoingMessageType::ReqHistoricalNews as i32 => Ok(OutgoingMessageType::ReqHistoricalNews),
       x if x == OutgoingMessageType::ReqHeadTimestamp as i32 => Ok(OutgoingMessageType::ReqHeadTimestamp),
-      x if x == OutgoingMessageType::ReqHistogramData as i32 => Ok(OutgoingMessageType::ReqHistogramData),
+      x if x == OutgoingMessageType::ReqHistogramData as i32 => Ok(OutgoingMessageType::ReqHistogramData), // Corrected
       x if x == OutgoingMessageType::CancelHistogramData as i32 => Ok(OutgoingMessageType::CancelHistogramData),
       x if x == OutgoingMessageType::CancelHeadTimestamp as i32 => Ok(OutgoingMessageType::CancelHeadTimestamp),
       x if x == OutgoingMessageType::ReqMarketRule as i32 => Ok(OutgoingMessageType::ReqMarketRule),
@@ -316,11 +311,6 @@ impl TryFrom<i32> for OutgoingMessageType {
       x if x == OutgoingMessageType::ReqWshEventData as i32 => Ok(OutgoingMessageType::ReqWshEventData),
       x if x == OutgoingMessageType::CancelWshEventData as i32 => Ok(OutgoingMessageType::CancelWshEventData),
       x if x == OutgoingMessageType::ReqUserInfo as i32 => Ok(OutgoingMessageType::ReqUserInfo),
-      // Added Option Calc messages
-      x if x == OutgoingMessageType::ReqCalcImpliedVolat as i32 => Ok(OutgoingMessageType::ReqCalcImpliedVolat),
-      x if x == OutgoingMessageType::ReqCalcOptionPrice as i32 => Ok(OutgoingMessageType::ReqCalcOptionPrice),
-      x if x == OutgoingMessageType::CancelCalcImpliedVolat as i32 => Ok(OutgoingMessageType::CancelCalcImpliedVolat),
-      x if x == OutgoingMessageType::CancelCalcOptionPrice as i32 => Ok(OutgoingMessageType::CancelCalcOptionPrice),
       // Existing scanner messages
       x if x == OutgoingMessageType::ReqScannerSubscription as i32 => Ok(OutgoingMessageType::ReqScannerSubscription),
       x if x == OutgoingMessageType::CancelScannerSubscription as i32 => Ok(OutgoingMessageType::CancelScannerSubscription),
@@ -2494,6 +2484,57 @@ subscription.".to_string()));
       self.write_int_to_cursor(&mut cursor, wsh_event_data.total_limit.unwrap_or(i32::MAX))?;
     }
 
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for histogram data.
+  pub fn encode_request_histogram_data(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    use_rth: bool,
+    time_period: &str, // e.g., "3 days", "1 week", "2 months"
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request histogram data: ReqID={}, Contract={}, UseRTH={}, TimePeriod={}",
+           req_id, contract.symbol, use_rth, time_period);
+
+    if self.server_version < min_server_ver::REQ_HISTOGRAM { // Use REQ_HISTOGRAM from min_server_ver
+      return Err(IBKRError::Unsupported("Server version does not support histogram data requests.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqHistogramData as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // Contract fields (minimal set for histogram)
+    self.write_int_to_cursor(&mut cursor, contract.con_id)?;
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    self.write_bool_to_cursor(&mut cursor, contract.include_expired)?;
+
+    // Histogram parameters
+    self.write_bool_to_cursor(&mut cursor, use_rth)?;
+    self.write_str_to_cursor(&mut cursor, time_period)?;
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel histogram data.
+  pub fn encode_cancel_histogram_data(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel histogram data: ReqID={}", req_id);
+    if self.server_version < min_server_ver::CANCEL_HISTOGRAM_DATA { // Use CANCEL_HISTOGRAM_DATA
+      return Err(IBKRError::Unsupported("Server version does not support histogram data cancellation.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelHistogramData as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?; // Version is not explicitly sent for this cancel message
     Ok(self.finish_encoding(cursor))
   }
 

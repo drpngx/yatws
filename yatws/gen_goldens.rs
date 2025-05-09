@@ -16,7 +16,7 @@ use yatws::{
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
-  contract::{Contract, SecType, OptionRight}, // Added OptionRight
+  contract::{Contract, SecType, OptionRight, Bar}, // Added OptionRight, Bar
   data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData}, // Added TickOptionComputationData
   parse_fundamental_xml
 };
@@ -1665,6 +1665,46 @@ mod test_cases {
     info!("  UndPrice: {:?}", computation.und_price);
   }
 
+  pub(super) fn histogram_data_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Get Histogram Data ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("GE"); // Use a liquid stock
+    let use_rth = true;
+    let time_period = "3 days"; // Request histogram for the last 3 days
+    let histogram_options = &[]; // Not used by REQ_HISTOGRAM_DATA
+    let timeout = Duration::from_secs(30);
+
+    info!(
+      "Requesting histogram data for {}: UseRTH={}, TimePeriod='{}', Timeout={:?}",
+      contract.symbol, use_rth, time_period, timeout
+    );
+
+    match data_mgr.get_histogram_data(
+      &contract,
+      use_rth,
+      time_period,
+      histogram_options,
+      timeout
+    ) {
+      Ok(items) => {
+        info!("Successfully received {} histogram data points.", items.len());
+        if items.is_empty() {
+          warn!("Received 0 histogram data points. This might be okay depending on contract/time period.");
+        }
+        for (i, item) in items.iter().enumerate().take(5) { // Log first 5 or fewer
+          info!(
+            "  Item {}: Price={}, Size={}",
+            i + 1, item.price, item.size
+          );
+        }
+        Ok(())
+      }
+      Err(e) => {
+        error!("Failed to get histogram data for {}: {:?}", contract.symbol, e);
+        Err(e.into())
+      }
+    }
+  }
 } // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
@@ -1690,6 +1730,7 @@ inventory::submit! { TestDefinition { name: "financial-reports", func: test_case
 inventory::submit! { TestDefinition { name: "historical-news", func: test_cases::historical_news_impl } }
 inventory::submit! { TestDefinition { name: "scanner", func: test_cases::scanner_impl } }
 inventory::submit! { TestDefinition { name: "option-calculations", func: test_cases::option_calculations_impl } }
+inventory::submit! { TestDefinition { name: "histogram-data", func: test_cases::histogram_data_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 

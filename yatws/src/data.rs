@@ -852,3 +852,27 @@ pub enum ParsedFundamentalData {
   // Add other variants as more report types are supported
   // Error(String), // Could be useful for returning parsing errors directly
 }
+
+/// Represents a single data point in a histogram.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct HistogramEntry {
+  pub price: f64,
+  pub size: f64, // Using f64 for Decimal size
+}
+
+/// State for a histogram data request.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct HistogramDataRequestState {
+  pub req_id: i32,
+  pub contract: Contract,
+  pub use_rth: bool,
+  pub time_period: String,
+  pub items: Vec<HistogramEntry>, // Stores the received histogram data
+  pub completed: bool, // Flag for completion (all data received or error)
+  pub error_code: Option<i32>,
+  pub error_message: Option<String>,
+}
+
+// Default implementation for HistogramDataRequestState can be added if needed,
+// but it's usually constructed with specific request parameters.
