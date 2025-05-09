@@ -74,8 +74,8 @@ use crate::contract::{Bar, Contract, ContractDetails, ScanData, ScannerSubscript
 use crate::scan_parameters::ScanParameterResponse;
 use crate::data::{
   MarketDataSubscription, MarketDataType, MarketDepthRow, MarketDepthSubscription,
-  RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData,
-  TickByTickSubscription, TickOptionComputationData, TickType, HistogramEntry, HistogramDataRequestState, // Added HistogramEntry, HistogramDataRequestState
+  RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData, HistoricalTick,
+  TickByTickSubscription, TickOptionComputationData, TickType, HistogramEntry, HistogramDataRequestState, HistoricalTicksRequestState,
   HistoricalDataRequestState, ScannerSubscriptionState,
 };
 use crate::handler::MarketDataHandler;
@@ -173,6 +173,17 @@ impl CompletableState for HistogramDataRequestState {
   }
 }
 
+impl CompletableState for HistoricalTicksRequestState {
+  fn is_completed(&self) -> bool { self.completed || self.error_code.is_some() }
+  fn mark_completed(&mut self) { self.completed = true; }
+  fn get_error(&self) -> Option<IBKRError> {
+    match (self.error_code, self.error_message.as_ref()) {
+      (Some(code), Some(msg)) => Some(IBKRError::ApiError(code, msg.clone())),
+      _ => None,
+    }
+  }
+}
+
 
 // --- Helper Trait for Downcasting MarketSubscription Enum ---
 
@@ -215,6 +226,11 @@ impl TryIntoStateHelper<HistogramDataRequestState> for MarketSubscription {
     match self { MarketSubscription::HistogramData(s) => Some(s), _ => None }
   }
 }
+impl TryIntoStateHelper<HistoricalTicksRequestState> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut HistoricalTicksRequestState> {
+    match self { MarketSubscription::HistoricalTicks(s) => Some(s), _ => None }
+  }
+}
 // Add others if needed
 
 // Helper methods on the enum to simplify access in the generic wait function
@@ -245,6 +261,7 @@ enum MarketSubscription {
   Scanner(ScannerSubscriptionState), // Added Scanner variant
   OptionCalc(OptionCalculationState),
   HistogramData(HistogramDataRequestState), // Added HistogramData variant
+  HistoricalTicks(HistoricalTicksRequestState),
 }
 
 /// Holds the state for an option calculation request (implied volatility or option price).
@@ -1930,6 +1947,7 @@ impl DataMarketManager {
         MarketSubscription::Scanner(s) => s.completed, // Scanner blocking depends on its completed state
         MarketSubscription::OptionCalc(s) => s.completed, // Option calculation blocking depends on its completed state
         MarketSubscription::HistogramData(s) => s.completed,
+        MarketSubscription::HistoricalTicks(s) => s.completed,
       };
 
       // Extract error fields and completion flag (now safe)
@@ -1942,6 +1960,7 @@ impl DataMarketManager {
         MarketSubscription::Scanner(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
         MarketSubscription::OptionCalc(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
         MarketSubscription::HistogramData(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
+        MarketSubscription::HistoricalTicks(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
       };
 
       *err_code_field = Some(error_code_int); // Store the integer code
@@ -2458,6 +2477,134 @@ impl DataMarketManager {
     }
     Ok(())
   }
+
+  // --- Historical Ticks Methods ---
+
+  /// Requests historical tick data for a contract. This is a non-blocking call.
+  ///
+  /// Data is delivered via the `historical_ticks`, `historical_ticks_bid_ask`,
+  /// or `historical_ticks_last` methods of the `MarketDataHandler` trait.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request data.
+  /// * `start_date_time` - Optional start time for the ticks. Format: "yyyyMMdd HH:mm:ss (zzz)".
+  /// * `end_date_time` - Optional end time for the ticks. If `None`, `start_date_time` must be `None` too, and `number_of_ticks` is used.
+  /// * `number_of_ticks` - Number of ticks to return (max 1000). Use 0 to get all ticks in the date range.
+  /// * `what_to_show` - Type of ticks: "TRADES", "MIDPOINT", or "BID_ASK".
+  /// * `use_rth` - If `true`, include only ticks from regular trading hours.
+  /// * `ignore_size` - For "BID_ASK" ticks, if `true`, sizes are not returned.
+  /// * `misc_options` - A list of `(tag, value)` pairs for additional options (e.g., "tradesLastSale=1").
+  ///
+  /// # Returns
+  /// The request ID (`i32`) assigned to this historical ticks request.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request cannot be encoded, sent, or if server version is too low.
+  pub fn request_historical_ticks(
+    &self,
+    contract: &Contract,
+    start_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    end_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    number_of_ticks: i32,
+    what_to_show: &str,
+    use_rth: bool,
+    ignore_size: bool,
+    misc_options: &[(String, String)],
+  ) -> Result<i32, IBKRError> {
+    info!("Requesting historical ticks: Contract={}, What={}, NumTicks={}, Start={:?}, End={:?}",
+          contract.symbol, what_to_show, number_of_ticks, start_date_time, end_date_time);
+
+    if self.message_broker.get_server_version()? < min_server_ver::HISTORICAL_TICKS {
+      return Err(IBKRError::Unsupported("Server version does not support historical ticks requests.".to_string()));
+    }
+
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_historical_ticks(
+      req_id, contract, start_date_time, end_date_time, number_of_ticks,
+      what_to_show, use_rth, ignore_size, misc_options
+    )?;
+
+    // Initialize and store state
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) {
+        return Err(IBKRError::DuplicateRequestId(req_id));
+      }
+      let state = HistoricalTicksRequestState::new(
+          req_id, contract.clone(), start_date_time, end_date_time, number_of_ticks,
+          what_to_show.to_string(), use_rth, ignore_size, misc_options.to_vec()
+      );
+      subs.insert(req_id, MarketSubscription::HistoricalTicks(state));
+      debug!("Historical ticks request added for ReqID: {}", req_id);
+    }
+
+    self.message_broker.send_message(&request_msg)?;
+    Ok(req_id)
+  }
+
+  /// Requests historical tick data and blocks until the data is received,
+  /// an error occurs, or the timeout is reached.
+  ///
+  /// # Arguments
+  /// * (Same as `request_historical_ticks`)
+  /// * `timeout` - Maximum duration to wait for the data.
+  ///
+  /// # Returns
+  /// A `Vec<HistoricalTick>` containing the historical tick data.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the request fails, times out, or other issues occur.
+  pub fn get_historical_ticks(
+    &self,
+    contract: &Contract,
+    start_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    end_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    number_of_ticks: i32,
+    what_to_show: &str,
+    use_rth: bool,
+    ignore_size: bool,
+    misc_options: &[(String, String)],
+    timeout: Duration,
+  ) -> Result<Vec<HistoricalTick>, IBKRError> {
+    info!("Requesting blocking historical ticks: Contract={}, What={}, NumTicks={}, Timeout={:?}",
+          contract.symbol, what_to_show, number_of_ticks, timeout);
+
+    // 1. Initiate the non-blocking request
+    let req_id = self.request_historical_ticks(
+        contract, start_date_time, end_date_time, number_of_ticks,
+        what_to_show, use_rth, ignore_size, misc_options
+    )?;
+    debug!("Blocking historical ticks request initiated with ReqID: {}", req_id);
+
+    // 2. Wait for completion (signaled by handler setting completed=true)
+    let result_state = self.wait_for_completion(
+      req_id,
+      timeout,
+      |s: &HistoricalTicksRequestState| s.completed,
+      "HistoricalTicks",
+    );
+
+    // 3. Best effort cancel (uses cancel_historical_data message)
+    // Note: cancel_historical_data will attempt to remove the state.
+    // If wait_for_completion already removed it due to error/success, this is fine.
+    if let Err(e) = self.cancel_historical_ticks(req_id) {
+      warn!("Failed to cancel historical ticks request {} after blocking wait: {:?}", req_id, e);
+    }
+
+    // 4. Extract results
+    result_state.map(|state| state.ticks)
+  }
+
+  /// Cancels an ongoing historical ticks request.
+  /// This uses the same underlying TWS message as `cancel_historical_data`.
+  pub fn cancel_historical_ticks(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling historical ticks request (via cancel_historical_data): ReqID={}", req_id);
+    // Historical ticks are cancelled using the CancelHistoricalData message (ID 25)
+    self.cancel_historical_data(req_id) // This will also handle state removal
+  }
 }
 
 // --- Implement MarketDataHandler Trait for DataMarketManager ---
@@ -2773,29 +2920,71 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn historical_ticks(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool) {
-    debug!("Handler: Historical Ticks: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
-    // Store or process historical ticks. Similar logic to historical bars.
-    // Needs state in DataMarketManager if blocking is required.
-    if done {
-      info!("Historical ticks end received for request {}. Notifying waiter.", req_id);
-      // self.request_cond.notify_all();
+  // This is for REQ_HISTORICAL_TICKS with whatToShow = "MIDPOINT"
+  fn historical_ticks(&self, req_id: i32, ticks_data: &[(i64, f64, f64)], done: bool) {
+    debug!("Handler: Historical Ticks (MidPoint): ID={}, Count={}, Done={}", req_id, ticks_data.len(), done);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::HistoricalTicks(state)) = subs.get_mut(&req_id) {
+      for &(time, price, size) in ticks_data {
+        state.ticks.push(HistoricalTick::MidPoint { time, price, size });
+      }
+      if done {
+        state.completed = true;
+        info!("Historical Ticks (MidPoint) end received for request {}. Notifying waiter.", req_id);
+        self.request_cond.notify_all();
+      }
+    } else {
+      warn!("Received historical_ticks (MidPoint) for unknown or non-HistoricalTicks subscription ID: {}", req_id);
     }
   }
 
-  fn historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
-    debug!("Handler: Historical Ticks BidAsk: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
-    if done {
-      info!("Historical ticks bidask end received for request {}. Notifying waiter.", req_id);
-      // self.request_cond.notify_all();
+  // This is for REQ_HISTORICAL_TICKS with whatToShow = "BID_ASK"
+  fn historical_ticks_bid_ask(&self, req_id: i32, ticks_data: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
+    debug!("Handler: Historical Ticks BidAsk: ID={}, Count={}, Done={}", req_id, ticks_data.len(), done);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::HistoricalTicks(state)) = subs.get_mut(&req_id) {
+      for &(time, ref tick_attrib_bid_ask, price_bid, price_ask, size_bid, size_ask) in ticks_data {
+        state.ticks.push(HistoricalTick::BidAsk {
+          time,
+          tick_attrib_bid_ask: tick_attrib_bid_ask.clone(),
+          price_bid,
+          price_ask,
+          size_bid,
+          size_ask,
+        });
+      }
+      if done {
+        state.completed = true;
+        info!("Historical Ticks (BidAsk) end received for request {}. Notifying waiter.", req_id);
+        self.request_cond.notify_all();
+      }
+    } else {
+      warn!("Received historical_ticks_bid_ask for unknown or non-HistoricalTicks subscription ID: {}", req_id);
     }
   }
 
-  fn historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
-    debug!("Handler: Historical Ticks Last: ID={}, Count={}, Done={}", req_id, ticks.len(), done);
-    if done {
-      info!("Historical ticks last end received for request {}. Notifying waiter.", req_id);
-      // self.request_cond.notify_all();
+  // This is for REQ_HISTORICAL_TICKS with whatToShow = "TRADES"
+  fn historical_ticks_last(&self, req_id: i32, ticks_data: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
+    debug!("Handler: Historical Ticks Last: ID={}, Count={}, Done={}", req_id, ticks_data.len(), done);
+    let mut subs = self.subscriptions.lock();
+    if let Some(MarketSubscription::HistoricalTicks(state)) = subs.get_mut(&req_id) {
+      for &(time, ref tick_attrib_last, price, size, ref exchange, ref special_conditions) in ticks_data {
+        state.ticks.push(HistoricalTick::Trade {
+          time,
+          price,
+          size,
+          tick_attrib_last: tick_attrib_last.clone(),
+          exchange: exchange.clone(),
+          special_conditions: special_conditions.clone(),
+        });
+      }
+      if done {
+        state.completed = true;
+        info!("Historical Ticks (Last) end received for request {}. Notifying waiter.", req_id);
+        self.request_cond.notify_all();
+      }
+    } else {
+      warn!("Received historical_ticks_last for unknown or non-HistoricalTicks subscription ID: {}", req_id);
     }
   }
 

@@ -16,8 +16,8 @@ use yatws::{
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
-  contract::{Contract, SecType, OptionRight, Bar}, // Added OptionRight, Bar
-  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData}, // Added TickOptionComputationData
+  contract::{Contract, SecType, OptionRight, Bar},
+  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, HistoricalTick},
   parse_fundamental_xml
 };
 use chrono::{Utc, Duration as ChronoDuration, NaiveDate, Datelike}; // Added Datelike
@@ -1705,6 +1705,58 @@ mod test_cases {
       }
     }
   }
+
+  pub(super) fn historical_ticks_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Get Historical Ticks ---");
+    let data_mgr = client.data_market();
+    let contract = Contract::stock("AAPL"); // Use a liquid stock
+
+    // Request a small number of ticks from the recent past
+    // TWS API: If number_of_ticks is non-zero, start_date_time is ignored if end_date_time is provided.
+    // If number_of_ticks is 0, then the date range is used.
+    // We will request a specific number of ticks ending "now".
+    let end_date_time = Some(Utc::now());
+    let start_date_time = None; // Not used if number_of_ticks > 0 and end_date_time is set
+
+    let number_of_ticks = 10;
+    let what_to_show = "TRADES"; // "TRADES", "MIDPOINT", "BID_ASK"
+    let use_rth = false; // Get ticks outside RTH if available
+    let ignore_size = false; // Relevant for BID_ASK if what_to_show is "BID_ASK"
+    let misc_options = &[];
+    let timeout = Duration::from_secs(30);
+
+    info!(
+      "Requesting {} historical '{}' ticks for {} ending {:?}, RTH={}, Timeout={:?}",
+      number_of_ticks, what_to_show, contract.symbol, end_date_time, use_rth, timeout
+    );
+
+    match data_mgr.get_historical_ticks(
+      &contract,
+      start_date_time,
+      end_date_time,
+      number_of_ticks,
+      what_to_show,
+      use_rth,
+      ignore_size,
+      misc_options,
+      timeout
+    ) {
+      Ok(ticks) => {
+        info!("Successfully received {} historical ticks.", ticks.len());
+        if ticks.is_empty() && number_of_ticks > 0 {
+          warn!("Received 0 historical ticks, though {} were requested. This might be okay depending on market activity/data availability/subscriptions.", number_of_ticks);
+        }
+        for (i, tick) in ticks.iter().enumerate().take(5) { // Log first 5 or fewer
+          info!("  Tick {}: {:?}", i + 1, tick);
+        }
+        Ok(())
+      }
+      Err(e) => {
+        error!("Failed to get historical ticks for {}: {:?}", contract.symbol, e);
+        Err(e.into())
+      }
+    }
+  }
 } // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
@@ -1731,6 +1783,7 @@ inventory::submit! { TestDefinition { name: "historical-news", func: test_cases:
 inventory::submit! { TestDefinition { name: "scanner", func: test_cases::scanner_impl } }
 inventory::submit! { TestDefinition { name: "option-calculations", func: test_cases::option_calculations_impl } }
 inventory::submit! { TestDefinition { name: "histogram-data", func: test_cases::histogram_data_impl } }
+inventory::submit! { TestDefinition { name: "historical-ticks", func: test_cases::historical_ticks_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 

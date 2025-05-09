@@ -876,3 +876,59 @@ pub struct HistogramDataRequestState {
 
 // Default implementation for HistogramDataRequestState can be added if needed,
 // but it's usually constructed with specific request parameters.
+
+/// Represents a single historical tick.
+/// The structure varies depending on what was requested ("TRADES", "BID_ASK", "MIDPOINT").
+#[derive(Debug, Clone)]
+pub enum HistoricalTick {
+  Trade {
+      time: i64, // Unix timestamp
+      price: f64,
+      size: f64, // TWS API sends size as double for historical ticks
+      tick_attrib_last: TickAttribLast,
+      exchange: String,
+      special_conditions: String,
+  },
+  BidAsk {
+      time: i64, // Unix timestamp
+      tick_attrib_bid_ask: TickAttribBidAsk,
+      price_bid: f64,
+      price_ask: f64,
+      size_bid: f64,
+      size_ask: f64,
+  },
+  MidPoint {
+      time: i64, // Unix timestamp
+      price: f64, // Midpoint price
+      size: f64,  // Size associated with the midpoint tick (often 0)
+  },
+}
+
+/// State for a historical ticks data request.
+#[derive(Debug, Clone, Default)]
+pub struct HistoricalTicksRequestState {
+  pub req_id: i32,
+  pub contract: Contract,
+  // Store original request parameters for context
+  pub start_date_time: Option<chrono::DateTime<chrono::Utc>>,
+  pub end_date_time: Option<chrono::DateTime<chrono::Utc>>,
+  pub number_of_ticks: i32,
+  pub what_to_show: String, // "TRADES", "MIDPOINT", "BID_ASK"
+  pub use_rth: bool,
+  pub ignore_size: bool,
+  pub misc_options: Vec<(String, String)>,
+
+  pub ticks: Vec<HistoricalTick>, // Stores the received ticks
+  pub completed: bool, // True when 'done' is received from the historical_ticks_* callback
+  pub error_code: Option<i32>,
+  pub error_message: Option<String>,
+}
+
+impl HistoricalTicksRequestState {
+  pub fn new(req_id: i32, contract: Contract, start_date_time: Option<chrono::DateTime<chrono::Utc>>, end_date_time: Option<chrono::DateTime<chrono::Utc>>, number_of_ticks: i32, what_to_show: String, use_rth: bool, ignore_size: bool, misc_options: Vec<(String, String)>) -> Self {
+      Self {
+          req_id, contract, start_date_time, end_date_time, number_of_ticks, what_to_show, use_rth, ignore_size, misc_options,
+          ticks: Vec::new(), completed: false, error_code: None, error_message: None,
+      }
+  }
+}

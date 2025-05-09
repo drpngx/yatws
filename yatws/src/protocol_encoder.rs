@@ -91,6 +91,7 @@ pub enum OutgoingMessageType {
   CancelPnlSingle = 95,
   ReqHistoricalTicks = 96,
   ReqTickByTickData = 97,
+  // CancelHistoricalTicks uses CancelHistoricalData (25)
   CancelTickByTickData = 98,
   ReqCompletedOrders = 99,
   ReqWshMetaData = 100,
@@ -213,6 +214,7 @@ pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
     Ok(OutgoingMessageType::ReqPnlSingle) => Some("REQ_PNL_SINGLE"),
     Ok(OutgoingMessageType::CancelPnlSingle) => Some("CANCEL_PNL_SINGLE"),
     Ok(OutgoingMessageType::ReqHistoricalTicks) => Some("REQ_HISTORICAL_TICKS"),
+    // Note: CancelHistoricalTicks uses CANCEL_HISTORICAL_DATA
     Ok(OutgoingMessageType::ReqTickByTickData) => Some("REQ_TICK_BY_TICK_DATA"),
     Ok(OutgoingMessageType::CancelTickByTickData) => Some("CANCEL_TICK_BY_TICK_DATA"),
     Ok(OutgoingMessageType::ReqCompletedOrders) => Some("REQ_COMPLETED_ORDERS"),
@@ -303,6 +305,7 @@ impl TryFrom<i32> for OutgoingMessageType {
       x if x == OutgoingMessageType::ReqPnlSingle as i32 => Ok(OutgoingMessageType::ReqPnlSingle),
       x if x == OutgoingMessageType::CancelPnlSingle as i32 => Ok(OutgoingMessageType::CancelPnlSingle),
       x if x == OutgoingMessageType::ReqHistoricalTicks as i32 => Ok(OutgoingMessageType::ReqHistoricalTicks),
+      // Note: CancelHistoricalTicks uses CancelHistoricalData (25)
       x if x == OutgoingMessageType::ReqTickByTickData as i32 => Ok(OutgoingMessageType::ReqTickByTickData),
       x if x == OutgoingMessageType::CancelTickByTickData as i32 => Ok(OutgoingMessageType::CancelTickByTickData),
       x if x == OutgoingMessageType::ReqCompletedOrders as i32 => Ok(OutgoingMessageType::ReqCompletedOrders),
@@ -2688,6 +2691,85 @@ subscription.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelWshEventData as i32)?;
     self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request for historical tick data.
+  pub fn encode_request_historical_ticks(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    start_date_time: Option<DateTime<Utc>>,
+    end_date_time: Option<DateTime<Utc>>,
+    number_of_ticks: i32, // Max 1000. Use 0 for all ticks during the specified period.
+    what_to_show: &str,   // "TRADES", "MIDPOINT", "BID_ASK"
+    use_rth: bool,
+    ignore_size: bool, // For BID_ASK ticks
+    misc_options: &[(String, String)], // TagValue list, semicolon-separated
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request historical ticks: ReqID={}, Contract={}, What={}, NumTicks={}",
+           req_id, contract.symbol, what_to_show, number_of_ticks);
+
+    if self.server_version < min_server_ver::HISTORICAL_TICKS {
+      return Err(IBKRError::Unsupported("Server version does not support historical ticks requests.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqHistoricalTicks as i32)?;
+
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // Encode Contract fields
+    self.write_int_to_cursor(&mut cursor, contract.con_id)?;
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.local_symbol.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.trading_class.as_deref())?;
+    self.write_bool_to_cursor(&mut cursor, contract.include_expired)?;
+
+    // Encode historical tick parameters
+    let start_dt_str = self.format_datetime_tws(start_date_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
+    let end_dt_str = self.format_datetime_tws(end_date_time, "%Y%m%d %H:%M:%S", Some(" UTC"));
+
+    self.write_str_to_cursor(&mut cursor, &start_dt_str)?;
+    self.write_str_to_cursor(&mut cursor, &end_dt_str)?;
+
+    self.write_int_to_cursor(&mut cursor, number_of_ticks)?;
+    self.write_str_to_cursor(&mut cursor, what_to_show)?;
+    self.write_int_to_cursor(&mut cursor, if use_rth { 1 } else { 0 })?; // useRTH is int in protocol
+    self.write_bool_to_cursor(&mut cursor, ignore_size)?;
+
+    // Encode miscOptions as a semicolon-separated string
+    if self.server_version >= min_server_ver::LINKING {
+      if misc_options.is_empty() {
+        self.write_str_to_cursor(&mut cursor, "")?;
+      } else {
+        let misc_options_str = misc_options
+          .iter()
+          .map(|(tag, value)| format!("{}={}", tag, value))
+          .collect::<Vec<String>>()
+          .join(";");
+        self.write_str_to_cursor(&mut cursor, &misc_options_str)?;
+      }
+    } else if !misc_options.is_empty() {
+        warn!("miscOptions provided for historical ticks, but server version {} does not support it (requires {}). Sending empty.",
+              self.server_version, min_server_ver::LINKING);
+        self.write_str_to_cursor(&mut cursor, "")?;
+    }
+    // If server_version < LINKING and misc_options is empty, protocol expects no field here.
+    // The TWS protocol expects fields based on version; if a field isn't supported, it's not sent.
+    // The current implementation of write_str_to_cursor will send an empty string if misc_options is empty
+    // and server_version >= LINKING, which is correct.
+    // If server_version < LINKING, this field is not part of the message structure, so nothing should be appended.
+    // The current logic correctly handles this by not attempting to write miscOptions if server_version < LINKING
+    // unless misc_options is non-empty (which then logs a warning and sends empty).
+
     Ok(self.finish_encoding(cursor))
   }
 } // end impl Encoder
