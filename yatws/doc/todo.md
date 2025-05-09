@@ -40,7 +40,7 @@ method returning a subscription).
 # Missing features from ib insync
 1.  `reqCurrentTime`: Requests the current time from the TWS server.
 2.  `reqAccountUpdatesMulti`: Subscribes to account updates for multiple accounts/models.
-3.  `reqCompletedOrders`: Requests a list of completed orders.
+3.  ~~`reqCompletedOrders`: Requests a list of completed orders.~~
 4.  `reqPnL`: Subscribes to general PnL updates (across accounts/models).
 5.  `cancelPnL`: Cancels the general PnL subscription.
 6.  `reqPnLSingle`: Subscribes to PnL updates for a single position.
@@ -48,7 +48,7 @@ method returning a subscription).
 8.  `reqHistoricalSchedule`: Requests historical trading session schedules for a contract.
 9.  `reqHistoricalTicks`: Requests historical tick data for a contract.
 10. `reqHeadTimeStamp`: Requests the earliest available historical data timestamp for a contract.
-11. `reqHistogramData`: Requests histogram data for a contract.
+11. ~~`reqHistogramData`: Requests histogram data for a contract.~~
 12. `calculateImpliedVolatility`: Requests TWS to calculate implied volatility for an option.
 13. `calculateOptionPrice`: Requests TWS to calculate the option price based on volatility.
 14. ~~`exerciseOptions`: Requests TWS to exercise or lapse an option.~~

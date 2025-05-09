@@ -1031,6 +1031,19 @@ impl OrderManager {
     book.values().map(|order_arc| order_arc.read().clone()).collect()
   }
 
+  /// Retrieves a list of all orders currently known to the `OrderManager`.
+  ///
+  /// This includes orders in the terminal state (filled, cancelled, etc.).
+  /// The returned `Order` objects are clones of their current state.
+  pub fn get_completed_orders(&self) -> Vec<Order> {
+    let book = self.order_book.read();
+    book.values()
+      .map(|order_arc| order_arc.read()) // Get read guard
+      .filter(|order| order.state.is_terminal()) // Use is_terminal() helper
+      .map(|order_guard| order_guard.clone()) // Clone the Order data
+      .collect()
+  }
+
   /// Retrieves a list of all open (non-terminal) orders.
   ///
   /// An order is considered open if its status is not one of:
