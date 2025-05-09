@@ -16,11 +16,11 @@ use yatws::{
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
-  contract::{Contract, SecType},
-  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData}, // Added FundamentalReportType, ParsedFundamentalData
-  parse_fundamental_xml // Added parse_fundamental_xml
+  contract::{Contract, SecType, OptionRight}, // Added OptionRight
+  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData}, // Added TickOptionComputationData
+  parse_fundamental_xml
 };
-use chrono::{Utc, Duration as ChronoDuration, NaiveDate};
+use chrono::{Utc, Duration as ChronoDuration, NaiveDate, Datelike}; // Added Datelike
 
 // --- Test Definition Infrastructure ---
 
@@ -1551,6 +1551,116 @@ mod test_cases {
     }
   }
 
+
+  pub(super) fn option_calculations_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Option Calculations (Implied Vol & Option Price) ---");
+    let data_mgr = client.data_market();
+    let ref_data_mgr = client.data_ref();
+    let timeout = Duration::from_secs(20);
+
+    // 1. Get AAPL stock price
+    let aapl_stock_contract = Contract::stock("AAPL");
+    info!("Fetching current price for AAPL...");
+    let (_bid, _ask, last_price_opt) = data_mgr.get_quote(&aapl_stock_contract, Some(MarketDataType::Delayed), timeout)
+      .context("Failed to get quote for AAPL stock")?;
+    let under_price = match last_price_opt {
+      Some(price) if price > 0.0 => price,
+      _ => {
+        warn!("Could not get valid last price for AAPL. Using placeholder 170.0 for underlying price.");
+        170.0 // Placeholder if live price fails
+      }
+    };
+    info!("Using underlying AAPL price: {:.2}", under_price);
+
+    // 2. Define an AAPL call option contract
+    //    - Find next month's 3rd Friday for expiry
+    //    - Strike price ~10% above current stock price
+    let today = Utc::now();
+    let mut current_month = today.month();
+    let mut current_year = today.year();
+    if current_month == 12 {
+      current_month = 1;
+      current_year += 1;
+    } else {
+      current_month += 1;
+    }
+    let first_of_next_month = NaiveDate::from_ymd_opt(current_year, current_month, 1).unwrap();
+    let days_to_friday = (chrono::Weekday::Fri.number_from_monday() + 7 - first_of_next_month.weekday().number_from_monday()) % 7;
+    let first_friday = first_of_next_month + ChronoDuration::days(days_to_friday as i64);
+    let target_expiry_date = first_friday + ChronoDuration::weeks(2); // 3rd Friday
+    let expiry_str = target_expiry_date.format("%Y%m%d").to_string();
+
+    let target_strike_raw = under_price * 1.10;
+    // Round to nearest $2.50 increment for typical AAPL options, or $5 for higher prices
+    let strike_increment = if target_strike_raw < 200.0 { 2.5 } else { 5.0 };
+    let strike_price = (target_strike_raw / strike_increment).round() * strike_increment;
+
+    info!("Targeting AAPL Call Option: Expiry={}, Strike={:.2}", expiry_str, strike_price);
+
+    let mut option_contract_spec = Contract::option("AAPL", &expiry_str, strike_price, OptionRight::Call, "SMART", "USD");
+
+    // Get full contract details to ensure it's valid and get con_id
+    info!("Fetching contract details for the target option...");
+    let option_details_list = ref_data_mgr.get_contract_details(&option_contract_spec)
+      .context(format!("Failed to get contract details for AAPL option {} C{}", expiry_str, strike_price))?;
+
+    if option_details_list.is_empty() {
+      return Err(anyhow!("No contract details found for the specified AAPL option. Check expiry/strike or market data subscription."));
+    }
+    let option_contract = option_details_list[0].contract.clone();
+    info!("Using option contract: ConID={}, LocalSymbol={}", option_contract.con_id, option_contract.local_symbol.as_deref().unwrap_or("N/A"));
+
+
+    // 3. Calculate Implied Volatility
+    let placeholder_option_price = 2.50; // Placeholder market price for the option
+    info!("Calculating Implied Volatility for {} with OptionPrice={}, UnderPrice={}...",
+          option_contract.local_symbol.as_deref().unwrap_or("AAPL Option"), placeholder_option_price, under_price);
+
+    match data_mgr.calculate_implied_volatility(&option_contract, placeholder_option_price, under_price, timeout) {
+      Ok(computation) => {
+        info!("Successfully calculated Implied Volatility:");
+        log_tick_option_computation(&computation);
+      }
+      Err(e) => {
+        error!("Failed to calculate Implied Volatility: {:?}", e);
+        // Don't fail the whole test, proceed to option price calc
+      }
+    }
+
+    std::thread::sleep(Duration::from_secs(1));
+
+    // 4. Calculate Option Price
+    let placeholder_volatility = 0.30; // Placeholder volatility (30%)
+    info!("Calculating Option Price for {} with Volatility={}, UnderPrice={}...",
+          option_contract.local_symbol.as_deref().unwrap_or("AAPL Option"), placeholder_volatility, under_price);
+
+    match data_mgr.calculate_option_price(&option_contract, placeholder_volatility, 170.0 /* under_price */, timeout) {
+      Ok(computation) => {
+        info!("Successfully calculated Option Price:");
+        log_tick_option_computation(&computation);
+      }
+      Err(e) => {
+        error!("Failed to calculate Option Price: {:?}", e);
+        // Don't fail the whole test if this part fails
+      }
+    }
+
+    Ok(())
+  }
+
+  fn log_tick_option_computation(computation: &TickOptionComputationData) {
+    info!("  TickType: {:?}", computation.tick_type);
+    info!("  TickAttrib: {:?}", computation.tick_attrib);
+    info!("  ImpliedVol: {:?}", computation.implied_vol);
+    info!("  Delta: {:?}", computation.delta);
+    info!("  OptPrice: {:?}", computation.opt_price);
+    info!("  PvDividend: {:?}", computation.pv_dividend);
+    info!("  Gamma: {:?}", computation.gamma);
+    info!("  Vega: {:?}", computation.vega);
+    info!("  Theta: {:?}", computation.theta);
+    info!("  UndPrice: {:?}", computation.und_price);
+  }
+
 } // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
@@ -1575,6 +1685,7 @@ inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases
 inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
 inventory::submit! { TestDefinition { name: "historical-news", func: test_cases::historical_news_impl } }
 inventory::submit! { TestDefinition { name: "scanner", func: test_cases::scanner_impl } }
+inventory::submit! { TestDefinition { name: "option-calculations", func: test_cases::option_calculations_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 

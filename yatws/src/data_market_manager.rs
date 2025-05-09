@@ -82,6 +82,7 @@ use crate::handler::MarketDataHandler;
 use crate::protocol_encoder::Encoder;
 use crate::protocol_decoder::ClientErrorCode;
 use crate::base::IBKRError::Timeout;
+use crate::min_server_ver::min_server_ver;
 use parking_lot::{Condvar, Mutex};
 use chrono::{Utc, TimeZone};
 use std::collections::HashMap;
@@ -225,8 +226,51 @@ enum MarketSubscription {
   MarketDepth(MarketDepthSubscription),
   HistoricalData(HistoricalDataRequestState),
   Scanner(ScannerSubscriptionState), // Added Scanner variant
+  OptionCalc(OptionCalculationState), // Added Option Calculation variant
   // Add Histogram etc. if needed
 }
+
+/// Holds the state for an option calculation request (implied volatility or option price).
+#[derive(Debug, Clone)]
+struct OptionCalculationState {
+  req_id: i32,
+  contract: Contract, // Contract for which calculation is requested
+  result: Option<TickOptionComputationData>, // Stores the result from tickOptionComputation
+  completed: bool,
+  error_code: Option<i32>,
+  error_message: Option<String>,
+}
+
+impl OptionCalculationState {
+  fn new(req_id: i32, contract: Contract) -> Self {
+    Self {
+      req_id,
+      contract,
+      result: None,
+      completed: false,
+      error_code: None,
+      error_message: None,
+    }
+  }
+}
+
+impl CompletableState for OptionCalculationState {
+  fn is_completed(&self) -> bool { self.completed || self.result.is_some() }
+  fn mark_completed(&mut self) { self.completed = true; }
+  fn get_error(&self) -> Option<IBKRError> {
+    match (self.error_code, self.error_message.as_ref()) {
+      (Some(code), Some(msg)) => Some(IBKRError::ApiError(code, msg.clone())),
+      _ => None,
+    }
+  }
+}
+
+impl TryIntoStateHelper<OptionCalculationState> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut OptionCalculationState> {
+    match self { MarketSubscription::OptionCalc(s) => Some(s), _ => None }
+  }
+}
+
 
 /// Manages requests for real-time and historical market data from TWS.
 ///
@@ -1867,6 +1911,7 @@ impl DataMarketManager {
         MarketSubscription::MarketDepth(s) => s.completed,
         MarketSubscription::HistoricalData(_) => true, // Historical is always blocking in this context
         MarketSubscription::Scanner(s) => s.completed, // Scanner blocking depends on its completed state
+        MarketSubscription::OptionCalc(s) => s.completed, // Option calculation blocking depends on its completed state
       };
 
       // Extract error fields and completion flag (now safe)
@@ -1877,6 +1922,7 @@ impl DataMarketManager {
         MarketSubscription::MarketDepth(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
         MarketSubscription::HistoricalData(s) => (&mut s.error_code, &mut s.error_message, &mut s.end_received),
         MarketSubscription::Scanner(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
+        MarketSubscription::OptionCalc(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
       };
 
       *err_code_field = Some(error_code_int); // Store the integer code
@@ -2089,6 +2135,177 @@ impl DataMarketManager {
     Ok(())
   }
 
+  // --- Option Calculation Methods ---
+
+  /// Calculates the implied volatility for an option given its price and the underlying price.
+  /// This is a blocking call.
+  ///
+  /// # Arguments
+  /// * `contract` - The option [`Contract`].
+  /// * `option_price` - The market price of the option.
+  /// * `under_price` - The current price of the underlying asset.
+  /// * `timeout` - Maximum duration to wait for the calculation.
+  ///
+  /// # Returns
+  /// `Ok(TickOptionComputationData)` containing the calculated implied volatility and other greeks.
+  /// `Err(IBKRError)` if the calculation fails or times out.
+  pub fn calculate_implied_volatility(
+    &self,
+    contract: &Contract,
+    option_price: f64,
+    under_price: f64,
+    timeout: Duration,
+  ) -> Result<TickOptionComputationData, IBKRError> {
+    info!("Calculating implied volatility: Contract={}, OptPrice={}, UndPrice={}, Timeout={:?}",
+          contract.local_symbol.as_deref().unwrap_or(&contract.symbol), option_price, under_price, timeout);
+
+    if self.message_broker.get_server_version()? < min_server_ver::REQ_CALC_IMPLIED_VOLAT {
+        return Err(IBKRError::Unsupported("Server version does not support implied volatility calculation.".to_string()));
+    }
+
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_calculate_implied_volatility(
+        req_id, contract, option_price, under_price
+    )?;
+
+    // Initialize and store state
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) {
+        return Err(IBKRError::DuplicateRequestId(req_id));
+      }
+      let state = OptionCalculationState::new(req_id, contract.clone());
+      subs.insert(req_id, MarketSubscription::OptionCalc(state));
+      debug!("Implied volatility calculation request added for ReqID: {}", req_id);
+    }
+
+    self.message_broker.send_message(&request_msg)?;
+
+    // Wait for completion
+    let result_state = self.wait_for_completion(
+      req_id,
+      timeout,
+      |s: &OptionCalculationState| s.result.is_some(),
+      "ImpliedVolatility",
+    );
+
+    // Best effort cancel
+    if let Err(e) = self.cancel_calculate_implied_volatility(req_id) {
+      warn!("Failed to cancel implied volatility calculation request {} after blocking wait: {:?}", req_id, e);
+    }
+
+    result_state.and_then(|state| {
+        state.result.ok_or_else(|| IBKRError::InternalError(format!("Implied volatility result missing for ReqID {}", req_id)))
+    })
+  }
+
+  /// Cancels an ongoing implied volatility calculation request.
+  pub fn cancel_calculate_implied_volatility(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling implied volatility calculation: ReqID={}", req_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_calculate_implied_volatility(req_id)?;
+
+    self.message_broker.send_message(&request_msg)?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed implied volatility calculation state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel implied volatility for unknown or already removed ReqID: {}", req_id);
+      }
+    }
+    Ok(())
+  }
+
+  /// Calculates the option price and greeks given its volatility and the underlying price.
+  /// This is a blocking call.
+  ///
+  /// # Arguments
+  /// * `contract` - The option [`Contract`].
+  /// * `volatility` - The volatility of the option (e.g., 0.20 for 20%).
+  /// * `under_price` - The current price of the underlying asset.
+  /// * `timeout` - Maximum duration to wait for the calculation.
+  ///
+  /// # Returns
+  /// `Ok(TickOptionComputationData)` containing the calculated option price and other greeks.
+  /// `Err(IBKRError)` if the calculation fails or times out.
+  pub fn calculate_option_price(
+    &self,
+    contract: &Contract,
+    volatility: f64,
+    under_price: f64,
+    timeout: Duration,
+  ) -> Result<TickOptionComputationData, IBKRError> {
+    info!("Calculating option price: Contract={}, Volatility={}, UndPrice={}, Timeout={:?}",
+          contract.local_symbol.as_deref().unwrap_or(&contract.symbol), volatility, under_price, timeout);
+
+    if self.message_broker.get_server_version()? < min_server_ver::REQ_CALC_OPTION_PRICE {
+        return Err(IBKRError::Unsupported("Server version does not support option price calculation.".to_string()));
+    }
+
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let request_msg = encoder.encode_request_calculate_option_price(
+        req_id, contract, volatility, under_price
+    )?;
+
+    // Initialize and store state
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.contains_key(&req_id) {
+        return Err(IBKRError::DuplicateRequestId(req_id));
+      }
+      let state = OptionCalculationState::new(req_id, contract.clone());
+      subs.insert(req_id, MarketSubscription::OptionCalc(state));
+      debug!("Option price calculation request added for ReqID: {}", req_id);
+    }
+
+    self.message_broker.send_message(&request_msg)?;
+
+    // Wait for completion
+    let result_state = self.wait_for_completion(
+      req_id,
+      timeout,
+      |s: &OptionCalculationState| s.result.is_some(),
+      "OptionPrice",
+    );
+
+    // Best effort cancel
+    if let Err(e) = self.cancel_calculate_option_price(req_id) {
+      warn!("Failed to cancel option price calculation request {} after blocking wait: {:?}", req_id, e);
+    }
+
+    result_state.and_then(|state| {
+        state.result.ok_or_else(|| IBKRError::InternalError(format!("Option price result missing for ReqID {}", req_id)))
+    })
+  }
+
+  /// Cancels an ongoing option price calculation request.
+  pub fn cancel_calculate_option_price(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling option price calculation: ReqID={}", req_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_cancel_calculate_option_price(req_id)?;
+
+    self.message_broker.send_message(&request_msg)?;
+
+    {
+      let mut subs = self.subscriptions.lock();
+      if subs.remove(&req_id).is_some() {
+        debug!("Removed option price calculation state for ReqID: {}", req_id);
+      } else {
+        warn!("Attempted to cancel option price for unknown or already removed ReqID: {}", req_id);
+      }
+    }
+    Ok(())
+  }
 }
 
 // --- Implement MarketDataHandler Trait for DataMarketManager ---
@@ -2249,13 +2466,24 @@ impl MarketDataHandler for DataMarketManager {
   fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData) {
     trace!("Handler: Tick Option Computation: ID={}, Type={:?}", req_id, data.tick_type);
     let mut subs = self.subscriptions.lock();
-    if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-      // Store the whole computation data struct
-      state.option_computation = Some(data);
-      // Optionally update specific fields like implied vol if needed elsewhere
-      // self.notify_observers(req_id);
-    } else {
-      // warn!("Received tick_option_computation for unknown or non-tick subscription ID: {}", req_id);
+    match subs.get_mut(&req_id) {
+        Some(MarketSubscription::TickData(state)) => {
+            // Store the whole computation data struct for regular market data stream
+            state.option_computation = Some(data);
+            // self.notify_observers(req_id); // If observers are used for streaming option computations
+            // Notify general waiters if this tick was part of a broader request
+            self.request_cond.notify_all();
+        }
+        Some(MarketSubscription::OptionCalc(state)) => {
+            // This is a dedicated option calculation request
+            state.result = Some(data);
+            state.completed = true; // Mark as completed since we got the result
+            debug!("Option calculation result received for ReqID {}. Notifying waiter.", req_id);
+            self.request_cond.notify_all(); // Notify the specific waiter for this calculation
+        }
+        _ => {
+            warn!("Received tick_option_computation for unknown or mismatched subscription ID: {}", req_id);
+        }
     }
   }
 

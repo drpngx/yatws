@@ -49,3 +49,9 @@ py_binary(
     srcs = ["market_scanner.py"],
     deps = ["//:ibapi"],
 )
+
+py_binary(
+    name = "option_price_calc",
+    srcs = ["option_price_calc.py"],
+    deps = ["//:ibapi"],
+)

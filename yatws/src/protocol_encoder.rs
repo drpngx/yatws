@@ -98,7 +98,8 @@ pub enum OutgoingMessageType {
   ReqWshEventData = 102,
   CancelWshEventData = 103,
   ReqUserInfo = 104,
-  // Note: ReqScannerParameters = 24 is handled by its own function, not typically identified this way.
+  // Note: ReqCalcImpliedVolat = 54, ReqCalcOptionPrice = 55, CancelCalcImpliedVolat = 56, CancelCalcOptionPrice = 57
+  // are already defined above.
 }
 
 /// Identifies an outgoing message type based on its raw byte payload prefix.
@@ -220,6 +221,11 @@ pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
     Ok(OutgoingMessageType::ReqWshEventData) => Some("REQ_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::CancelWshEventData) => Some("CANCEL_WSH_EVENT_DATA"),
     Ok(OutgoingMessageType::ReqUserInfo) => Some("REQ_USER_INFO"),
+    // Added Option Calc messages
+    Ok(OutgoingMessageType::ReqCalcImpliedVolat) => Some("REQ_CALC_IMPLIED_VOLAT"),
+    Ok(OutgoingMessageType::ReqCalcOptionPrice) => Some("REQ_CALC_OPTION_PRICE"),
+    Ok(OutgoingMessageType::CancelCalcImpliedVolat) => Some("CANCEL_CALC_IMPLIED_VOLAT"),
+    Ok(OutgoingMessageType::CancelCalcOptionPrice) => Some("CANCEL_CALC_OPTION_PRICE"),
     Err(_) => None, // Unknown type ID
   }
 }
@@ -310,6 +316,12 @@ impl TryFrom<i32> for OutgoingMessageType {
       x if x == OutgoingMessageType::ReqWshEventData as i32 => Ok(OutgoingMessageType::ReqWshEventData),
       x if x == OutgoingMessageType::CancelWshEventData as i32 => Ok(OutgoingMessageType::CancelWshEventData),
       x if x == OutgoingMessageType::ReqUserInfo as i32 => Ok(OutgoingMessageType::ReqUserInfo),
+      // Added Option Calc messages
+      x if x == OutgoingMessageType::ReqCalcImpliedVolat as i32 => Ok(OutgoingMessageType::ReqCalcImpliedVolat),
+      x if x == OutgoingMessageType::ReqCalcOptionPrice as i32 => Ok(OutgoingMessageType::ReqCalcOptionPrice),
+      x if x == OutgoingMessageType::CancelCalcImpliedVolat as i32 => Ok(OutgoingMessageType::CancelCalcImpliedVolat),
+      x if x == OutgoingMessageType::CancelCalcOptionPrice as i32 => Ok(OutgoingMessageType::CancelCalcOptionPrice),
+      // Existing scanner messages
       x if x == OutgoingMessageType::ReqScannerSubscription as i32 => Ok(OutgoingMessageType::ReqScannerSubscription),
       x if x == OutgoingMessageType::CancelScannerSubscription as i32 => Ok(OutgoingMessageType::CancelScannerSubscription),
       x if x == OutgoingMessageType::ReqScannerParameters as i32 => Ok(OutgoingMessageType::ReqScannerParameters),
@@ -1453,7 +1465,7 @@ impl Encoder {
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
-    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_double_to_cursor(&mut cursor, contract.strike.unwrap_or(0.0))?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     if self.server_version >= 15 {
       self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
@@ -2484,6 +2496,131 @@ subscription.".to_string()));
 
     Ok(self.finish_encoding(cursor))
   }
+
+  /// Encodes a request to calculate implied volatility.
+  pub fn encode_request_calculate_implied_volatility(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    option_price: f64,
+    under_price: f64,
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request calculate implied volatility: ReqID={}, ContractSymbol={}, OptPx={}, UndPx={}",
+           req_id, contract.symbol, option_price, under_price); // Log symbol for clarity
+
+    if self.server_version < min_server_ver::REQ_CALC_IMPLIED_VOLAT {
+      return Err(IBKRError::Unsupported("Server version does not support calculate implied volatility request.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqCalcImpliedVolat as i32)?;
+    let version = 3; // Matches Python ibapi version for this message
+
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // --- Encode Contract Fields (modified to match Python reference behavior) ---
+    self.write_int_to_cursor(&mut cursor, 0)?; // conId - Always 0 for these calculation requests
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    self.write_str_to_cursor(&mut cursor, "")?; // multiplier - Always "" for these calculation requests
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_str_to_cursor(&mut cursor, "")?; // localSymbol - Always "" for these calculation requests
+    self.write_str_to_cursor(&mut cursor, "")?; // tradingClass - Always "" for these calculation requests
+
+    // Calculation parameters
+    self.write_double_to_cursor(&mut cursor, option_price)?;
+    self.write_double_to_cursor(&mut cursor, under_price)?;
+
+    // Implied Volatility Options (TagValue list)
+    // Sent as: count, then {tag, value} pairs for each option.
+    if self.server_version >= min_server_ver::LINKING {
+      // The test case passes an empty list of options.
+      // So, send count 0.
+      self.write_int_to_cursor(&mut cursor, 0)?; // Number of implied volatility options
+      self.write_str_to_cursor(&mut cursor, "")?; // Array
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel implied volatility calculation.
+  pub fn encode_cancel_calculate_implied_volatility(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel calculate implied volatility: ReqID={}", req_id);
+    if self.server_version < min_server_ver::REQ_CALC_IMPLIED_VOLAT { // Same min version as req
+      return Err(IBKRError::Unsupported("Server version does not support implied volatility calculation cancellation.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelCalcImpliedVolat as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to calculate option price.
+  pub fn encode_request_calculate_option_price(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    volatility: f64,
+    under_price: f64,
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request calculate option price: ReqID={}, ContractSymbol={}, Vol={}, UndPx={}",
+           req_id, contract.symbol, volatility, under_price); // Log symbol for clarity
+
+    if self.server_version < min_server_ver::REQ_CALC_OPTION_PRICE {
+      return Err(IBKRError::Unsupported("Server version does not support calculate option price request.".to_string()));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqCalcOptionPrice as i32)?;
+    let version = 3;
+
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    // --- Encode Contract Fields (modified to match Python reference behavior) ---
+    self.write_int_to_cursor(&mut cursor, 0)?; // conId - Always 0 for these calculation requests
+    self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
+    self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
+    self.write_str_to_cursor(&mut cursor, "")?; // multiplier - Always "" for these calculation requests
+    self.write_str_to_cursor(&mut cursor, &contract.exchange)?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.primary_exchange.as_deref())?;
+    self.write_str_to_cursor(&mut cursor, &contract.currency)?;
+    self.write_str_to_cursor(&mut cursor, "")?; // localSymbol - Always "" for these calculation requests
+    self.write_str_to_cursor(&mut cursor, "")?; // tradingClass - Always "" for these calculation requests
+
+    // Calculation parameters
+    self.write_double_to_cursor(&mut cursor, volatility)?;
+    self.write_double_to_cursor(&mut cursor, under_price)?;
+
+    // Option Price Options (TagValue list)
+    // Sent as: count, then {tag, value} pairs for each option.
+    if self.server_version >= min_server_ver::LINKING {
+      // The test case passes an empty list of options.
+      // So, send count 0.
+      self.write_int_to_cursor(&mut cursor, 0)?; // Number of option price options
+      self.write_str_to_cursor(&mut cursor, "")?; // Array
+    }
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel option price calculation.
+  pub fn encode_cancel_calculate_option_price(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel calculate option price: ReqID={}", req_id);
+    if self.server_version < min_server_ver::REQ_CALC_OPTION_PRICE { // Same min version as req
+      return Err(IBKRError::Unsupported("Server version does not support option price calculation cancellation.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelCalcOptionPrice as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
 
   /// Encodes a request to set the market data type.
   pub fn encode_request_market_data_type(&self, market_data_type: MarketDataType) -> Result<Vec<u8>, IBKRError> {
