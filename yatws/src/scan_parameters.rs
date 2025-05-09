@@ -256,44 +256,159 @@ pub struct InstrumentConfiguration {
   pub advanced_filter: AdvancedFilter,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+// Add this enum definition before the ScanParameterResponse struct
+#[derive(Debug, Deserialize, Serialize)]
+enum ScanParameterResponseItem {
+  #[serde(rename = "InstrumentList")]
+  InstrumentList(InstrumentList),
+  #[serde(rename = "LocationTree")]
+  LocationTree(LocationTree),
+  #[serde(rename = "ScanTypeList")]
+  ScanTypeList(ScanTypeList),
+  #[serde(rename = "SettingList")]
+  SettingList(SettingList),
+  #[serde(rename = "FilterList")] // This will capture each <FilterList> tag
+  FilterList(FilterList),
+  #[serde(rename = "ScannerLayoutList")]
+  ScannerLayoutList(ScannerLayoutList),
+  #[serde(rename = "InstrumentGroupList")]
+  InstrumentGroupList(InstrumentGroupList),
+  #[serde(rename = "SimilarProductsDefaults")]
+  SimilarProductsDefaults(SimilarProductsDefaults),
+  #[serde(rename = "MainScreenDefaultTickers")]
+  MainScreenDefaultTickers(MainScreenDefaultTickers),
+  #[serde(rename = "ColumnSets")]
+  ColumnSets(ColumnSets),
+  #[serde(rename = "SidecarScannerDefaults")]
+  SidecarScannerDefaults(SidecarScannerDefaults),
+  #[serde(rename = "AdvancedScannerDefaults")]
+  AdvancedScannerDefaults(AdvancedScannerDefaults),
+  // Add any other direct child elements of ScanParameterResponse if they exist
+}
+
+#[derive(Debug, Serialize)] // Deserialize will be custom
 #[serde(rename = "ScanParameterResponse")]
 pub struct ScanParameterResponse {
-  #[serde(rename = "InstrumentList", default, skip_serializing_if = "Vec::is_empty")]
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
   pub instrument_lists: Vec<InstrumentList>,
-
-  #[serde(rename = "LocationTree")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub location_tree: Option<LocationTree>,
-
-  #[serde(rename = "ScanTypeList")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub scan_type_list: Option<ScanTypeList>,
-
-  #[serde(rename = "SettingList")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub setting_list: Option<SettingList>,
-
-  #[serde(rename = "FilterList")]
-  pub filter_list: Option<FilterList>,
-
-  #[serde(rename = "ScannerLayoutList")]
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub filter_lists: Vec<FilterList>, // This will be populated by custom logic
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub scanner_layout_list: Option<ScannerLayoutList>,
-
-  #[serde(rename = "InstrumentGroupList")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub instrument_group_list: Option<InstrumentGroupList>,
-
-  #[serde(rename = "SimilarProductsDefaults")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub similar_products_defaults: Option<SimilarProductsDefaults>,
-
-  #[serde(rename = "MainScreenDefaultTickers")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub main_screen_default_tickers: Option<MainScreenDefaultTickers>,
-
-  #[serde(rename = "ColumnSets")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub column_sets: Option<ColumnSets>,
-
-  #[serde(rename = "SidecarScannerDefaults")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub sidecar_scanner_defaults: Option<SidecarScannerDefaults>,
-
-  #[serde(rename = "AdvancedScannerDefaults")]
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub advanced_scanner_defaults: Option<AdvancedScannerDefaults>,
+}
+
+impl<'de> Deserialize<'de> for ScanParameterResponse {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    #[derive(Deserialize)]
+    struct ScanParameterResponseHelper {
+      #[serde(default, rename = "$value")]
+      items: Vec<ScanParameterResponseItem>,
+      // No attributes defined on ScanParameterResponse tag itself in the current struct
+    }
+
+    let helper = ScanParameterResponseHelper::deserialize(deserializer)?;
+
+    let mut instrument_lists = Vec::new();
+    let mut location_tree = None;
+    let mut scan_type_list = None;
+    let mut setting_list = None;
+    let mut filter_lists = Vec::new(); // Initialize as empty Vec
+    let mut scanner_layout_list = None;
+    let mut instrument_group_list = None;
+    let mut similar_products_defaults = None;
+    let mut main_screen_default_tickers = None;
+    let mut column_sets = None;
+    let mut sidecar_scanner_defaults = None;
+    let mut advanced_scanner_defaults = None;
+
+    for item in helper.items {
+      match item {
+        ScanParameterResponseItem::InstrumentList(val) => {
+          // If XML can have multiple <InstrumentList> tags at the top level of ScanParameterResponse
+          instrument_lists.push(val);
+        }
+        ScanParameterResponseItem::LocationTree(val) => {
+          if location_tree.is_some() { /* TODO: Error: duplicate LocationTree */ }
+          location_tree = Some(val);
+        }
+        ScanParameterResponseItem::ScanTypeList(val) => {
+          if scan_type_list.is_some() { /* TODO: Error: duplicate ScanTypeList */ }
+          scan_type_list = Some(val);
+        }
+        ScanParameterResponseItem::SettingList(val) => {
+          if setting_list.is_some() { /* TODO: Error: duplicate SettingList */ }
+          setting_list = Some(val);
+        }
+        ScanParameterResponseItem::FilterList(val) => {
+          filter_lists.push(val); // This explicitly appends each FilterList found
+        }
+        ScanParameterResponseItem::ScannerLayoutList(val) => {
+          if scanner_layout_list.is_some() { /* TODO: Error: duplicate ScannerLayoutList */ }
+          scanner_layout_list = Some(val);
+        }
+        ScanParameterResponseItem::InstrumentGroupList(val) => {
+          if instrument_group_list.is_some() { /* TODO: Error: duplicate InstrumentGroupList */ }
+          instrument_group_list = Some(val);
+        }
+        ScanParameterResponseItem::SimilarProductsDefaults(val) => {
+          if similar_products_defaults.is_some() { /* TODO: Error: duplicate SimilarProductsDefaults */ }
+          similar_products_defaults = Some(val);
+        }
+        ScanParameterResponseItem::MainScreenDefaultTickers(val) => {
+          if main_screen_default_tickers.is_some() { /* TODO: Error: duplicate MainScreenDefaultTickers */ }
+          main_screen_default_tickers = Some(val);
+        }
+        ScanParameterResponseItem::ColumnSets(val) => {
+          if column_sets.is_some() { /* TODO: Error: duplicate ColumnSets */ }
+          column_sets = Some(val);
+        }
+        ScanParameterResponseItem::SidecarScannerDefaults(val) => {
+          if sidecar_scanner_defaults.is_some() { /* TODO: Error: duplicate SidecarScannerDefaults */ }
+          sidecar_scanner_defaults = Some(val);
+        }
+        ScanParameterResponseItem::AdvancedScannerDefaults(val) => {
+          if advanced_scanner_defaults.is_some() { /* TODO: Error: duplicate AdvancedScannerDefaults */ }
+          advanced_scanner_defaults = Some(val);
+        }
+      }
+    }
+
+    Ok(ScanParameterResponse {
+      instrument_lists,
+      location_tree,
+      scan_type_list,
+      setting_list,
+      filter_lists,
+      scanner_layout_list,
+      instrument_group_list,
+      similar_products_defaults,
+      main_screen_default_tickers,
+      column_sets,
+      sidecar_scanner_defaults,
+      advanced_scanner_defaults,
+    })
+  }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1279,8 +1394,8 @@ pub struct ScannerLayout {
   #[serde(rename = "LayoutComponent", default, skip_serializing_if = "Vec::is_empty")]
   pub layout_components: Vec<LayoutComponent>,
 
-  #[serde(rename = "FilterList")]
-  pub filter_list: FilterList,
+  #[serde(rename = "FilterList", default, skip_serializing_if = "Vec::is_empty")]
+  pub filter_lists: Vec<FilterList>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
