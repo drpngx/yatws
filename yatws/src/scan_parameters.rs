@@ -703,7 +703,6 @@ pub struct Value {
   pub display_name: String,
 }
 
-// Add before or near RangeFilter definition
 #[derive(Debug, Deserialize, Serialize)]
 enum RangeFilterItem {
   #[serde(rename = "id")]
@@ -720,6 +719,8 @@ enum RangeFilterItem {
   Abbrev(String),
   #[serde(rename = "access")]
   Access(String),
+  #[serde(rename = "rawId")]
+  RawId(String),
   #[serde(rename = "volatilityUnits")]
   VolatilityUnits(String),
   #[serde(rename = "minTwsBuild")]
@@ -752,6 +753,8 @@ pub struct RangeFilter {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub access: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub raw_id: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   pub volatility_units: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub min_tws_build: Option<i64>,
@@ -783,13 +786,14 @@ impl<'de> Deserialize<'de> for RangeFilter {
     let mut id = None;
     let mut category = None;
     let mut histogram = None;
-    let mut vendor = None;
     let mut refstr = None;
     let mut abbrev = None;
     let mut access = None;
+    let mut raw_id = None;
     let mut volatility_units = None;
     let mut min_tws_build = None;
     let mut reuters = None;
+    let mut vendor = None;
     let mut columns_data: Option<Columns> = None;
     let mut abstract_fields = Vec::new();
     let mut skip_validation = None;
@@ -803,6 +807,7 @@ impl<'de> Deserialize<'de> for RangeFilter {
         RangeFilterItem::Ref(s) => refstr = Some(s),
         RangeFilterItem::Abbrev(s) => abbrev = Some(s),
         RangeFilterItem::Access(s) => access = Some(s),
+        RangeFilterItem::RawId(s) => raw_id = Some(s),
         RangeFilterItem::VolatilityUnits(s) => volatility_units = Some(s),
         RangeFilterItem::MinTwsBuild(i) => min_tws_build = Some(i),
         RangeFilterItem::Reuters(s) => reuters = Some(s),
@@ -820,6 +825,7 @@ impl<'de> Deserialize<'de> for RangeFilter {
       refstr,
       abbrev,
       access,
+      raw_id,
       volatility_units,
       min_tws_build,
       reuters,
@@ -843,6 +849,10 @@ enum SimpleFilterItem {
   Abbrev(String), // abbrev is Option<String> in SimpleFilter, so this is fine
   #[serde(rename = "access")]
   Access(String),
+  #[serde(rename = "rawId")]
+  RawId(String),
+  #[serde(rename = "vendor")]
+  Vendor(String),
   #[serde(rename = "Columns")]
   Columns(Columns),
   #[serde(rename = "AbstractField")]
@@ -863,6 +873,10 @@ pub struct SimpleFilter {
   pub abbrev: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub access: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub raw_id: Option<String>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub vendor: Option<String>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub columns: Option<Columns>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -890,6 +904,8 @@ impl<'de> Deserialize<'de> for SimpleFilter {
     let mut histogram = None;
     let mut abbrev = None;
     let mut access = None;
+    let mut raw_id = None;
+    let mut vendor = None;
     let mut columns_data: Option<Columns> = None;
     let mut abstract_fields = Vec::new();
     let mut skip_validation = None;
@@ -901,6 +917,8 @@ impl<'de> Deserialize<'de> for SimpleFilter {
         SimpleFilterItem::Histogram(s) => histogram = Some(s),
         SimpleFilterItem::Abbrev(s) => abbrev = Some(s),
         SimpleFilterItem::Access(s) => access = Some(s),
+        SimpleFilterItem::RawId(s) => raw_id = Some(s),
+        SimpleFilterItem::Vendor(s) => vendor = Some(s),
         SimpleFilterItem::Columns(c) => columns_data = Some(c),
         SimpleFilterItem::AbstractField(af) => abstract_fields.push(af),
         SimpleFilterItem::SkipValidation(s) => skip_validation = Some(s),
@@ -913,6 +931,8 @@ impl<'de> Deserialize<'de> for SimpleFilter {
       histogram,
       abbrev,
       access,
+      raw_id,
+      vendor,
       columns: columns_data,
       abstract_fields,
       skip_validation,
