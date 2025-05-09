@@ -1,7 +1,9 @@
 use crate::base::IBKRError;
-use crate::contract::{Contract, Bar, ScannerSubscription, ScanData};
+use crate::contract::{Contract, Bar, ScannerSubscription, ScanData, WhatToShow}; // Added WhatToShow
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fmt; // Add this
+use std::str::FromStr; // Add this
 use num_enum::TryFromPrimitive;
 
 
@@ -146,6 +148,136 @@ pub enum TickType {
   Unknown = -1, // For unhandled cases
 }
 
+/// Enum representing the valid generic tick type IDs for market data requests.
+/// These are typically numeric strings like "100", "101", "233", etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GenericTickType {
+  OptionVolume = 100, // TickType 100: Option Volume (Vol. / Avg. Vol)
+  OptionOpenInterest = 101, // TickType 101: Option Open Interest
+  HistoricalVolatility = 104, // TickType 104: Historical Volatility (100%)
+  AverageOptionVolume = 105, // TickType 105: Average Opt. Volume (30-day avg)
+  OptionImpliedVolatility = 106, // TickType 106: Option Implied Vol. (100%)
+  IndexFuturePremium = 162, // TickType 162: Index Future Premium
+  MiscellaneousStats = 165, // TickType 165: Misc. Stats (High/Low/Avg Volume)
+  MarketPrice = 221, // TickType 221: Mark Price (used in TWS P&L calculations)
+  AuctionValues = 225, // TickType 225: Auction values (volume, price and imbalance)
+  RtVolumeTimestamp = 233, // TickType 233: RTVolume - contains last trade, last volume, last price, total volume, VWAP, and single trade flag
+  Shortable = 236, // TickType 236: Shortable
+  FundamentalRatios = 258, // TickType 258: Fundamental Ratios
+  NewsTick = 292, // TickType 292: News
+  TradeCount = 293, // TickType 293: Trade Count for the day
+  TradeRate = 294, // TickType 294: Trade Rate per minute
+  VolumeRate = 295, // TickType 295: Volume Rate per minute
+  LastRthTrade = 318, // TickType 318: Last RTH Trade
+  RtHistoricalVolatility = 370, // TickType 370: Real-time Historical Volatility
+  IbDividends = 377, // TickType 377: IB Dividends
+  BondFactorMultiplier = 381, // TickType 381: Bond Factor Multiplier
+  RegulatoryImbalance = 384, // TickType 384: Regulatory Imbalance
+  NewsFeed = 387, // TickType 387: News Feed
+  CompanyName = 388, // TickType 388: Company Name
+  ShortTermVolume = 391, // TickType 391: Short Term Volume
+  EtfNavX = 407, // TickType 407: ETF NAV X
+  CreditmanMarkPrice = 411, // TickType 411: Creditman Mark Price
+  CreditmanSlowMarkPrice = 414, // TickType 414: Creditman Slow Mark Price
+  EtfNavLast = 514, // TickType 514: ETF NAV Last
+  EtfNavFrozenLast = 515, // TickType 515: ETF NAV Frozen Last
+  EtfNavHighLow = 516, // TickType 516: ETF NAV High/Low
+  SocialMarketAnalytics = 517, // TickType 517: Social Market Analytics
+  EstimatedIpoMidpoint = 518, // TickType 518: Estimated IPO Midpoint
+  FinalIpoLast = 519, // TickType 519: Final IPO Last
+  DelayedEtfNavLast = 523, // TickType 523: Delayed ETF NAV Last
+  DelayedEtfNavFrozenLast = 524, // TickType 524: Delayed ETF NAV Frozen Last
+  DelayedEtfNavHighLow = 525, // TickType 525: Delayed ETF NAV High/Low
+  // Add more as needed from https://interactivebrokers.github.io/tws-api/generic_tick_types.html
+}
+
+impl fmt::Display for GenericTickType {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", *self as i32)
+  }
+}
+
+impl FromStr for GenericTickType {
+  type Err = IBKRError;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    let val = s.parse::<i32>().map_err(|_| IBKRError::ParseError(format!("Invalid GenericTickType string: {}", s)))?;
+    match val {
+      100 => Ok(GenericTickType::OptionVolume),
+      101 => Ok(GenericTickType::OptionOpenInterest),
+      104 => Ok(GenericTickType::HistoricalVolatility),
+      105 => Ok(GenericTickType::AverageOptionVolume),
+      106 => Ok(GenericTickType::OptionImpliedVolatility),
+      162 => Ok(GenericTickType::IndexFuturePremium),
+      165 => Ok(GenericTickType::MiscellaneousStats),
+      221 => Ok(GenericTickType::MarketPrice),
+      225 => Ok(GenericTickType::AuctionValues),
+      233 => Ok(GenericTickType::RtVolumeTimestamp),
+      236 => Ok(GenericTickType::Shortable),
+      258 => Ok(GenericTickType::FundamentalRatios),
+      292 => Ok(GenericTickType::NewsTick),
+      293 => Ok(GenericTickType::TradeCount),
+      294 => Ok(GenericTickType::TradeRate),
+      295 => Ok(GenericTickType::VolumeRate),
+      318 => Ok(GenericTickType::LastRthTrade),
+      370 => Ok(GenericTickType::RtHistoricalVolatility),
+      377 => Ok(GenericTickType::IbDividends),
+      381 => Ok(GenericTickType::BondFactorMultiplier),
+      384 => Ok(GenericTickType::RegulatoryImbalance),
+      387 => Ok(GenericTickType::NewsFeed),
+      388 => Ok(GenericTickType::CompanyName),
+      391 => Ok(GenericTickType::ShortTermVolume),
+      407 => Ok(GenericTickType::EtfNavX),
+      411 => Ok(GenericTickType::CreditmanMarkPrice),
+      414 => Ok(GenericTickType::CreditmanSlowMarkPrice),
+      514 => Ok(GenericTickType::EtfNavLast),
+      515 => Ok(GenericTickType::EtfNavFrozenLast),
+      516 => Ok(GenericTickType::EtfNavHighLow),
+      517 => Ok(GenericTickType::SocialMarketAnalytics),
+      518 => Ok(GenericTickType::EstimatedIpoMidpoint),
+      519 => Ok(GenericTickType::FinalIpoLast),
+      523 => Ok(GenericTickType::DelayedEtfNavLast),
+      524 => Ok(GenericTickType::DelayedEtfNavFrozenLast),
+      525 => Ok(GenericTickType::DelayedEtfNavHighLow),
+      _ => Err(IBKRError::ParseError(format!("Unknown GenericTickType value: {}", val))),
+    }
+  }
+}
+
+/// Enum representing the type of tick-by-tick data being requested.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TickByTickRequestType {
+  Last,
+  AllLast,
+  BidAsk,
+  MidPoint,
+}
+
+impl fmt::Display for TickByTickRequestType {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      TickByTickRequestType::Last => write!(f, "Last"),
+      TickByTickRequestType::AllLast => write!(f, "AllLast"),
+      TickByTickRequestType::BidAsk => write!(f, "BidAsk"),
+      TickByTickRequestType::MidPoint => write!(f, "MidPoint"),
+    }
+  }
+}
+
+impl FromStr for TickByTickRequestType {
+  type Err = IBKRError;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      "Last" => Ok(TickByTickRequestType::Last),
+      "AllLast" => Ok(TickByTickRequestType::AllLast),
+      "BidAsk" => Ok(TickByTickRequestType::BidAsk),
+      "MidPoint" => Ok(TickByTickRequestType::MidPoint),
+      _ => Err(IBKRError::ParseError(format!("Invalid TickByTickRequestType string: {}", s))),
+    }
+  }
+}
+
 impl TickType {
   /// Returns the corresponding size tick type for a given price tick type, if applicable.
   pub fn get_corresponding_size_tick(&self) -> Option<TickType> {
@@ -173,7 +305,7 @@ impl Default for TickType {
 pub struct MarketDataSubscription {
   pub req_id: i32, // TWS request ID
   pub contract: Contract,
-  pub generic_tick_list: String,
+  pub generic_tick_list: Vec<GenericTickType>, // Changed from String
   pub snapshot: bool,
   pub regulatory_snapshot: bool,
   pub mkt_data_options: Vec<(String, String)>, // Placeholder for TagValue
@@ -234,7 +366,7 @@ impl MarketDataSubscription {
   pub fn new(
     req_id: i32,
     contract: Contract,
-    generic_tick_list: String,
+    generic_tick_list: Vec<GenericTickType>, // Changed from String
     snapshot: bool,
     regulatory_snapshot: bool,
     mkt_data_options: Vec<(String, String)>,
@@ -242,7 +374,7 @@ impl MarketDataSubscription {
     MarketDataSubscription {
       req_id,
       contract,
-      generic_tick_list,
+      generic_tick_list, // Store the Vec
       snapshot,
       regulatory_snapshot,
       mkt_data_options,
@@ -297,7 +429,7 @@ pub struct RealTimeBarSubscription {
   pub req_id: i32,
   pub contract: Contract,
   pub bar_size: i32, // e.g., 5 for 5 seconds
-  pub what_to_show: String,
+  pub what_to_show: WhatToShow, // Changed from String
   pub use_rth: bool,
   pub rt_bar_options: Vec<(String, String)>, // Placeholder for TagValue
   // --- Live Data ---
@@ -315,7 +447,7 @@ pub struct RealTimeBarSubscription {
 pub struct TickByTickSubscription {
   pub req_id: i32,
   pub contract: Contract,
-  pub tick_type: String, // "Last", "AllLast", "BidAsk", "MidPoint"
+  pub tick_type: TickByTickRequestType, // Changed from String
   pub number_of_ticks: i32,
   pub ignore_size: bool,
   // --- Live Data ---
@@ -882,25 +1014,25 @@ pub struct HistogramDataRequestState {
 #[derive(Debug, Clone)]
 pub enum HistoricalTick {
   Trade {
-      time: i64, // Unix timestamp
-      price: f64,
-      size: f64, // TWS API sends size as double for historical ticks
-      tick_attrib_last: TickAttribLast,
-      exchange: String,
-      special_conditions: String,
+    time: i64, // Unix timestamp
+    price: f64,
+    size: f64, // TWS API sends size as double for historical ticks
+    tick_attrib_last: TickAttribLast,
+    exchange: String,
+    special_conditions: String,
   },
   BidAsk {
-      time: i64, // Unix timestamp
-      tick_attrib_bid_ask: TickAttribBidAsk,
-      price_bid: f64,
-      price_ask: f64,
-      size_bid: f64,
-      size_ask: f64,
+    time: i64, // Unix timestamp
+    tick_attrib_bid_ask: TickAttribBidAsk,
+    price_bid: f64,
+    price_ask: f64,
+    size_bid: f64,
+    size_ask: f64,
   },
   MidPoint {
-      time: i64, // Unix timestamp
-      price: f64, // Midpoint price
-      size: f64,  // Size associated with the midpoint tick (often 0)
+    time: i64, // Unix timestamp
+    price: f64, // Midpoint price
+    size: f64,  // Size associated with the midpoint tick (often 0)
   },
 }
 
@@ -913,7 +1045,7 @@ pub struct HistoricalTicksRequestState {
   pub start_date_time: Option<chrono::DateTime<chrono::Utc>>,
   pub end_date_time: Option<chrono::DateTime<chrono::Utc>>,
   pub number_of_ticks: i32,
-  pub what_to_show: String, // "TRADES", "MIDPOINT", "BID_ASK"
+  pub what_to_show: WhatToShow, // Changed from String
   pub use_rth: bool,
   pub ignore_size: bool,
   pub misc_options: Vec<(String, String)>,
@@ -925,10 +1057,10 @@ pub struct HistoricalTicksRequestState {
 }
 
 impl HistoricalTicksRequestState {
-  pub fn new(req_id: i32, contract: Contract, start_date_time: Option<chrono::DateTime<chrono::Utc>>, end_date_time: Option<chrono::DateTime<chrono::Utc>>, number_of_ticks: i32, what_to_show: String, use_rth: bool, ignore_size: bool, misc_options: Vec<(String, String)>) -> Self {
-      Self {
-          req_id, contract, start_date_time, end_date_time, number_of_ticks, what_to_show, use_rth, ignore_size, misc_options,
-          ticks: Vec::new(), completed: false, error_code: None, error_message: None,
-      }
+  pub fn new(req_id: i32, contract: Contract, start_date_time: Option<chrono::DateTime<chrono::Utc>>, end_date_time: Option<chrono::DateTime<chrono::Utc>>, number_of_ticks: i32, what_to_show: WhatToShow, use_rth: bool, ignore_size: bool, misc_options: Vec<(String, String)>) -> Self { // Changed what_to_show type
+    Self {
+      req_id, contract, start_date_time, end_date_time, number_of_ticks, what_to_show, use_rth, ignore_size, misc_options,
+      ticks: Vec::new(), completed: false, error_code: None, error_message: None,
+    }
   }
 }

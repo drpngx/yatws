@@ -70,13 +70,13 @@
 
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
-use crate::contract::{Bar, Contract, ContractDetails, ScanData, ScannerSubscription}; // Added ScanData, ScannerSubscription
+use crate::contract::{Bar, Contract, ContractDetails, ScanData, ScannerSubscription, WhatToShow}; // Added WhatToShow
 use crate::scan_parameters::ScanParameterResponse;
 use crate::data::{
   MarketDataSubscription, MarketDataType, MarketDepthRow, MarketDepthSubscription,
   RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData, HistoricalTick,
   TickByTickSubscription, TickOptionComputationData, TickType, HistogramEntry, HistogramDataRequestState, HistoricalTicksRequestState,
-  HistoricalDataRequestState, ScannerSubscriptionState,
+  HistoricalDataRequestState, ScannerSubscriptionState, GenericTickType, TickByTickRequestType, // Added GenericTickType, TickByTickRequestType
 };
 use crate::handler::MarketDataHandler;
 use crate::protocol_encoder::Encoder;
@@ -897,25 +897,32 @@ impl DataMarketManager {
   pub fn request_market_data(
     &self,
     contract: &Contract,
-    generic_tick_list: &str, // e.g., "100,101,104,106,165,233,236,258"
+    generic_tick_list: &[GenericTickType], // Changed from &str
     snapshot: bool,
     regulatory_snapshot: bool, // Requires TWS 963+
     mkt_data_options: &[(String, String)], // TagValue list
     market_data_type: Option<MarketDataType>, // Added parameter
   ) -> Result<i32, IBKRError> {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
-    info!("Requesting market data: Contract={}, Snapshot={}, RegSnapshot={}, Type={:?}",
-          contract.symbol, snapshot, regulatory_snapshot, desired_mkt_data_type);
+    // Convert generic_tick_list to comma-separated string for logging and encoding
+    let generic_tick_list_str = generic_tick_list
+      .iter()
+      .map(|t| t.to_string())
+      .collect::<Vec<String>>()
+      .join(",");
+
+    info!("Requesting market data: Contract={}, GenericTicks='{}', Snapshot={}, RegSnapshot={}, Type={:?}",
+          contract.symbol, generic_tick_list_str, snapshot, regulatory_snapshot, desired_mkt_data_type);
 
     // Set market data type if needed before sending the request
     self.set_market_data_type_if_needed(desired_mkt_data_type)?;
 
     let req_id = self.message_broker.next_request_id();
-    let server_version = self.message_broker.get_server_version()?; // Re-fetch in case it changed? Unlikely.
+    let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_market_data(
-      req_id, contract, generic_tick_list, snapshot, regulatory_snapshot, mkt_data_options,
+      req_id, contract, &generic_tick_list_str, snapshot, regulatory_snapshot, mkt_data_options,
     )?;
 
     // Initialize and store state
@@ -927,7 +934,7 @@ impl DataMarketManager {
       let mut state = MarketDataSubscription::new(
         req_id,
         contract.clone(),
-        generic_tick_list.to_string(),
+        generic_tick_list.to_vec(), // Store the Vec<GenericTickType>
         snapshot,
         regulatory_snapshot,
         mkt_data_options.to_vec(),
@@ -987,7 +994,7 @@ impl DataMarketManager {
   pub fn get_market_data<F>(
     &self,
     contract: &Contract,
-    generic_tick_list: &str,
+    generic_tick_list: &[GenericTickType], // Changed from &str
     snapshot: bool, // Note: For true snapshots, get_quote might be simpler
     regulatory_snapshot: bool,
     mkt_data_options: &[(String, String)],
@@ -999,15 +1006,20 @@ impl DataMarketManager {
     F: FnMut(&MarketDataSubscription) -> bool,
   {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
-    info!("Requesting blocking market data: Contract={}, Snapshot={}, Type={:?}, Timeout={:?}",
-          contract.symbol, snapshot, desired_mkt_data_type, timeout);
+    let generic_tick_list_str = generic_tick_list // For logging
+      .iter()
+      .map(|t| t.to_string())
+      .collect::<Vec<String>>()
+      .join(",");
+    info!("Requesting blocking market data: Contract={}, GenericTicks='{}', Snapshot={}, Type={:?}, Timeout={:?}",
+          contract.symbol, generic_tick_list_str, snapshot, desired_mkt_data_type, timeout);
 
     // Note: set_market_data_type_if_needed is called *inside* request_market_data
 
     // 1. Initiate the non-blocking request (gets req_id and stores initial state)
     let req_id = self.request_market_data(
       contract,
-      generic_tick_list,
+      generic_tick_list, // Pass the slice
       snapshot,
       regulatory_snapshot,
       mkt_data_options,
@@ -1105,7 +1117,7 @@ impl DataMarketManager {
   pub fn get_realtime_bars(
     &self,
     contract: &Contract,
-    what_to_show: &str, // "TRADES", "MIDPOINT", "BID", "ASK"
+    what_to_show: WhatToShow, // Changed from &str
     use_rth: bool,
     real_time_bars_options: &[(String, String)],
     num_bars: usize, // Number of bars to wait for
@@ -1116,13 +1128,13 @@ impl DataMarketManager {
     }
     let bar_size = 5; // Hardcoded as per API limitation
     info!("Requesting {} real time bars: Contract={}, What={}, RTH={}, Timeout={:?}",
-          num_bars, contract.symbol, what_to_show, use_rth, timeout);
+          num_bars, contract.symbol, what_to_show, use_rth, timeout); // what_to_show will use Display
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_real_time_bars(
-      req_id, contract, bar_size, what_to_show, use_rth, real_time_bars_options,
+      req_id, contract, bar_size, &what_to_show.to_string(), use_rth, real_time_bars_options,
     )?;
 
     // Initialize and store state, marking target count
@@ -1133,7 +1145,7 @@ impl DataMarketManager {
         req_id,
         contract: contract.clone(),
         bar_size,
-        what_to_show: what_to_show.to_string(),
+        what_to_show, // Store the enum
         use_rth,
         rt_bar_options: real_time_bars_options.to_vec(),
         latest_bar: None,
@@ -1215,13 +1227,13 @@ impl DataMarketManager {
 
     // Use an empty generic tick list for snapshot requests.
     // This often requests all available generic ticks for the snapshot.
-    let generic_tick_list = "";
-    let snapshot = true; // Request snapshot
-    let regulatory_snapshot = false; // Typically false for simple quotes
-    let mkt_data_options: Vec<(String, String)> = Vec::new(); // No options needed usually
+    // let generic_tick_list = ""; // This was for the encoder, which still takes &str
+    let snapshot = true; // For a quote, snapshot is true
+    let regulatory_snapshot = false; // Typically false for quotes unless specified
+    let mkt_data_options: Vec<(String, String)> = Vec::new();
 
     let request_msg = encoder.encode_request_market_data(
-      req_id, contract, generic_tick_list, snapshot, regulatory_snapshot, &mkt_data_options,
+      req_id, contract, "" /* empty string for encoder */, snapshot, regulatory_snapshot, &mkt_data_options,
     )?;
 
     // Initialize and store state, marking as a blocking quote request
@@ -1233,10 +1245,10 @@ impl DataMarketManager {
       let mut state = MarketDataSubscription::new(
         req_id,
         contract.clone(),
-        generic_tick_list.to_string(),
+        Vec::new(), // Use Vec::new() for an empty list of GenericTickType
         snapshot,
         regulatory_snapshot,
-        mkt_data_options,
+        mkt_data_options, // This was already mkt_data_options.to_vec() in the original new()
       );
       state.is_blocking_quote_request = true; // Mark this specifically
       state.market_data_type = Some(desired_mkt_data_type); // Store requested type
@@ -1295,19 +1307,18 @@ impl DataMarketManager {
   pub fn request_real_time_bars(
     &self,
     contract: &Contract,
-    // bar_size: i32, // API currently only supports 5
-    what_to_show: &str, // "TRADES", "MIDPOINT", "BID", "ASK"
+    what_to_show: WhatToShow, // Changed from &str
     use_rth: bool,
     real_time_bars_options: &[(String, String)],
   ) -> Result<i32, IBKRError> {
     let bar_size = 5; // Hardcoded as per API limitation
-    info!("Requesting real time bars: Contract={}, What={}, RTH={}", contract.symbol, what_to_show, use_rth);
+    info!("Requesting real time bars: Contract={}, What={}, RTH={}", contract.symbol, what_to_show, use_rth); // what_to_show will use Display
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_real_time_bars(
-      req_id, contract, bar_size, what_to_show, use_rth, real_time_bars_options,
+      req_id, contract, bar_size, &what_to_show.to_string(), use_rth, real_time_bars_options,
     )?;
 
     {
@@ -1317,7 +1328,7 @@ impl DataMarketManager {
         req_id,
         contract: contract.clone(),
         bar_size,
-        what_to_show: what_to_show.to_string(),
+        what_to_show, // Store the enum
         use_rth,
         rt_bar_options: real_time_bars_options.to_vec(),
         latest_bar: None,
@@ -1405,18 +1416,18 @@ impl DataMarketManager {
   pub fn request_tick_by_tick_data(
     &self,
     contract: &Contract,
-    tick_type: &str, // "Last", "AllLast", "BidAsk", "MidPoint"
+    tick_type: TickByTickRequestType, // Changed from &str
     number_of_ticks: i32, // 0 for streaming, >0 for historical snapshot
     ignore_size: bool, // Usually false for streaming
   ) -> Result<i32, IBKRError> {
     info!("Requesting tick-by-tick data: Contract={}, Type={}, NumTicks={}, IgnoreSize={}",
-          contract.symbol, tick_type, number_of_ticks, ignore_size);
+          contract.symbol, tick_type, number_of_ticks, ignore_size); // tick_type will use Display
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_tick_by_tick_data(
-      req_id, contract, tick_type, number_of_ticks, ignore_size,
+      req_id, contract, &tick_type.to_string(), number_of_ticks, ignore_size,
     )?;
 
     {
@@ -1425,7 +1436,7 @@ impl DataMarketManager {
       let state = TickByTickSubscription {
         req_id,
         contract: contract.clone(),
-        tick_type: tick_type.to_string(),
+        tick_type, // Store the enum
         number_of_ticks,
         ignore_size,
         latest_tick: None,
@@ -1485,7 +1496,7 @@ impl DataMarketManager {
   pub fn get_tick_by_tick_data<F>(
     &self,
     contract: &Contract,
-    tick_type: &str, // "Last", "AllLast", "BidAsk", "MidPoint"
+    tick_type: TickByTickRequestType, // Changed from &str
     number_of_ticks: i32, // Should be 0 for streaming blocking requests
     ignore_size: bool,
     timeout: Duration,
@@ -1498,16 +1509,15 @@ impl DataMarketManager {
       // This function is intended for blocking on *streaming* data.
       // For historical ticks (number_of_ticks > 0), a different mechanism might be needed.
       warn!("get_tick_by_tick_data called with non-zero number_of_ticks ({}). This function blocks on streaming data (number_of_ticks=0).", number_of_ticks);
-      // Proceed anyway, but the behavior might not be as expected for historical snapshots.
     }
     info!("Requesting blocking tick-by-tick data: Contract={}, Type={}, Timeout={:?}",
-          contract.symbol, tick_type, timeout);
+          contract.symbol, tick_type, timeout); // tick_type will use Display
 
     // 1. Initiate the non-blocking request
     let req_id = self.request_tick_by_tick_data(
       contract,
-      tick_type,
-      number_of_ticks, // Pass through, though usually 0
+      tick_type, // Pass the enum
+      number_of_ticks,
       ignore_size,
     )?;
     debug!("Blocking tick-by-tick request initiated with ReqID: {}", req_id);
@@ -1833,8 +1843,8 @@ impl DataMarketManager {
     contract: &Contract,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>, // Use chrono DateTime
     duration_str: &str, // e.g., "1 Y", "3 M", "60 D", "3600 S"
-    bar_size_setting: &str, // e.g., "1 day", "30 mins", "1 secs"
-    what_to_show: &str, // e.g., "TRADES", "MIDPOINT", "BID_ASK"
+    bar_size_setting: crate::contract::BarSize,
+    what_to_show: WhatToShow, // Changed from &str
     use_rth: bool,
     format_date: i32, // 1 for yyyyMMdd HH:mm:ss, 2 for system time (seconds)
     keep_up_to_date: bool, // Subscribe to updates after initial load
@@ -1843,7 +1853,7 @@ impl DataMarketManager {
   ) -> Result<Vec<Bar>, IBKRError> {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
     info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}, KeepUpToDate={}, Type={:?}",
-          contract.symbol, duration_str, bar_size_setting, what_to_show, keep_up_to_date, desired_mkt_data_type);
+          contract.symbol, duration_str, bar_size_setting, what_to_show, keep_up_to_date, desired_mkt_data_type); // what_to_show will use Display
 
     // Set market data type if needed before sending the request
     self.set_market_data_type_if_needed(desired_mkt_data_type)?;
@@ -1853,8 +1863,8 @@ impl DataMarketManager {
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_historical_data(
-      req_id, contract, end_date_time, duration_str, bar_size_setting,
-      what_to_show, use_rth, format_date, keep_up_to_date, chart_options,
+      req_id, contract, end_date_time, duration_str, &bar_size_setting.to_string(),
+      &what_to_show.to_string(), use_rth, format_date, keep_up_to_date, chart_options,
     )?;
 
     {
@@ -1863,9 +1873,10 @@ impl DataMarketManager {
       let mut state = HistoricalDataRequestState {
         req_id,
         contract: contract.clone(),
+        // what_to_show: what_to_show, // Store enum if needed in state, or keep as string if only for request
         ..Default::default()
       };
-      state.requested_market_data_type = desired_mkt_data_type; // Store requested type
+      state.requested_market_data_type = desired_mkt_data_type;
       subs.insert(req_id, MarketSubscription::HistoricalData(state));
       debug!("Historical data request added for ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
     }
@@ -2506,13 +2517,13 @@ impl DataMarketManager {
     start_date_time: Option<chrono::DateTime<chrono::Utc>>,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>,
     number_of_ticks: i32,
-    what_to_show: &str,
+    what_to_show: WhatToShow, // Changed from &str
     use_rth: bool,
     ignore_size: bool,
     misc_options: &[(String, String)],
   ) -> Result<i32, IBKRError> {
     info!("Requesting historical ticks: Contract={}, What={}, NumTicks={}, Start={:?}, End={:?}",
-          contract.symbol, what_to_show, number_of_ticks, start_date_time, end_date_time);
+          contract.symbol, what_to_show, number_of_ticks, start_date_time, end_date_time); // what_to_show will use Display
 
     if self.message_broker.get_server_version()? < min_server_ver::HISTORICAL_TICKS {
       return Err(IBKRError::Unsupported("Server version does not support historical ticks requests.".to_string()));
@@ -2524,7 +2535,7 @@ impl DataMarketManager {
 
     let request_msg = encoder.encode_request_historical_ticks(
       req_id, contract, start_date_time, end_date_time, number_of_ticks,
-      what_to_show, use_rth, ignore_size, misc_options
+      &what_to_show.to_string(), use_rth, ignore_size, misc_options
     )?;
 
     // Initialize and store state
@@ -2534,8 +2545,8 @@ impl DataMarketManager {
         return Err(IBKRError::DuplicateRequestId(req_id));
       }
       let state = HistoricalTicksRequestState::new(
-          req_id, contract.clone(), start_date_time, end_date_time, number_of_ticks,
-          what_to_show.to_string(), use_rth, ignore_size, misc_options.to_vec()
+        req_id, contract.clone(), start_date_time, end_date_time, number_of_ticks,
+        what_to_show, use_rth, ignore_size, misc_options.to_vec() // Store enum
       );
       subs.insert(req_id, MarketSubscription::HistoricalTicks(state));
       debug!("Historical ticks request added for ReqID: {}", req_id);
@@ -2563,19 +2574,19 @@ impl DataMarketManager {
     start_date_time: Option<chrono::DateTime<chrono::Utc>>,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>,
     number_of_ticks: i32,
-    what_to_show: &str,
+    what_to_show: WhatToShow, // Changed from &str
     use_rth: bool,
     ignore_size: bool,
     misc_options: &[(String, String)],
     timeout: Duration,
   ) -> Result<Vec<HistoricalTick>, IBKRError> {
     info!("Requesting blocking historical ticks: Contract={}, What={}, NumTicks={}, Timeout={:?}",
-          contract.symbol, what_to_show, number_of_ticks, timeout);
+          contract.symbol, what_to_show, number_of_ticks, timeout); // what_to_show will use Display
 
     // 1. Initiate the non-blocking request
     let req_id = self.request_historical_ticks(
-        contract, start_date_time, end_date_time, number_of_ticks,
-        what_to_show, use_rth, ignore_size, misc_options
+      contract, start_date_time, end_date_time, number_of_ticks,
+      what_to_show, use_rth, ignore_size, misc_options // Pass enum
     )?;
     debug!("Blocking historical ticks request initiated with ReqID: {}", req_id);
 

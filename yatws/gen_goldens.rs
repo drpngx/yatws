@@ -16,8 +16,8 @@ use yatws::{
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
-  contract::{Contract, SecType, OptionRight, Bar},
-  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, HistoricalTick},
+  contract::{Contract, SecType, OptionRight, Bar, WhatToShow}, // Added WhatToShow
+  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, HistoricalTick, GenericTickType, TickByTickRequestType}, // Added GenericTickType, TickByTickRequestType
   parse_fundamental_xml
 };
 use chrono::{Utc, Duration as ChronoDuration, NaiveDate, Datelike}; // Added Datelike
@@ -347,20 +347,22 @@ mod test_cases {
     // Requesting the default set by passing an empty string for generic_tick_list.
     // See: https://interactivebrokers.github.io/tws-api/md_request.html#gsc
     // Valid generic ticks for STK are listed in the error message if needed for specific data.
-    let generic_tick_list = ""; // Request default ticks
+    // Example: let generic_tick_list = &[GenericTickType::RtVolumeTimestamp];
+    let generic_tick_list: &[GenericTickType] = &[]; // Request default ticks by passing an empty slice
     let snapshot = false;
     let regulatory_snapshot = false;
     let mkt_data_options = &[]; // No specific options
 
     info!(
-      "Requesting realtime market data for {} (Generic Ticks: '{}')...",
-      contract.symbol, generic_tick_list
+      "Requesting realtime market data for {} (Generic Ticks: '{}')...", // Logging will show empty for default
+      contract.symbol,
+      generic_tick_list.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",")
     );
 
     let req_id = data_mgr
       .request_market_data(
         &contract,
-        generic_tick_list,
+        generic_tick_list, // Pass the slice
         snapshot,
         regulatory_snapshot,
         mkt_data_options,
@@ -423,7 +425,7 @@ mod test_cases {
     info!("--- Testing Blocking Realtime Bars Request ---");
     let data_mgr = client.data_market();
     let contract = Contract::stock("AAPL"); // Use AAPL stock
-    let what_to_show = "TRADES";
+    let what_to_show = WhatToShow::Trades; // Changed from "TRADES"
     let use_rth = true;
     let options = &[];
     let num_bars_to_get = 2; // Request a small number of bars
@@ -432,12 +434,12 @@ mod test_cases {
 
     info!(
       "Requesting {} realtime bars for {} (What={}, RTH={}, Timeout={:?})...",
-      num_bars_to_get, contract.symbol, what_to_show, use_rth, timeout
+      num_bars_to_get, contract.symbol, what_to_show, use_rth, timeout // what_to_show will use Display
     );
 
     match data_mgr.get_realtime_bars(
       &contract,
-      what_to_show,
+      what_to_show, // Pass the enum
       use_rth,
       options,
       num_bars_to_get,
@@ -470,7 +472,7 @@ mod test_cases {
     info!("--- Testing Blocking Market Data Request (wait for Bid/Ask) ---");
     let data_mgr = client.data_market();
     let contract = Contract::stock("MSFT"); // Use MSFT stock
-    let generic_tick_list = ""; // Default ticks
+    let generic_tick_list: &[GenericTickType] = &[]; // Changed from ""
     let snapshot = false;
     let regulatory_snapshot = false;
     let mkt_data_options = &[];
@@ -483,7 +485,7 @@ mod test_cases {
 
     match data_mgr.get_market_data(
       &contract,
-      generic_tick_list,
+      generic_tick_list, // Pass the slice
       snapshot,
       regulatory_snapshot,
       mkt_data_options,
@@ -525,21 +527,21 @@ mod test_cases {
     info!("--- Testing Blocking Tick-by-Tick Request (wait for 5 Last ticks) ---");
     let data_mgr = client.data_market();
     let contract = Contract::stock("GOOG"); // Use GOOG stock
-    let tick_type = "Last";
+    let tick_type = TickByTickRequestType::Last; // Changed from "Last"
     let number_of_ticks = 0; // Streaming
     let ignore_size = false;
     let timeout = Duration::from_secs(30); // Timeout for receiving 5 ticks
 
     info!(
       "Requesting blocking tick-by-tick data for {} (Type={}, Timeout={:?}). Waiting for 5 ticks...",
-      contract.symbol, tick_type, timeout
+      contract.symbol, tick_type, timeout // tick_type will use Display
     );
 
     let target_ticks = 5;
 
     match data_mgr.get_tick_by_tick_data(
       &contract,
-      tick_type,
+      tick_type, // Pass the enum
       number_of_ticks,
       ignore_size,
       timeout,
@@ -1016,8 +1018,8 @@ mod test_cases {
     let contract = Contract::stock("IBM"); // Use IBM stock
     let end_date_time = None; // Request up to present
     let duration_str = "3 D"; // Request 3 days of data
-    let bar_size_setting = "1 hour";
-    let what_to_show = "TRADES";
+    let bar_size_setting = yatws::contract::BarSize::OneHour;
+    let what_to_show = WhatToShow::Trades; // Changed from "TRADES"
     let use_rth = true;
     let format_date = 1; // yyyyMMdd HH:mm:ss
     let keep_up_to_date = false;
@@ -1025,7 +1027,7 @@ mod test_cases {
 
     info!(
       "Requesting historical data for {}: Duration={}, BarSize={}, What={}, RTH={}",
-      contract.symbol, duration_str, bar_size_setting, what_to_show, use_rth
+      contract.symbol, duration_str, bar_size_setting, what_to_show, use_rth // what_to_show will use Display
     );
 
     match data_mgr.get_historical_data(
@@ -1033,7 +1035,7 @@ mod test_cases {
       end_date_time,
       duration_str,
       bar_size_setting,
-      what_to_show,
+      what_to_show, // Pass the enum
       use_rth,
       format_date,
       keep_up_to_date,
@@ -1719,7 +1721,7 @@ mod test_cases {
     let start_date_time = None; // Not used if number_of_ticks > 0 and end_date_time is set
 
     let number_of_ticks = 10;
-    let what_to_show = "TRADES"; // "TRADES", "MIDPOINT", "BID_ASK"
+    let what_to_show = WhatToShow::Trades; // Changed from "TRADES"
     let use_rth = false; // Get ticks outside RTH if available
     let ignore_size = false; // Relevant for BID_ASK if what_to_show is "BID_ASK"
     let misc_options = &[];
@@ -1727,7 +1729,7 @@ mod test_cases {
 
     info!(
       "Requesting {} historical '{}' ticks for {} ending {:?}, RTH={}, Timeout={:?}",
-      number_of_ticks, what_to_show, contract.symbol, end_date_time, use_rth, timeout
+      number_of_ticks, what_to_show, contract.symbol, end_date_time, use_rth, timeout // what_to_show will use Display
     );
 
     match data_mgr.get_historical_ticks(
@@ -1735,7 +1737,7 @@ mod test_cases {
       start_date_time,
       end_date_time,
       number_of_ticks,
-      what_to_show,
+      what_to_show, // Pass the enum
       use_rth,
       ignore_size,
       misc_options,

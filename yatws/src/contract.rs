@@ -762,6 +762,13 @@ impl fmt::Display for WhatToShow {
   }
 }
 
+impl Default for WhatToShow {
+  fn default() -> Self {
+    WhatToShow::Trades // A common default
+  }
+}
+
+
 // ----- Reference data:
 /// Represents a soft dollar tier details.
 #[derive(Debug, Clone, Default)]
