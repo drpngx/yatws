@@ -1476,7 +1476,11 @@ mod test_cases {
     info!("Requesting scanner parameters XML (Timeout: {:?})...", params_timeout);
     match data_mgr.get_scanner_parameters(params_timeout) {
       Ok(params) => {
-        info!("Successfully received scanner parameters ({} instrs).", params.instrument_lists.len());
+        let scan_list = params.scan_type_list.unwrap().scan_types;
+        info!("Available codes ({}):", scan_list.len());
+        for s in scan_list {
+          info!("  {}", s.scan_code.unwrap_or("<none>".to_string()));
+        }
       }
       Err(e) => {
         error!("Failed to get scanner parameters: {:?}", e);
