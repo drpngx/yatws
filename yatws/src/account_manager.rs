@@ -71,7 +71,7 @@ use crate::protocol_encoder::Encoder;
 
 use chrono::{Utc, TimeZone};
 use log::{debug, error, info, warn};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet}; // Add HashSet
 use std::sync::{Arc};
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool};
 use std::time::Duration;
@@ -114,6 +114,9 @@ pub struct AccountManager {
   // State for manual position refresh
   manual_position_refresh_waiting: Mutex<bool>,
   manual_position_refresh_cond: Condvar,
+  pnl_single_subscriptions: RwLock<HashMap<i32, i32>>, // con_id -> pnl_req_id
+  pnl_single_req_id_to_con_id: RwLock<HashMap<i32, i32>>, // pnl_req_id -> con_id
+  pnl_filter: RwLock<Option<Arc<HashSet<i32>>>>, // Stores the current P&L filter (con_ids)
 }
 
 /// Manages account summary, portfolio positions, P&L, and execution data.
@@ -148,6 +151,9 @@ impl AccountManager {
       is_initializing: AtomicBool::new(false), // Initialize the new flag
       manual_position_refresh_waiting: Mutex::new(false),
       manual_position_refresh_cond: Condvar::new(),
+      pnl_single_subscriptions: RwLock::new(HashMap::new()),
+      pnl_single_req_id_to_con_id: RwLock::new(HashMap::new()),
+      pnl_filter: RwLock::new(None),
     })
   }
 
@@ -194,6 +200,46 @@ impl AccountManager {
     let state = self.account_state.read();
     // Optional: Check for poison if needed: if state.is_poisoned() { ... }
     Ok(state.values.get(key).cloned())
+  }
+
+  /// Internal helper to subscribe to PnL single for a given con_id.
+  /// Assumes filtering logic has already been applied.
+  fn _subscribe_pnl_for_position(&self, con_id: i32, account_id: &str) -> Result<(), IBKRError> {
+    if self.pnl_single_subscriptions.read().contains_key(&con_id) {
+      debug!("PnL single already subscribed for con_id: {}", con_id);
+      return Ok(());
+    }
+
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    // model_code is typically empty for reqPnlSingle
+    let msg = encoder.encode_request_pnl_single(req_id, account_id, "", con_id)?;
+
+    self.message_broker.send_message(&msg)?;
+
+    self.pnl_single_subscriptions.write().insert(con_id, req_id);
+    self.pnl_single_req_id_to_con_id.write().insert(req_id, con_id);
+    info!("Requested PnL single for con_id: {} with req_id: {}", con_id, req_id);
+    Ok(())
+  }
+
+  /// Internal helper to unsubscribe PnL single for a given con_id.
+  fn _unsubscribe_pnl_for_position(&self, con_id: i32) -> Result<(), IBKRError> {
+    let req_id_opt = self.pnl_single_subscriptions.write().remove(&con_id);
+
+    if let Some(req_id) = req_id_opt {
+      self.pnl_single_req_id_to_con_id.write().remove(&req_id);
+
+      let server_version = self.message_broker.get_server_version()?;
+      let encoder = Encoder::new(server_version);
+      let msg = encoder.encode_cancel_pnl_single(req_id)?;
+      self.message_broker.send_message(&msg)?;
+      info!("Cancelled PnL single for con_id: {} (req_id: {})", con_id, req_id);
+    } else {
+      debug!("No active PnL single subscription found to cancel for con_id: {}", con_id);
+    }
+    Ok(())
   }
 
   fn get_parsed_value<T: std::str::FromStr>(&self, key: &str) -> Result<T, IBKRError> {
@@ -413,6 +459,145 @@ impl AccountManager {
   pub fn get_realized_pnl(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
     self.get_parsed_value("RealizedPnL")
+  }
+
+  /// Subscribes to real-time Profit and Loss (P&L) updates for individual positions.
+  ///
+  /// When called, this method will:
+  /// 1.  Ensure that the basic account subscription is active (to know the account ID and open positions).
+  /// 2.  Update the internal P&L filter based on the `con_id_filter` argument.
+  /// 3.  Iterate through all currently open positions:
+  ///     *   If a position matches the new filter (or if the filter is `None` for all positions)
+  ///         and is not already subscribed for P&L single, a `reqPnlSingle` request will be sent.
+  ///     *   If a position was previously subscribed for P&L single but no longer matches the new
+  ///         filter, its P&L subscription will be cancelled via `cancelPnlSingle`.
+  /// 4.  Subsequently, if new positions are opened:
+  ///     *   They will automatically be subscribed for P&L single if they match the currently active filter.
+  /// 5.  If a subscribed position is closed (quantity becomes zero):
+  ///     *   Its P&L single subscription will automatically be cancelled.
+  ///
+  /// # Arguments
+  /// * `con_id_filter`: An `Option<Vec<i32>>`.
+  ///   - `None`: Subscribe to P&L for all current and future open positions.
+  ///   - `Some(Vec<i32>)`: Subscribe to P&L only for the positions whose contract IDs (`con_id`)
+  ///     are in the provided vector. If a `con_id` in the filter does not correspond to a
+  ///     currently open position, it will be ignored until such a position opens.
+  ///
+  /// # Behavior on Multiple Calls
+  /// Calling this method multiple times will replace the existing P&L filter. Subscriptions
+  /// will be adjusted accordingly (cancelling old ones, starting new ones). Calling with the
+  /// same filter will generally be a no-op for existing subscriptions but will ensure any
+  /// newly opened positions matching that filter are subscribed.
+  ///
+  /// # P&L Data
+  /// Received P&L data (daily P&L, unrealized P&L, realized P&L, and market value) will update
+  /// the corresponding fields in the `Position` objects. This data will then be available
+  /// through methods like `list_open_positions()`.
+  ///
+  /// # Returns
+  /// `Ok(())` if the subscription process was initiated successfully.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the underlying account subscription is not established,
+  /// if there are issues communicating with TWS, or if essential account information
+  /// (like Account ID) is not yet available.
+  pub fn subscribe_pnl(&self, con_id_filter: Option<Vec<i32>>) -> Result<(), IBKRError> {
+    info!("Subscribing to PnL single with filter: {:?}", con_id_filter);
+    self.ensure_subscribed()?; // Ensures account_id and initial positions are likely known
+
+    let account_id = self.account_state.read().account_id.clone();
+    if account_id.is_empty() {
+      return Err(IBKRError::InternalError(
+        "Account ID not available for PnL subscription. Ensure account summary has been received.".to_string()
+      ));
+    }
+
+    let new_filter_arc = con_id_filter.map(|v| Arc::new(v.into_iter().collect::<HashSet<i32>>()));
+    *self.pnl_filter.write() = new_filter_arc.clone();
+
+    let current_positions_keys = self.account_state.read().portfolio.keys().cloned().collect::<Vec<_>>();
+    let active_subscriptions = self.pnl_single_subscriptions.read().keys().cloned().collect::<HashSet<i32>>();
+
+    // Determine which con_ids should be subscribed based on the new filter and current positions
+    let mut con_ids_to_subscribe = HashSet::new();
+    for con_id_str in current_positions_keys {
+      // Ensure the position is still active (quantity != 0) before considering PNL subscription
+      let is_active_position = self.account_state.read().portfolio.get(&con_id_str)
+        .map_or(false, |p| p.quantity != 0.0);
+      if !is_active_position {
+        continue;
+      }
+
+      if let Ok(con_id) = con_id_str.parse::<i32>() {
+        match &new_filter_arc {
+          Some(filter_set) => {
+            if filter_set.contains(&con_id) {
+              con_ids_to_subscribe.insert(con_id);
+            }
+          }
+          None => { // No filter means subscribe to all open positions
+            con_ids_to_subscribe.insert(con_id);
+          }
+        }
+      }
+    }
+
+    // Unsubscribe those that are active but shouldn't be (or are no longer active positions)
+    let con_ids_to_unsubscribe = active_subscriptions.iter()
+      .filter(|&con_id| !con_ids_to_subscribe.contains(con_id))
+      .cloned()
+      .collect::<Vec<i32>>();
+
+    for con_id in con_ids_to_unsubscribe {
+      if let Err(e) = self._unsubscribe_pnl_for_position(con_id) {
+        warn!("Error unsubscribing PnL for con_id {}: {:?}", con_id, e);
+      }
+    }
+
+    // Subscribe those that should be active but aren't
+    for con_id in con_ids_to_subscribe {
+      if !active_subscriptions.contains(&con_id) {
+        if let Err(e) = self._subscribe_pnl_for_position(con_id, &account_id) {
+          warn!("Error subscribing PnL for con_id {}: {:?}", con_id, e);
+        }
+      }
+    }
+    info!("PnL single subscription state updated.");
+    Ok(())
+  }
+
+  /// Cancels all active single-position P&L subscriptions.
+  ///
+  /// This method iterates through all currently tracked P&L single subscriptions
+  /// and sends a `cancelPnlSingle` request for each. It also clears the
+  /// internal P&L filter, meaning no new positions will be automatically
+  /// subscribed for P&L updates until `subscribe_pnl` is called again.
+  ///
+  /// # Returns
+  /// `Ok(())` if all cancellation requests were sent successfully. Errors encountered
+  /// during cancellation of individual subscriptions will be logged as warnings,
+  /// but the method will attempt to cancel all.
+  ///
+  /// # Errors
+  /// Can return `IBKRError` if fundamental issues like server version incompatibility occur,
+  /// though individual cancellation send errors are typically logged as warnings.
+  pub fn unsubscribe_pnl(&self) -> Result<(), IBKRError> {
+    info!("Unsubscribing from all PnL single updates.");
+    *self.pnl_filter.write() = None;
+
+    let con_ids_to_cancel: Vec<i32> = self.pnl_single_subscriptions.read().keys().cloned().collect();
+    if con_ids_to_cancel.is_empty() {
+      info!("No active PnL single subscriptions to cancel.");
+      return Ok(());
+    }
+
+    for con_id in con_ids_to_cancel {
+      if let Err(e) = self._unsubscribe_pnl_for_position(con_id) {
+        warn!("Error unsubscribing PnL for con_id {} during global unsubscribe: {:?}", con_id, e);
+      }
+    }
+    info!("All PnL single subscriptions processed for cancellation.");
+    Ok(())
   }
 
   /// Requests and returns execution details for the current trading day,
@@ -878,6 +1063,14 @@ impl AccountManager {
     // Send cancellation messages outside the lock
     let mut cancel_errors = Vec::new();
 
+    // Also stop all PnL single subscriptions
+    if let Err(e) = self.unsubscribe_pnl() {
+      warn!("Error during PnL single unsubscription on stop_account_updates: {:?}", e);
+      // Decide if this should be part of cancel_errors or just a warning
+      // For now, let it be a warning and not make the whole stop_account_updates fail
+      // cancel_errors.push(e); // Optionally add to main errors
+    }
+
     if let Some(req_id) = summary_req_id_to_cancel {
       info!("Sending cancel account summary request (ReqID: {})", req_id);
       match encoder.encode_cancel_account_summary(req_id) {
@@ -1012,20 +1205,31 @@ impl AccountHandler for AccountManager {
            account_name, contract.con_id, contract.symbol, quantity, market_price, market_value, average_cost, unrealized_pnl, realized_pnl);
 
     let updated_at = Utc::now();
-    let mut state = self.account_state.write(); // Get write guard
+    let mut state_guard = self.account_state.write(); // Get write guard
 
-    if state.account_id.is_empty() { state.account_id = account_name.to_string(); }
-    else if !state.account_id.is_empty() && state.account_id != account_name { // Ignore if not the expected account
-      warn!("Received portfolio value for unexpected account ID: {} (expected {})", account_name, state.account_id);
+    if state_guard.account_id.is_empty() { state_guard.account_id = account_name.to_string(); }
+    else if !state_guard.account_id.is_empty() && state_guard.account_id != account_name { // Ignore if not the expected account
+      warn!("Received portfolio value for unexpected account ID: {} (expected {})", account_name, state_guard.account_id);
       return;
     }
 
-    let updated_position = Position { symbol: contract.symbol.clone(), contract: contract.clone(), quantity, average_cost, market_price, market_value, unrealized_pnl, realized_pnl, updated_at };
+    let updated_position = Position {
+      symbol: contract.symbol.clone(),
+      contract: contract.clone(),
+      quantity,
+      average_cost,
+      market_price,
+      market_value,
+      unrealized_pnl,
+      realized_pnl,
+      updated_at,
+      position_daily_pnl: None, // Initialize new field
+    };
 
     // *** FIX: Structure the update and clone ***
     let position_to_notify: Position;
     { // Inner scope for the mutable borrow from entry()
-      let position_entry = state.portfolio.entry(position_key)
+      let position_entry = state_guard.portfolio.entry(position_key)
         .or_insert_with(|| updated_position.clone()); // Clone only on insert
       *position_entry = updated_position; // Overwrite/update the entry in the map
 
@@ -1033,10 +1237,38 @@ impl AccountHandler for AccountManager {
       position_to_notify = position_entry.clone();
     } // position_entry borrow ends here
 
-    // Now we can safely borrow state mutably again
-    state.last_updated = Some(updated_at);
+    let con_id = contract.con_id;
+    let current_pnl_filter = self.pnl_filter.read().clone(); // Clone Arc for use outside lock
 
-    drop(state); // Release lock
+    // Determine if PnL should be subscribed for this position
+    let should_be_subscribed_pnl = match &current_pnl_filter {
+      Some(filter_set) => quantity != 0.0 && filter_set.contains(&con_id),
+      None => quantity != 0.0, // No filter means subscribe if position is active (non-zero quantity)
+    };
+
+    let is_currently_subscribed_pnl = self.pnl_single_subscriptions.read().contains_key(&con_id);
+    let account_id_clone = state_guard.account_id.clone(); // Clone before dropping state guard
+
+    // Now we can safely borrow state mutably again
+    state_guard.last_updated = Some(updated_at);
+
+    drop(state_guard); // Release lock
+
+    // Perform PnL subscription/unsubscription logic outside the main state lock
+    if should_be_subscribed_pnl && !is_currently_subscribed_pnl {
+      if !account_id_clone.is_empty() {
+        if let Err(e) = self._subscribe_pnl_for_position(con_id, &account_id_clone) {
+          warn!("Auto-subscribe PnL (from portfolio_value) failed for con_id {}: {:?}", con_id, e);
+        }
+      } else {
+        warn!("Cannot auto-subscribe PnL (from portfolio_value) for con_id {}: Account ID unknown.", con_id);
+      }
+    } else if !should_be_subscribed_pnl && is_currently_subscribed_pnl {
+      // This handles both position closure (quantity becomes 0) and filter changes
+      if let Err(e) = self._unsubscribe_pnl_for_position(con_id) {
+        warn!("Auto-unsubscribe PnL (from portfolio_value) failed for con_id {}: {:?}", con_id, e);
+      }
+    }
 
     self.notify_position_update(&position_to_notify);
   }
@@ -1047,22 +1279,23 @@ impl AccountHandler for AccountManager {
            account, contract.con_id, contract.symbol, quantity, avg_cost);
 
     let updated_at = Utc::now();
-    let mut state = self.account_state.write(); // Get write guard
+    let mut state_guard = self.account_state.write(); // Get write guard
 
-    if state.account_id.is_empty() { state.account_id = account.to_string(); }
-    else if !state.account_id.is_empty() && state.account_id != account { // Ignore if not the expected account
-      warn!("Received position for unexpected account ID: {} (expected {})", account, state.account_id);
+    if state_guard.account_id.is_empty() { state_guard.account_id = account.to_string(); }
+    else if !state_guard.account_id.is_empty() && state_guard.account_id != account { // Ignore if not the expected account
+      warn!("Received position for unexpected account ID: {} (expected {})", account, state_guard.account_id);
       return;
     }
 
     // *** FIX: Apply similar fix structure here ***
     let position_to_notify: Position;
     { // Inner scope for mutable borrow from entry()
-      let position_entry = state.portfolio.entry(position_key).or_insert_with(|| {
+      let position_entry = state_guard.portfolio.entry(position_key).or_insert_with(|| {
         Position {
           symbol: contract.symbol.clone(), contract: contract.clone(), quantity,
           average_cost: avg_cost, market_price: 0.0, market_value: 0.0, // Initialize market data
           unrealized_pnl: 0.0, realized_pnl: 0.0, updated_at,
+          position_daily_pnl: None, // Initialize new field
         }
       });
 
@@ -1076,11 +1309,36 @@ impl AccountHandler for AccountManager {
       position_to_notify = position_entry.clone();
     } // position_entry borrow ends here
 
+    let con_id = contract.con_id;
+    let current_pnl_filter = self.pnl_filter.read().clone();
+
+    let should_be_subscribed_pnl = match &current_pnl_filter {
+      Some(filter_set) => quantity != 0.0 && filter_set.contains(&con_id),
+      None => quantity != 0.0, // No filter means subscribe if position is active
+    };
+    let is_currently_subscribed_pnl = self.pnl_single_subscriptions.read().contains_key(&con_id);
+    let account_id_clone = state_guard.account_id.clone();
+
 
     // Now safely borrow state mutably again
-    state.last_updated = Some(updated_at);
+    state_guard.last_updated = Some(updated_at);
 
-    drop(state); // Release lock
+    drop(state_guard); // Release lock
+
+    // Perform PnL subscription/unsubscription logic outside the main state lock
+    if should_be_subscribed_pnl && !is_currently_subscribed_pnl {
+      if !account_id_clone.is_empty() {
+        if let Err(e) = self._subscribe_pnl_for_position(con_id, &account_id_clone) {
+          warn!("Auto-subscribe PnL (from position) failed for con_id {}: {:?}", con_id, e);
+        }
+      } else {
+        warn!("Cannot auto-subscribe PnL (from position) for con_id {}: Account ID unknown.", con_id);
+      }
+    } else if !should_be_subscribed_pnl && is_currently_subscribed_pnl {
+      if let Err(e) = self._unsubscribe_pnl_for_position(con_id) {
+        warn!("Auto-unsubscribe PnL (from position) failed for con_id {}: {:?}", con_id, e);
+      }
+    }
 
     self.notify_position_update(&position_to_notify);
   }
@@ -1260,12 +1518,52 @@ impl AccountHandler for AccountManager {
   }
 
   fn pnl_single(&self, _req_id: i32, pos_idx: i32, _daily_pnl: f64, _unrealized_pnl: Option<f64>, _realized_pnl: Option<f64>, _value: f64) {
-    warn!("Handler: PnLSingle received - updating position by index '{}' is not reliably implemented. Use PortfolioValue updates.", pos_idx);
-    // This message provides PnL for a position identified by its index (pos_idx) in the TWS portfolio monitor.
-    // Matching this index to a contract ID reliably is difficult without maintaining the exact order TWS uses.
-    // It's generally better to rely on portfolioValue messages which include the Contract object.
-    // If needed, one could *try* to find the position by iterating `state.portfolio.values()` and comparing `market_value` (value)
-    // but this is prone to errors if multiple positions have similar market values.
+    // Renaming parameters to match their usage
+    let req_id = _req_id;
+    let daily_pnl_val = _daily_pnl;
+    let unrealized_pnl_val = _unrealized_pnl;
+    let realized_pnl_val = _realized_pnl;
+    let value_val = _value;
+
+    debug!("Handler: PnLSingle: ReqID={}, PosIdx={}, DailyPnL={}, UnrealizedPnL={:?}, RealizedPnL={:?}, Value={}",
+           req_id, pos_idx, daily_pnl_val, unrealized_pnl_val, realized_pnl_val, value_val);
+
+    let con_id_opt = self.pnl_single_req_id_to_con_id.read().get(&req_id).cloned();
+
+    if let Some(con_id) = con_id_opt {
+      let mut account_state_guard = self.account_state.write();
+      let position_key = con_id.to_string();
+
+      if let Some(position) = account_state_guard.portfolio.get_mut(&position_key) {
+        position.position_daily_pnl = Some(daily_pnl_val);
+        if let Some(un_pnl) = unrealized_pnl_val {
+          position.unrealized_pnl = un_pnl;
+        }
+        // Note: TWS API docs for pnlSingle mention realizedPnl is not sent.
+        // However, if it were, this is where it would be updated.
+        if let Some(r_pnl) = realized_pnl_val {
+          position.realized_pnl = r_pnl;
+        }
+        position.market_value = value_val;
+        // market_price might need to be derived if quantity is known and non-zero: value_val / quantity
+        if position.quantity != 0.0 {
+          position.market_price = value_val / position.quantity;
+        }
+        position.updated_at = Utc::now();
+
+        let position_to_notify = position.clone();
+        drop(account_state_guard); // Release lock before notifying
+
+        self.notify_position_update(&position_to_notify);
+        // Also, account summary might have changed due to P&L, so notify account update
+        self.check_and_notify_account_update();
+
+      } else {
+        warn!("PnLSingle received for con_id {} (ReqID {}), but position not found in portfolio.", con_id, req_id);
+      }
+    } else {
+      warn!("PnLSingle received for unknown ReqID: {}. No con_id mapping found. PosIdx was {}.", req_id, pos_idx);
+    }
   }
 
   // --- ExecutionHandler Implementation ---

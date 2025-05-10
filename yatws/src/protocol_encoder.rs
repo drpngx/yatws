@@ -2011,6 +2011,51 @@ subscription.".to_string()));
     Ok(self.finish_encoding(cursor))
   }
 
+  /// Encodes a request for single position P&L updates.
+  pub fn encode_request_pnl_single(
+    &self,
+    req_id: i32,
+    account: &str,
+    model_code: &str, // Typically empty string
+    con_id: i32,
+  ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request PNL single: ReqID={}, Account={}, ModelCode='{}', ConID={}",
+           req_id, account, model_code, con_id);
+
+    if self.server_version < min_server_ver::PNL {
+      return Err(IBKRError::Unsupported(
+        "Server version does not support PnL single requests.".to_string(),
+      ));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqPnlSingle as i32)?;
+    // Version is not explicitly sent for REQ_PNL_SINGLE according to some references,
+    // but the message structure is: reqId, account, modelCode, conId
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    self.write_str_to_cursor(&mut cursor, account)?;
+    self.write_str_to_cursor(&mut cursor, model_code)?; // Usually empty
+    self.write_int_to_cursor(&mut cursor, con_id)?;
+
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a request to cancel single position P&L updates.
+  pub fn encode_cancel_pnl_single(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel PNL single: ReqID={}", req_id);
+
+    if self.server_version < min_server_ver::PNL {
+      return Err(IBKRError::Unsupported(
+        "Server version does not support PnL single cancellation.".to_string(),
+      ));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelPnlSingle as i32)?;
+    // Version is not explicitly sent for CANCEL_PNL_SINGLE. Structure: reqId
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    Ok(self.finish_encoding(cursor))
+  }
+
   /// Encodes a request for real-time bars.
   pub fn encode_request_real_time_bars(
     &self,

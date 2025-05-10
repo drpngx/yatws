@@ -53,6 +53,7 @@ pub struct Position {
   pub unrealized_pnl: f64,
   pub realized_pnl: f64,
   pub updated_at: DateTime<Utc>,
+  pub position_daily_pnl: Option<f64>, // P&L for this specific position from pnl_single
 }
 
 /// Filter criteria for requesting execution reports.
@@ -103,7 +104,7 @@ pub struct Execution {
   pub ev_rule: Option<String>,
   /// Economic Value Rule multiplier. Version >= 9
   pub ev_multiplier: Option<f64>,
-   /// Model code used for advisor models. Requires MIN_SERVER_VER_MODELS_SUPPORT.
+  /// Model code used for advisor models. Requires MIN_SERVER_VER_MODELS_SUPPORT.
   pub model_code: Option<String>,
   /// Liquidity type added indicator (1=Added, 2=Removed, 3=Rouded). Requires MIN_SERVER_VER_LAST_LIQUIDITY.
   pub last_liquidity: Option<i32>,
