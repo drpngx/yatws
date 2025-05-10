@@ -20,16 +20,16 @@ pub mod min_server_ver {
   pub const NOT_HELD: i32 = 44;
   pub const SEC_ID_TYPE: i32 = 45;
   pub const PLACE_ORDER_CONID: i32 = 46;
-  pub const REQ_MKT_DATA_CONID: i32 = 47;
-  pub const REQ_CALC_IMPLIED_VOLAT: i32 = 49;
-  pub const REQ_CALC_OPTION_PRICE: i32 = 50;
+  pub const MKT_DATA_CONID: i32 = 47;
+  pub const CALC_IMPLIED_VOLAT: i32 = 49;
+  pub const CALC_OPTION_PRICE: i32 = 50;
   pub const CANCEL_CALC_IMPLIED_VOLAT: i32 = 50;
   pub const CANCEL_CALC_OPTION_PRICE: i32 = 50;
   pub const SSHORTX_OLD: i32 = 51;
   pub const SSHORTX: i32 = 52;
-  pub const REQ_GLOBAL_CANCEL: i32 = 53;
+  pub const GLOBAL_CANCEL: i32 = 53;
   pub const HEDGE_ORDERS: i32 = 54;
-  pub const REQ_MARKET_DATA_TYPE: i32 = 55;
+  pub const MARKET_DATA_TYPE: i32 = 55;
   pub const OPT_OUT_SMART_ROUTING: i32 = 56;
   pub const SMART_COMBO_ROUTING_PARAMS: i32 = 57;
   pub const DELTA_NEUTRAL_CONID: i32 = 58;
@@ -53,19 +53,19 @@ pub mod min_server_ver {
   pub const SEC_DEF_OPT_PARAMS_REQ: i32 = 104;
   pub const EXT_OPERATOR: i32 = 105;
   pub const SOFT_DOLLAR_TIER: i32 = 106;
-  pub const REQ_FAMILY_CODES: i32 = 107;
-  pub const REQ_MATCHING_SYMBOLS: i32 = 108;
+  pub const FAMILY_CODES: i32 = 107;
+  pub const MATCHING_SYMBOLS: i32 = 108;
   pub const PAST_LIMIT: i32 = 109;
   pub const MD_SIZE_MULTIPLIER: i32 = 110;
   pub const CASH_QTY: i32 = 111;
-  pub const REQ_MKT_DEPTH_EXCHANGES: i32 = 112;
+  pub const MKT_DEPTH_EXCHANGES: i32 = 112;
   pub const TICK_NEWS: i32 = 113;
-  pub const REQ_SMART_COMPONENTS: i32 = 114;
-  pub const REQ_NEWS_PROVIDERS: i32 = 115;
-  pub const REQ_NEWS_ARTICLE: i32 = 116;
-  pub const REQ_HISTORICAL_NEWS: i32 = 117;
-  pub const REQ_HEAD_TIMESTAMP: i32 = 118;
-  pub const REQ_HISTOGRAM: i32 = 119;
+  pub const SMART_COMPONENTS: i32 = 114;
+  pub const NEWS_PROVIDERS: i32 = 115;
+  pub const NEWS_ARTICLE: i32 = 116;
+  pub const HISTORICAL_NEWS: i32 = 117;
+  pub const HEAD_TIMESTAMP: i32 = 118;
+  pub const HISTOGRAM: i32 = 119;
   pub const SERVICE_DATA_TYPE: i32 = 120;
   pub const AGG_GROUP: i32 = 121;
   pub const UNDERLYING_INFO: i32 = 122;
@@ -95,7 +95,7 @@ pub mod min_server_ver {
   pub const REMOVE_NULL_ALL_CASTING: i32 = 147;
   pub const D_PEG_ORDERS: i32 = 148;
   pub const MKT_DEPTH_PRIM_EXCHANGE: i32 = 149;
-  pub const REQ_COMPLETED_ORDERS: i32 = 150;
+  pub const COMPLETED_ORDERS: i32 = 150;
   pub const PRICE_MGMT_ALGO: i32 = 151;
   pub const STOCK_TYPE: i32 = 152;
   pub const ENCODE_MSG_ASCII7: i32 = 153;
@@ -140,7 +140,7 @@ pub mod min_server_ver {
   // TWS can receive Financial Advisor data. Requires TWS v89+.
   pub const FINANCIAL_ADVISOR: i32 = 18;
   // TWS supports the reqMktDataStream request. Requires TWS v90+.
-  pub const MARKET_DATA_STREAMING: i32 = 59; // Corresponds to REQ_MARKET_DATA_TYPE
+  pub const MARKET_DATA_STREAMING: i32 = 59; // Corresponds to MARKET_DATA_TYPE
   // TWS supports requesting market depth data. Requires TWS v6.05+.
   pub const MARKET_DEPTH: i32 = 10;
   // TWS supports requesting news bulletins. Requires TWS v??+.
@@ -168,11 +168,11 @@ pub mod min_server_ver {
   // TWS supports canceling fundamental data requests. Requires TWS v40+.
   pub const CANCEL_FUNDAMENTAL_DATA: i32 = 53;
   // TWS supports requesting positions multi. Requires TWS v103+.
-  pub const REQ_POSITIONS_MULTI: i32 = 74;
+  pub const POSITIONS_MULTI: i32 = 74;
   // TWS supports canceling positions multi. Requires TWS v103+.
   pub const CANCEL_POSITIONS_MULTI: i32 = 75;
   // TWS supports requesting account updates multi. Requires TWS v103+.
-  pub const REQ_ACCOUNT_UPDATES_MULTI: i32 = 76;
+  pub const ACCOUNT_UPDATES_MULTI: i32 = 76;
   // TWS supports canceling account updates multi. Requires TWS v103+.
   pub const CANCEL_ACCOUNT_UPDATES_MULTI: i32 = 77;
   // TWS supports verifying requests. Requires TWS v70+.

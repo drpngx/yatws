@@ -385,10 +385,10 @@ impl DataMarketManager {
 
     info!("Current market data type is {:?}, requesting change to {:?}", *current_type_guard, desired_type);
     let server_version = self.message_broker.get_server_version()?;
-    if server_version < crate::min_server_ver::min_server_ver::REQ_MARKET_DATA_TYPE {
+    if server_version < crate::min_server_ver::min_server_ver::MARKET_DATA_TYPE {
       return Err(IBKRError::Unsupported(format!(
         "Server version {} does not support changing market data type (requires {}).",
-        server_version, crate::min_server_ver::min_server_ver::REQ_MARKET_DATA_TYPE
+        server_version, crate::min_server_ver::min_server_ver::MARKET_DATA_TYPE
       )));
     }
 
@@ -2208,7 +2208,7 @@ impl DataMarketManager {
     info!("Calculating implied volatility: Contract={}, OptPrice={}, UndPrice={}, Timeout={:?}",
           contract.local_symbol.as_deref().unwrap_or(&contract.symbol), option_price, under_price, timeout);
 
-    if self.message_broker.get_server_version()? < min_server_ver::REQ_CALC_IMPLIED_VOLAT {
+    if self.message_broker.get_server_version()? < min_server_ver::CALC_IMPLIED_VOLAT {
       return Err(IBKRError::Unsupported("Server version does not support implied volatility calculation.".to_string()));
     }
 
@@ -2293,7 +2293,7 @@ impl DataMarketManager {
     info!("Calculating option price: Contract={}, Volatility={}, UndPrice={}, Timeout={:?}",
           contract.local_symbol.as_deref().unwrap_or(&contract.symbol), volatility, under_price, timeout);
 
-    if self.message_broker.get_server_version()? < min_server_ver::REQ_CALC_OPTION_PRICE {
+    if self.message_broker.get_server_version()? < min_server_ver::CALC_OPTION_PRICE {
       return Err(IBKRError::Unsupported("Server version does not support option price calculation.".to_string()));
     }
 
@@ -2384,7 +2384,7 @@ impl DataMarketManager {
     info!("Requesting histogram data: Contract={}, UseRTH={}, TimePeriod={}",
           contract.symbol, use_rth, time_period);
 
-    if self.message_broker.get_server_version()? < min_server_ver::REQ_HISTOGRAM {
+    if self.message_broker.get_server_version()? < min_server_ver::HISTOGRAM {
       return Err(IBKRError::Unsupported("Server version does not support histogram data requests.".to_string()));
     }
 

@@ -1419,7 +1419,7 @@ impl Encoder {
         ));
       }
     }
-    if self.server_version < min_server_ver::REQ_MKT_DATA_CONID {
+    if self.server_version < min_server_ver::MKT_DATA_CONID {
       if contract.con_id > 0 {
         return Err(IBKRError::UpdateTws(
           "Server version does not support conId parameter in reqMarketData.".to_string(),
@@ -1433,7 +1433,7 @@ impl Encoder {
         ));
       }
     }
-    if self.server_version < min_server_ver::REQ_SMART_COMPONENTS && regulatory_snapshot {
+    if self.server_version < min_server_ver::SMART_COMPONENTS && regulatory_snapshot {
       return Err(IBKRError::UpdateTws(
         "Server version does not support regulatory snapshot requests.".to_string(),
       ));
@@ -1452,7 +1452,7 @@ impl Encoder {
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
     // --- Encode Contract Fields ---
-    if self.server_version >= min_server_ver::REQ_MKT_DATA_CONID {
+    if self.server_version >= min_server_ver::MKT_DATA_CONID {
       self.write_int_to_cursor(&mut cursor, contract.con_id)?;
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
@@ -1510,7 +1510,7 @@ impl Encoder {
     }
 
     // --- Regulatory Snapshot (Server version REQ_SMART_COMPONENTS+) ---
-    if self.server_version >= min_server_ver::REQ_SMART_COMPONENTS {
+    if self.server_version >= min_server_ver::SMART_COMPONENTS {
       self.write_bool_to_cursor(&mut cursor, regulatory_snapshot)?;
     }
 
@@ -1542,7 +1542,7 @@ impl Encoder {
 
   pub fn encode_request_global_cancel(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request global cancel message");
-    if self.server_version < min_server_ver::REQ_GLOBAL_CANCEL {
+    if self.server_version < min_server_ver::GLOBAL_CANCEL {
       return Err(IBKRError::Unsupported(
         "Server version does not support global cancel requests.".to_string(),
       ));
@@ -1959,7 +1959,7 @@ subscription.".to_string()));
   /// Encodes a request for family codes.
   pub fn encode_request_family_codes(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request family codes");
-    if self.server_version < min_server_ver::REQ_FAMILY_CODES {
+    if self.server_version < min_server_ver::FAMILY_CODES {
       return Err(IBKRError::Unsupported("Server version does not support family codes request.".to_string()));
     }
     let cursor = self.start_encoding(OutgoingMessageType::ReqFamilyCodes as i32)?;
@@ -1969,7 +1969,7 @@ subscription.".to_string()));
   /// Encodes a request for contracts matching a symbol pattern.
   pub fn encode_request_matching_symbols(&self, req_id: i32, pattern: &str) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request matching symbols: ReqID={}, Pattern={}", req_id, pattern);
-    if self.server_version < min_server_ver::REQ_MATCHING_SYMBOLS {
+    if self.server_version < min_server_ver::MATCHING_SYMBOLS {
       return Err(IBKRError::Unsupported("Server version does not support matching symbols request.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqMatchingSymbols as i32)?;
@@ -1981,7 +1981,7 @@ subscription.".to_string()));
   /// Encodes a request for market depth exchanges.
   pub fn encode_request_mkt_depth_exchanges(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request market depth exchanges");
-    if self.server_version < min_server_ver::REQ_MKT_DEPTH_EXCHANGES {
+    if self.server_version < min_server_ver::MKT_DEPTH_EXCHANGES {
       return Err(IBKRError::Unsupported("Server version does not support market depth exchanges request.".to_string()));
     }
     let cursor = self.start_encoding(OutgoingMessageType::ReqMktDepthExchanges as i32)?;
@@ -1991,7 +1991,7 @@ subscription.".to_string()));
   /// Encodes a request for SMART routing components.
   pub fn encode_request_smart_components(&self, req_id: i32, bbo_exchange: &str) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request smart components: ReqID={}, BBOExchange={}", req_id, bbo_exchange);
-    if self.server_version < min_server_ver::REQ_SMART_COMPONENTS {
+    if self.server_version < min_server_ver::SMART_COMPONENTS {
       return Err(IBKRError::Unsupported("Server version does not support smart components request.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqSmartComponents as i32)?;
@@ -2313,7 +2313,7 @@ subscription.".to_string()));
   /// Encodes a request for available news providers.
   pub fn encode_request_news_providers(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request news providers");
-    if self.server_version < min_server_ver::REQ_NEWS_PROVIDERS {
+    if self.server_version < min_server_ver::NEWS_PROVIDERS {
       return Err(IBKRError::Unsupported("Server version does not support news providers request.".to_string()));
     }
     let cursor = self.start_encoding(OutgoingMessageType::ReqNewsProviders as i32)?;
@@ -2329,7 +2329,7 @@ subscription.".to_string()));
     news_article_options: &[(String, String)], // TagValue list
   ) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request news article: ReqID={}, Provider={}, ArticleID={}", req_id, provider_code, article_id);
-    if self.server_version < min_server_ver::REQ_NEWS_ARTICLE {
+    if self.server_version < min_server_ver::NEWS_ARTICLE {
       return Err(IBKRError::Unsupported("Server version does not support news article request.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqNewsArticle as i32)?;
@@ -2357,7 +2357,7 @@ subscription.".to_string()));
     historical_news_options: &[(String, String)], // TagValue list
   ) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request historical news: ReqID={}, ConID={}, Providers={}", req_id, con_id, provider_codes);
-    if self.server_version < min_server_ver::REQ_HISTORICAL_NEWS {
+    if self.server_version < min_server_ver::HISTORICAL_NEWS {
       return Err(IBKRError::Unsupported("Server version does not support historical news request.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqHistoricalNews as i32)?;
@@ -2558,7 +2558,7 @@ subscription.".to_string()));
     debug!("Encoding request histogram data: ReqID={}, Contract={}, UseRTH={}, TimePeriod={}",
            req_id, contract.symbol, use_rth, time_period);
 
-    if self.server_version < min_server_ver::REQ_HISTOGRAM { // Use REQ_HISTOGRAM from min_server_ver
+    if self.server_version < min_server_ver::HISTOGRAM { // Use REQ_HISTOGRAM from min_server_ver
       return Err(IBKRError::Unsupported("Server version does not support histogram data requests.".to_string()));
     }
 
@@ -2609,7 +2609,7 @@ subscription.".to_string()));
     debug!("Encoding request calculate implied volatility: ReqID={}, ContractSymbol={}, OptPx={}, UndPx={}",
            req_id, contract.symbol, option_price, under_price); // Log symbol for clarity
 
-    if self.server_version < min_server_ver::REQ_CALC_IMPLIED_VOLAT {
+    if self.server_version < min_server_ver::CALC_IMPLIED_VOLAT {
       return Err(IBKRError::Unsupported("Server version does not support calculate implied volatility request.".to_string()));
     }
 
@@ -2652,7 +2652,7 @@ subscription.".to_string()));
   /// Encodes a request to cancel implied volatility calculation.
   pub fn encode_cancel_calculate_implied_volatility(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel calculate implied volatility: ReqID={}", req_id);
-    if self.server_version < min_server_ver::REQ_CALC_IMPLIED_VOLAT { // Same min version as req
+    if self.server_version < min_server_ver::CALC_IMPLIED_VOLAT { // Same min version as req
       return Err(IBKRError::Unsupported("Server version does not support implied volatility calculation cancellation.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelCalcImpliedVolat as i32)?;
@@ -2671,7 +2671,7 @@ subscription.".to_string()));
     debug!("Encoding request calculate option price: ReqID={}, ContractSymbol={}, Vol={}, UndPx={}",
            req_id, contract.symbol, volatility, under_price); // Log symbol for clarity
 
-    if self.server_version < min_server_ver::REQ_CALC_OPTION_PRICE {
+    if self.server_version < min_server_ver::CALC_OPTION_PRICE {
       return Err(IBKRError::Unsupported("Server version does not support calculate option price request.".to_string()));
     }
 
@@ -2714,7 +2714,7 @@ subscription.".to_string()));
   /// Encodes a request to cancel option price calculation.
   pub fn encode_cancel_calculate_option_price(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel calculate option price: ReqID={}", req_id);
-    if self.server_version < min_server_ver::REQ_CALC_OPTION_PRICE { // Same min version as req
+    if self.server_version < min_server_ver::CALC_OPTION_PRICE { // Same min version as req
       return Err(IBKRError::Unsupported("Server version does not support option price calculation cancellation.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelCalcOptionPrice as i32)?;
@@ -2726,7 +2726,7 @@ subscription.".to_string()));
   /// Encodes a request to set the market data type.
   pub fn encode_request_market_data_type(&self, market_data_type: MarketDataType) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request market data type: Type={:?}", market_data_type);
-    if self.server_version < min_server_ver::REQ_MARKET_DATA_TYPE {
+    if self.server_version < min_server_ver::MARKET_DATA_TYPE {
       return Err(IBKRError::Unsupported("Server version does not support reqMarketDataType.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqMarketDataType as i32)?;

@@ -513,7 +513,7 @@ impl OrderManager {
   /// or if there's an issue encoding or sending the message.
   pub fn cancel_all_orders_globally(&self) -> Result<(), IBKRError> {
     info!("Requesting global cancellation of all orders.");
-    if self.message_broker.get_server_version()? < min_server_ver::REQ_GLOBAL_CANCEL {
+    if self.message_broker.get_server_version()? < min_server_ver::GLOBAL_CANCEL {
       return Err(IBKRError::Unsupported(
         "Server version does not support global cancel requests.".to_string()
       ));
