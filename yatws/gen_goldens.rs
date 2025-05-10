@@ -1295,11 +1295,6 @@ mod test_cases {
       }
     }
 
-    // Add a small delay if running live to avoid pacing issues, though less critical for fundamental data
-    // if _is_live {
-    //   std::thread::sleep(Duration::from_secs(1));
-    // }
-
     // 2. Request Report Snapshot
     info!("Requesting 'ReportSnapshot' for {}...", contract.symbol);
     match fin_data_mgr.get_fundamental_data(&contract, FundamentalReportType::ReportSnapshot, fundamental_data_options) {
@@ -1367,6 +1362,16 @@ mod test_cases {
         overall_success = false;
       }
     }
+
+    // 3. Request financial statements.
+    // We need to specify reportType to one of these:
+    // AnnualReports - Annual financial statements
+    // QuarterlyReports - Quarterly financial statements
+    // Interim - Interim reports
+    // ThreeMonth - 3-month statements
+    // SixMonth - 6-month statements
+    // TwelveMonth - 12-month statements
+    // But the tag-value encoder is broken.
 
     if overall_success {
       Ok(())
