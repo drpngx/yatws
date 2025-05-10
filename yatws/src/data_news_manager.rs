@@ -119,7 +119,7 @@ struct NewsRequestState {
 
 /// Manages requests for news providers, articles, historical news, and streaming news bulletins.
 ///
-/// Accessed via [`IBKRClient::data_news()`].
+/// Accessed via [`IBKRClient::data_news()`](crate::IBKRClient::data_news()).
 ///
 /// See the [module-level documentation](index.html) for more details and examples.
 pub struct DataNewsManager {

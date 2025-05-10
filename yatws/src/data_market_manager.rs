@@ -266,6 +266,7 @@ enum MarketSubscription {
 
 /// Holds the state for an option calculation request (implied volatility or option price).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct OptionCalculationState {
   req_id: i32,
   contract: Contract, // Contract for which calculation is requested
@@ -312,7 +313,7 @@ impl TryIntoStateHelper<OptionCalculationState> for MarketSubscription {
 /// tick-by-tick data, market depth, and fetching historical data.
 /// It also manages the market data type setting (e.g., real-time, delayed, frozen).
 ///
-/// Accessed via [`IBKRClient::data_market()`].
+/// Accessed via [`IBKRClient::data_market()`](crate::IBKRClient::data_market()).
 ///
 /// See the [module-level documentation](index.html) for more details on interaction patterns.
 pub struct DataMarketManager {

@@ -65,7 +65,7 @@ use crate::conn_log::ConnectionLogger;
 use crate::conn_mock::MockConnection;
 use crate::base::IBKRError;
 use std::sync::Arc;
-use mgr::ClientManager;
+use client_manager::ClientManager;
 use crate::handler::MessageHandler;
 
 /// The primary client for interacting with the Interactive Brokers TWS API.
@@ -196,9 +196,9 @@ impl IBKRClient {
   /// Returns the client ID used for this connection.
   pub fn client_id(&self) -> i32 { self.client_id }
 
-  /// Provides access to the [`ClientManager`] for general client operations.
+  /// Provides access to the [`ClientManager`](crate::client_manager::ClientManager) for general client operations.
   ///
-  /// The `ClientManager` handles functions like requesting server time,
+  /// The [`ClientManager`](crate::client_manager::ClientManager) handles functions like requesting server time,
   /// checking connection status, and managing API verification messages.
   pub fn client(&self) -> Arc<ClientManager> {
     self.client_mgr.clone()
@@ -258,8 +258,8 @@ impl IBKRClient {
 /// This includes handling connection status, server time requests, API verification messages,
 /// and general error reporting from TWS.
 ///
-/// Accessed via [`IBKRClient::client()`].
-mod mgr {
+/// Accessed via [`IBKRClient::client()`](crate::IBKRClient::client()).
+pub mod client_manager {
   use crate::base::IBKRError;
   use crate::handler::ClientHandler; // Import the trait we will implement
   use chrono::{DateTime, TimeZone, Utc};

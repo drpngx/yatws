@@ -113,7 +113,7 @@ struct RequestState {
 
 /// Manages requests for company fundamental data and Wall Street Horizon (WSH) event data.
 ///
-/// Accessed via [`IBKRClient::data_financials()`].
+/// Accessed via [`IBKRClient::data_financials()`](crate::IBKRClient::data_financials()).
 ///
 /// See the [module-level documentation](index.html) for more details and examples.
 pub struct DataFundamentalsManager {

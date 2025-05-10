@@ -82,7 +82,7 @@ use crate::min_server_ver::min_server_ver; // Added for REQ_GLOBAL_CANCEL
 
 /// Manages order lifecycle, including placement, status tracking, modification, and cancellation.
 ///
-/// Accessed via [`IBKRClient::orders()`].
+/// Accessed via [`IBKRClient::orders()`](crate::IBKRClient::orders()).
 ///
 /// See the [module-level documentation](index.html) for an overview of the order lifecycle
 /// and interaction patterns.
@@ -542,7 +542,7 @@ impl OrderManager {
   /// # Arguments
   /// * `req_id` - A unique request identifier (like a ticker ID, not an order ID).
   /// * `contract` - The option [`Contract`] to exercise or lapse. Must be an OPT or FOP.
-  /// * `action` - The [`ExerciseAction`] to perform (Exercise or Lapse).
+  /// * `action` - The [`ExerciseAction`](crate::order::ExerciseAction) to perform (Exercise or Lapse).
   /// * `quantity` - The number of contracts to exercise/lapse.
   /// * `account` - The account holding the option.
   /// * `override_action` - Set to `true` to override TWS's default exercise behavior (e.g., for OTM options).

@@ -360,7 +360,6 @@ mod financial_report_parser;
 mod handler;
 mod message_parser;
 mod min_server_ver;
-mod news;
 mod options_strategy_builder;
 mod order_builder;
 mod parser_account;
@@ -381,6 +380,7 @@ pub mod data;
 pub mod contract;
 pub mod order;
 pub mod data_wsh;
+pub mod news;
 
 // Managers:
 pub mod account_manager;
@@ -396,6 +396,7 @@ pub use options_strategy_builder::OptionsStrategyBuilder;
 pub use base::IBKRError;
 pub use financial_report_parser::parse_fundamental_xml;
 pub use client::IBKRClient;
+pub use client::client_manager;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

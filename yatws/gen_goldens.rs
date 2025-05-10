@@ -16,10 +16,9 @@ use yatws::{
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
-  contract::{Contract, SecType, OptionRight, Bar, WhatToShow, HistoricalSession},
-  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, HistoricalTick, GenericTickType, TickByTickRequestType}, // Added GenericTickType, TickByTickRequestType
-  parse_fundamental_xml,
-  data_ref_manager::HistoricalScheduleResult,
+  contract::{Contract, SecType, OptionRight, WhatToShow},
+  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, GenericTickType, TickByTickRequestType}, // Added GenericTickType, TickByTickRequestType
+  parse_fundamental_xml
 };
 use chrono::{Utc, Duration as ChronoDuration, NaiveDate, Datelike}; // Added Datelike
 
@@ -893,8 +892,6 @@ mod test_cases {
     if contract_details_list.is_empty() {
       return Err(anyhow!("No contract details found for SPY stock."));
     }
-    let spy_con_id = contract_details_list[0].contract.con_id;
-
     let mut option_search_contract = Contract::new();
     option_search_contract.symbol = "SPY".to_string();
     option_search_contract.sec_type = SecType::Option;
@@ -1609,7 +1606,7 @@ mod test_cases {
 
     info!("Targeting AAPL Call Option: Expiry={}, Strike={:.2}", expiry_str, strike_price);
 
-    let mut option_contract_spec = Contract::option("AAPL", &expiry_str, strike_price, OptionRight::Call, "SMART", "USD");
+    let option_contract_spec = Contract::option("AAPL", &expiry_str, strike_price, OptionRight::Call, "SMART", "USD");
 
     // Get full contract details to ensure it's valid and get con_id
     info!("Fetching contract details for the target option...");

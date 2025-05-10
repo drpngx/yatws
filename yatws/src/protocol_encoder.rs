@@ -1888,8 +1888,8 @@ subscription.".to_string()));
     }
     if self.server_version >= min_server_ver::LINKING {
       // TODO: implement subscription_options.
-      self.write_str_to_cursor(&mut cursor, "");
-      self.write_str_to_cursor(&mut cursor, "");
+      self.write_str_to_cursor(&mut cursor, "")?;
+      self.write_str_to_cursor(&mut cursor, "")?;
     }
 
     Ok(self.finish_encoding(cursor))

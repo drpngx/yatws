@@ -121,7 +121,7 @@ pub struct AccountManager {
 
 /// Manages account summary, portfolio positions, P&L, and execution data.
 ///
-/// Accessed via [`IBKRClient::account()`].
+/// Accessed via [`IBKRClient::account()`](crate::IBKRClient::account()).
 ///
 /// See the [module-level documentation](index.html) for an overview of interaction patterns.
 impl AccountManager {
