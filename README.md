@@ -114,9 +114,9 @@ let (bid, ask, last) = client.data_market().get_quote(
 let bars = client.data_market().get_historical_data(
     &contract,
     None,                 // End time (None = now)
-    "1 D",                // Duration string
-    "1 hour",             // Bar size
-    "TRADES",             // What to show
+    "1 D",                                  // Duration string
+    yatws::contract::BarSize::Hour1,        // Bar size using enum
+    yatws::contract::WhatToShow::Trades,    // What to show using enum
     true,                 // Use RTH
     1,                    // Date format
     false,                // Keep up to date?

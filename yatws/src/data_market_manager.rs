@@ -858,7 +858,7 @@ impl DataMarketManager {
   ///
   /// # Arguments
   /// * `contract` - The [`Contract`] for which to request data.
-  /// * `generic_tick_list` - A comma-separated string of generic tick type IDs (e.g., "100,101,104").
+  /// * `generic_tick_list` - A slice of [`GenericTickType`] enums specifying the types of generic ticks to request.
   ///   An empty string requests a default set of ticks. See TWS API documentation for available tick types.
   /// * `snapshot` - If `true`, requests a single snapshot of current market data.
   ///   If `false`, requests a continuous stream of updates. For simple snapshots, `get_quote()` might be easier.
@@ -877,13 +877,14 @@ impl DataMarketManager {
   /// # Example
   /// ```no_run
   /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::MarketDataType};
+  /// # use yatws::data::GenericTickType;
   /// # fn main() -> Result<(), IBKRError> {
   /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
   /// # let market_data_mgr = client.data_market();
   /// let contract = Contract::stock("SPY");
   /// let req_id = market_data_mgr.request_market_data(
   ///     &contract,
-  ///     "233", // Request RT Volume generic tick
+  ///     &[GenericTickType::RtVolume], // Request RT Volume generic tick
   ///     false, // Streaming
   ///     false,
   ///     &[],
@@ -957,7 +958,7 @@ impl DataMarketManager {
   /// After the wait, it attempts to cancel the market data stream.
   ///
   /// # Arguments
-  /// * `contract`, `generic_tick_list`, `snapshot`, `regulatory_snapshot`, `mkt_data_options`, `market_data_type`:
+  /// * `contract`, `generic_tick_list` (as `&[GenericTickType]`), `snapshot`, `regulatory_snapshot`, `mkt_data_options`, `market_data_type`:
   ///   Same as for `request_market_data`.
   /// * `timeout` - Maximum duration to wait for the completion condition.
   /// * `completion_check` - A closure `FnMut(&MarketDataSubscription) -> bool`. It's called
@@ -973,7 +974,7 @@ impl DataMarketManager {
   /// # Example
   /// ```no_run
   /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::{MarketDataType, TickType}};
-  /// # use std::time::Duration;
+  /// # use std::time::Duration; use yatws::data::GenericTickType;
   /// # fn main() -> Result<(), IBKRError> {
   /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
   /// # let market_data_mgr = client.data_market();
@@ -981,7 +982,7 @@ impl DataMarketManager {
   ///
   /// // Wait until we receive at least one Bid and one Ask price
   /// let result_state = market_data_mgr.get_market_data(
-  ///     &contract, "", false, false, &[], Some(MarketDataType::Delayed), Duration::from_secs(20),
+  ///     &contract, &[], false, false, &[], Some(MarketDataType::Delayed), Duration::from_secs(20),
   ///     |state| {
   ///         let has_bid = state.ticks.contains_key(&TickType::BidPrice) || state.ticks.contains_key(&TickType::DelayedBid);
   ///         let has_ask = state.ticks.contains_key(&TickType::AskPrice) || state.ticks.contains_key(&TickType::DelayedAsk);
@@ -1083,7 +1084,7 @@ impl DataMarketManager {
   ///
   /// # Arguments
   /// * `contract` - The [`Contract`] for which to request bars.
-  /// * `what_to_show` - Type of data for bars (e.g., "TRADES", "MIDPOINT", "BID", "ASK").
+  /// * `what_to_show` - A [`WhatToShow`] enum specifying the type of data for bars (e.g., Trades, Midpoint, Bid, Ask).
   /// * `use_rth` - If `true`, only include data from regular trading hours.
   /// * `real_time_bars_options` - A list of `(tag, value)` pairs for additional options.
   /// * `num_bars` - The number of 5-second bars to retrieve. Must be greater than 0.
@@ -1100,13 +1101,13 @@ impl DataMarketManager {
   /// # Example
   /// ```no_run
   /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
-  /// # use std::time::Duration;
+  /// # use std::time::Duration; use yatws::contract::WhatToShow;
   /// # fn main() -> Result<(), IBKRError> {
   /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
   /// # let market_data_mgr = client.data_market();
   /// let contract = Contract::stock("AAPL");
   /// let bars = market_data_mgr.get_realtime_bars(
-  ///     &contract, "TRADES", true, &[], 2, Duration::from_secs(20)
+  ///     &contract, WhatToShow::Trades, true, &[], 2, Duration::from_secs(20)
   /// )?;
   /// println!("Received {} real-time bars for AAPL.", bars.len());
   /// for bar in bars {
@@ -1279,7 +1280,7 @@ impl DataMarketManager {
   ///
   /// # Arguments
   /// * `contract` - The [`Contract`] for which to request bars.
-  /// * `what_to_show` - Type of data for bars (e.g., "TRADES", "MIDPOINT", "BID", "ASK").
+  /// * `what_to_show` - A [`WhatToShow`] enum specifying the type of data for bars.
   /// * `use_rth` - If `true`, only include data from regular trading hours.
   /// * `real_time_bars_options` - A list of `(tag, value)` pairs for additional options.
   ///
@@ -1292,12 +1293,13 @@ impl DataMarketManager {
   /// # Example
   /// ```no_run
   /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
+  /// # use yatws::contract::WhatToShow; // Added import
   /// # fn main() -> Result<(), IBKRError> {
   /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
   /// # let market_data_mgr = client.data_market();
   /// let contract = Contract::stock("TSLA");
   /// let req_id = market_data_mgr.request_real_time_bars(
-  ///     &contract, "TRADES", true, &[]
+  ///     &contract, WhatToShow::Trades, true, &[]
   /// )?;
   /// println!("Requested streaming real-time bars for TSLA with req_id: {}", req_id);
   /// // ... (register an observer to process incoming bars for req_id) ...
@@ -1382,11 +1384,11 @@ impl DataMarketManager {
   ///
   /// # Arguments
   /// * `contract` - The [`Contract`] for which to request data.
-  /// * `tick_type` - The type of tick data:
-  ///     - "Last": Last trade ticks.
-  ///     - "AllLast": All last trade ticks (includes non-NBBO).
-  ///     - "BidAsk": Bid and Ask ticks.
-  ///     - "MidPoint": Midpoint ticks.
+  /// * `tick_type` - A [`TickByTickRequestType`] enum specifying the type of tick data:
+  ///     - `Last`: Last trade ticks.
+  ///     - `AllLast`: All last trade ticks (includes non-NBBO).
+  ///     - `BidAsk`: Bid and Ask ticks.
+  ///     - `MidPoint`: Midpoint ticks.
   /// * `number_of_ticks` - For historical tick-by-tick data, the number of ticks to retrieve.
   ///   Set to `0` for streaming live tick-by-tick data.
   /// * `ignore_size` - For "BidAsk" tick type, if `true`, do not report bid/ask sizes (saves bandwidth).
@@ -1401,12 +1403,13 @@ impl DataMarketManager {
   /// # Example
   /// ```no_run
   /// # use yatws::{IBKRClient, IBKRError, contract::Contract};
+  /// # use yatws::data::TickByTickRequestType; // Added import
   /// # fn main() -> Result<(), IBKRError> {
   /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
   /// # let market_data_mgr = client.data_market();
   /// let contract = Contract::stock("NVDA");
   /// let req_id = market_data_mgr.request_tick_by_tick_data(
-  ///     &contract, "Last", 0, false // Stream Last trades
+  ///     &contract, TickByTickRequestType::Last, 0, false // Stream Last trades
   /// )?;
   /// println!("Requested streaming tick-by-tick 'Last' data for NVDA with req_id: {}", req_id);
   /// // ... (register an observer to process incoming ticks for req_id) ...
@@ -1463,7 +1466,7 @@ impl DataMarketManager {
   /// For streaming requests intended to be blocked upon, `number_of_ticks` should typically be `0`.
   ///
   /// # Arguments
-  /// * `contract`, `tick_type`, `number_of_ticks`, `ignore_size`: Same as for `request_tick_by_tick_data`.
+  /// * `contract`, `tick_type` (as `TickByTickRequestType`), `number_of_ticks`, `ignore_size`: Same as for `request_tick_by_tick_data`.
   /// * `timeout` - Maximum duration to wait for the completion condition.
   /// * `completion_check` - A closure `FnMut(&TickByTickSubscription) -> bool`. It's called
   ///   repeatedly with the current state of the tick-by-tick subscription. The wait continues
@@ -1478,7 +1481,7 @@ impl DataMarketManager {
   /// # Example
   /// ```no_run
   /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::TickByTickData};
-  /// # use std::time::Duration;
+  /// # use std::time::Duration; use yatws::data::TickByTickRequestType; // Added import
   /// # fn main() -> Result<(), IBKRError> {
   /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
   /// # let market_data_mgr = client.data_market();
@@ -1487,7 +1490,7 @@ impl DataMarketManager {
   ///
   /// // Wait until we receive at least 5 'Last' ticks
   /// let result_state = market_data_mgr.get_tick_by_tick_data(
-  ///     &contract, "Last", 0, false, Duration::from_secs(30),
+  ///     &contract, TickByTickRequestType::Last, 0, false, Duration::from_secs(30),
   ///     |state| state.ticks.len() >= target_ticks
   /// )?;
   /// println!("Received at least {} tick-by-tick 'Last' data for GOOG.", result_state.ticks.len());
@@ -1795,8 +1798,8 @@ impl DataMarketManager {
   /// * `end_date_time` - Optional `DateTime<Utc>` specifying the end point of the historical data.
   ///   If `None`, data up to the present time is requested.
   /// * `duration_str` - The duration of data to request (e.g., "1 Y", "3 M", "60 D", "3600 S").
-  /// * `bar_size_setting` - The size of each bar (e.g., "1 day", "30 mins", "1 secs").
-  /// * `what_to_show` - The type of data to include in bars (e.g., "TRADES", "MIDPOINT", "BID_ASK").
+  /// * `bar_size_setting` - A [`crate::contract::BarSize`] enum specifying the size of each bar.
+  /// * `what_to_show` - A [`WhatToShow`] enum specifying the type of data to include in bars.
   /// * `use_rth` - If `true`, only include data from regular trading hours.
   /// * `format_date` - Date format: `1` for "yyyyMMdd HH:mm:ss", `2` for system time (seconds since epoch).
   /// * `keep_up_to_date` - If `true`, subscribe to updates for the head bar after the initial data load.
@@ -1816,6 +1819,7 @@ impl DataMarketManager {
   /// # Example
   /// ```no_run
   /// # use yatws::{IBKRClient, IBKRError, contract::Contract, data::MarketDataType};
+  /// # use yatws::contract::{BarSize, WhatToShow}; // Added imports
   /// # fn main() -> Result<(), IBKRError> {
   /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
   /// # let market_data_mgr = client.data_market();
@@ -1824,8 +1828,8 @@ impl DataMarketManager {
   ///     &contract,
   ///     None, // Up to present
   ///     "3 D", // 3 days of data
-  ///     "1 hour", // 1-hour bars
-  ///     "TRADES",
+  ///     BarSize::Hour1, // 1-hour bars
+  ///     WhatToShow::Trades,
   ///     true, // RTH only
   ///     1,    // yyyyMMdd HH:mm:ss format
   ///     false, // Don't keep up to date
@@ -2502,7 +2506,7 @@ impl DataMarketManager {
   /// * `start_date_time` - Optional start time for the ticks. Format: "yyyyMMdd HH:mm:ss (zzz)".
   /// * `end_date_time` - Optional end time for the ticks. If `None`, `start_date_time` must be `None` too, and `number_of_ticks` is used.
   /// * `number_of_ticks` - Number of ticks to return (max 1000). Use 0 to get all ticks in the date range.
-  /// * `what_to_show` - Type of ticks: "TRADES", "MIDPOINT", or "BID_ASK".
+  /// * `what_to_show` - A [`WhatToShow`] enum specifying the type of ticks: Trades, Midpoint, or BidAsk.
   /// * `use_rth` - If `true`, include only ticks from regular trading hours.
   /// * `ignore_size` - For "BID_ASK" ticks, if `true`, sizes are not returned.
   /// * `misc_options` - A list of `(tag, value)` pairs for additional options (e.g., "tradesLastSale=1").

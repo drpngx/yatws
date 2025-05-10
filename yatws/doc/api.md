@@ -157,6 +157,18 @@ Retrieves unrealized Profit & Loss. Requires active subscription.
 
 Retrieves realized Profit & Loss. Requires active subscription.
 
+### `AccountManager::subscribe_pnl(&self, con_id_filter: Option<Vec<i32>>) -> Result<(), IBKRError>`
+
+Subscribes to real-time Profit and Loss (P&L) updates for individual positions.
+-   `con_id_filter`: `None` for all open positions, or `Some(Vec<i32>)` to filter by contract IDs.
+-   Adjusts subscriptions based on the filter and open positions. New positions matching the filter are auto-subscribed. Closed positions are auto-unsubscribed.
+-   **Errors**: If underlying account subscription not established, communication issues, or account ID unavailable.
+
+### `AccountManager::unsubscribe_pnl(&self) -> Result<(), IBKRError>`
+
+Cancels all active single-position P&L subscriptions and clears the P&L filter.
+-   **Errors**: Can return `IBKRError` for fundamental issues, individual cancellation errors logged as warnings.
+
 ### `AccountManager::get_day_executions(&self) -> Result<Vec<Execution>, IBKRError>`
 
 Requests and returns execution details for the current trading day, attempting to merge commission data. Uses default
@@ -292,6 +304,35 @@ Retrieves a list of all orders known to the manager (any state).
 ### `OrderManager::get_open_orders(&self) -> Vec<Order>`
 
 Retrieves a list of all open (non-terminal) orders.
+
+### `OrderManager::cancel_all_orders_globally(&self) -> Result<(), IBKRError>`
+
+Sends a global cancel request to TWS for all open orders for the current client ID. TWS sends `orderStatus` messages for affected orders. Returns immediately.
+-   **Errors**: If server version doesn't support global cancel, or encoding/send issues.
+
+### `OrderManager::exercise_option(&self, req_id: i32, contract: &Contract, action: crate::order::ExerciseAction, quantity: i32, account: &str, override_action: bool) -> Result<(), IBKRError>`
+
+Exercises or lapses an option contract. Uses a `reqId` (ticker ID). Outcome observed via account/position updates or errors.
+-   `req_id`: Unique request identifier (not an order ID).
+-   `contract`: The option `Contract` (OPT or FOP).
+-   `action`: `ExerciseAction::Exercise` or `ExerciseAction::Lapse`.
+-   `quantity`: Number of contracts.
+-   `account`: Account holding the option.
+-   `override_action`: `true` to override TWS default exercise behavior.
+-   **Errors**: If server version unsupported, contract not an option, or encoding/send issues.
+
+### `OrderManager::check_what_if_order(&self, contract: &Contract, request: &OrderRequest, timeout: Duration) -> Result<OrderState, IBKRError>`
+
+Checks margin and commission impact of a potential order without placing it (What-If). Blocks until results or timeout.
+-   `contract`: The `Contract` for the instrument.
+-   `request`: The `OrderRequest` describing the potential order.
+-   `timeout`: Maximum duration to wait.
+-   **Returns**: `OrderState` with margin/commission details.
+-   **Errors**: `IBKRError::Timeout`, API errors, or if server version unsupported.
+
+### `OrderManager::get_completed_orders(&self) -> Vec<Order>`
+
+Retrieves a list of all orders currently known to the `OrderManager` that are in a terminal state (e.g., Filled, Cancelled).
 
 ### OrderObserver Trait
 
@@ -599,6 +640,20 @@ Requests and returns SMART routing components for a BBO exchange. Blocks until d
 
 Requests and returns details for a specific market rule ID. Blocks until data received or timeout (no explicit end message).
 
+### `DataRefManager::get_historical_schedule(&self, contract: &Contract, start_date: Option<chrono::DateTime<chrono::Utc>>, end_date: Option<chrono::DateTime<chrono::Utc>>, time_zone_id: &str) -> Result<HistoricalScheduleResult, IBKRError>`
+
+Requests the historical trading schedule for a contract.
+-   `contract`: The contract for which to request the schedule.
+-   `start_date`: Optional start date/time.
+-   `end_date`: Optional end date/time.
+-   `time_zone_id`: Desired time zone (note: TWS may return schedule in its own timezone).
+-   **Returns**: `HistoricalScheduleResult` or `IBKRError`.
+
+### `DataRefManager::cancel_historical_schedule(&self, req_id: i32) -> Result<(), IBKRError>`
+
+Cancels a historical schedule request.
+-   `req_id`: The request ID from `get_historical_schedule`.
+
 ### SecDefOptParamsResult Struct
 
 **File:** `yatws/src/data_ref_manager.rs`
@@ -622,18 +677,18 @@ Manages requests for real-time and historical market data. Accessed via `IBKRCli
 
 **File:** `yatws/src/data_market_manager.rs`
 
-### `DataMarketManager::request_market_data(&self, contract: &Contract, generic_tick_list: &str, snapshot: bool, regulatory_snapshot:
+### `DataMarketManager::request_market_data(&self, contract: &Contract, generic_tick_list: &[GenericTickType], snapshot: bool, regulatory_snapshot:
 bool, mkt_data_options: &[(String, String)], market_data_type: Option<MarketDataType>) -> Result<i32, IBKRError>`
 
 Requests streaming market data (ticks). Non-blocking.
--   `generic_tick_list`: Comma-separated generic tick type IDs (e.g., "100,101,104"). Empty for default.
+-   `generic_tick_list`: Slice of `GenericTickType` enums. Empty for default.
 -   `snapshot`: `true` for single snapshot, `false` for stream.
 -   `regulatory_snapshot`: `true` for regulatory snapshot (TWS 963+).
 -   `market_data_type`: Optional. Default `RealTime`.
 -   **Returns**: Request ID (`i32`).
 -   **Errors**: If market data type setting fails, encoding/send issues.
 
-### `DataMarketManager::get_market_data<F>(&self, contract: &Contract, generic_tick_list: &str, snapshot: bool, regulatory_snapshot:
+### `DataMarketManager::get_market_data<F>(&self, contract: &Contract, generic_tick_list: &[GenericTickType], snapshot: bool, regulatory_snapshot:
 bool, mkt_data_options: &[(String, String)], market_data_type: Option<MarketDataType>, timeout: Duration, completion_check: F) ->
 Result<MarketDataSubscription, IBKRError>`
 Where `F: FnMut(&MarketDataSubscription) -> bool`.
@@ -656,19 +711,20 @@ Requests a single snapshot quote (Bid, Ask, Last). Blocking call.
 -   **Returns**: `Quote` tuple `(Option<f64>, Option<f64>, Option<f64>)`.
 -   **Errors**: `IBKRError::Timeout` or other request/send issues.
 
-### `DataMarketManager::request_real_time_bars(&self, contract: &Contract, what_to_show: &str, use_rth: bool, real_time_bars_options:
+### `DataMarketManager::request_real_time_bars(&self, contract: &Contract, what_to_show: WhatToShow, use_rth: bool, real_time_bars_options:
 &[(String, String)]) -> Result<i32, IBKRError>`
 
 Requests streaming 5-second real-time bars. Non-blocking. (API only supports 5-sec bars).
--   `what_to_show`: "TRADES", "MIDPOINT", "BID", "ASK".
+-   `what_to_show`: `WhatToShow` enum ("TRADES", "MIDPOINT", "BID", "ASK").
 -   `use_rth`: `true` for regular trading hours only.
 -   **Returns**: Request ID (`i32`).
 -   **Errors**: If request fails to encode/send.
 
-### `DataMarketManager::get_realtime_bars(&self, contract: &Contract, what_to_show: &str, use_rth: bool, real_time_bars_options:
+### `DataMarketManager::get_realtime_bars(&self, contract: &Contract, what_to_show: WhatToShow, use_rth: bool, real_time_bars_options:
 &[(String, String)], num_bars: usize, timeout: Duration) -> Result<Vec<Bar>, IBKRError>`
 
 Requests a specific number of 5-second real-time bars. Blocking call.
+-   `what_to_show`: `WhatToShow` enum.
 -   `num_bars`: Number of bars to retrieve (>0).
 -   **Returns**: `Vec<Bar>`.
 -   **Errors**: `IBKRError::ConfigurationError` if `num_bars` is 0, `IBKRError::Timeout`, or other issues.
@@ -678,17 +734,17 @@ Requests a specific number of 5-second real-time bars. Blocking call.
 Cancels an active streaming real-time bars request.
 -   **Errors**: If cancellation message fails.
 
-### `DataMarketManager::request_tick_by_tick_data(&self, contract: &Contract, tick_type: &str, number_of_ticks: i32, ignore_size:
+### `DataMarketManager::request_tick_by_tick_data(&self, contract: &Contract, tick_type: TickByTickRequestType, number_of_ticks: i32, ignore_size:
 bool) -> Result<i32, IBKRError>`
 
 Requests streaming tick-by-tick data. Non-blocking.
--   `tick_type`: "Last", "AllLast", "BidAsk", "MidPoint".
+-   `tick_type`: `TickByTickRequestType` enum ("Last", "AllLast", "BidAsk", "MidPoint").
 -   `number_of_ticks`: `0` for streaming live data; `>0` for historical.
 -   `ignore_size`: For "BidAsk", `true` to not report sizes.
 -   **Returns**: Request ID (`i32`).
 -   **Errors**: If request fails to encode/send.
 
-### `DataMarketManager::get_tick_by_tick_data<F>(&self, contract: &Contract, tick_type: &str, number_of_ticks: i32, ignore_size:
+### `DataMarketManager::get_tick_by_tick_data<F>(&self, contract: &Contract, tick_type: TickByTickRequestType, number_of_ticks: i32, ignore_size:
 bool, timeout: Duration, completion_check: F) -> Result<TickByTickSubscription, IBKRError>`
 Where `F: FnMut(&TickByTickSubscription) -> bool`.
 
@@ -725,14 +781,14 @@ Cancels an active streaming market depth request.
 -   **Errors**: If cancellation message fails. Logs warning if `req_id` not found or `is_smart_depth` indeterminable.
 
 ### `DataMarketManager::get_historical_data(&self, contract: &Contract, end_date_time: Option<chrono::DateTime<chrono::Utc>>,
-duration_str: &str, bar_size_setting: &str, what_to_show: &str, use_rth: bool, format_date: i32, keep_up_to_date: bool,
+duration_str: &str, bar_size_setting: crate::contract::BarSize, what_to_show: WhatToShow, use_rth: bool, format_date: i32, keep_up_to_date: bool,
 market_data_type: Option<MarketDataType>, chart_options: &[(String, String)]) -> Result<Vec<Bar>, IBKRError>`
 
 Requests historical bar data. Blocking call.
 -   `end_date_time`: Optional end point. `None` for present.
 -   `duration_str`: Duration (e.g., "1 Y", "60 D").
--   `bar_size_setting`: Bar size (e.g., "1 day", "30 mins").
--   `what_to_show`: Data type (e.g., "TRADES", "MIDPOINT").
+-   `bar_size_setting`: `crate::contract::BarSize` enum.
+-   `what_to_show`: `WhatToShow` enum.
 -   `use_rth`: `true` for regular trading hours only.
 -   `format_date`: `1` for "yyyyMMdd HH:mm:ss", `2` for system time (seconds).
 -   `keep_up_to_date`: `true` to subscribe to head bar updates.
@@ -744,6 +800,109 @@ Requests historical bar data. Blocking call.
 
 Cancels an ongoing historical data request.
 -   **Errors**: If cancellation message fails. Logs warning if `req_id` not found.
+
+### `DataMarketManager::get_scanner_parameters(&self, timeout: Duration) -> Result<ScanParameterResponse, IBKRError>`
+
+Requests the XML document containing valid scanner parameters. Blocking call.
+-   `timeout`: Maximum duration to wait for the XML response.
+-   **Returns**: `ScanParameterResponse` (parsed from XML).
+-   **Errors**: `IBKRError::Timeout` or other request/send/parse issues.
+
+### `DataMarketManager::request_scanner_subscription(&self, subscription: &ScannerSubscription) -> Result<i32, IBKRError>`
+
+Requests a market scanner subscription. Non-blocking. Results via `MarketDataHandler::scanner_data`.
+-   `subscription`: `ScannerSubscription` struct defining scan parameters.
+-   **Returns**: Request ID (`i32`).
+-   **Errors**: If request fails to encode/send.
+
+### `DataMarketManager::get_scanner_results(&self, subscription: &ScannerSubscription, timeout: Duration) -> Result<Vec<ScanData>, IBKRError>`
+
+Requests market scanner results and blocks until received or timeout.
+-   `subscription`: `ScannerSubscription` struct.
+-   `timeout`: Maximum duration to wait.
+-   **Returns**: `Vec<ScanData>`.
+-   **Errors**: `IBKRError::Timeout` or other request/send issues.
+
+### `DataMarketManager::cancel_scanner_subscription(&self, req_id: i32) -> Result<(), IBKRError>`
+
+Cancels an active market scanner subscription.
+-   **Errors**: If cancellation message fails.
+
+### `DataMarketManager::calculate_implied_volatility(&self, contract: &Contract, option_price: f64, under_price: f64, timeout: Duration) -> Result<TickOptionComputationData, IBKRError>`
+
+Calculates implied volatility for an option. Blocking call.
+-   `contract`: The option `Contract`.
+-   `option_price`: Market price of the option.
+-   `under_price`: Current price of the underlying.
+-   `timeout`: Maximum duration to wait.
+-   **Returns**: `TickOptionComputationData` with implied volatility and greeks.
+-   **Errors**: If calculation fails or times out.
+
+### `DataMarketManager::cancel_calculate_implied_volatility(&self, req_id: i32) -> Result<(), IBKRError>`
+
+Cancels an ongoing implied volatility calculation.
+-   **Errors**: If cancellation message fails.
+
+### `DataMarketManager::calculate_option_price(&self, contract: &Contract, volatility: f64, under_price: f64, timeout: Duration) -> Result<TickOptionComputationData, IBKRError>`
+
+Calculates option price and greeks. Blocking call.
+-   `contract`: The option `Contract`.
+-   `volatility`: Volatility of the option (e.g., 0.20 for 20%).
+-   `under_price`: Current price of the underlying.
+-   `timeout`: Maximum duration to wait.
+-   **Returns**: `TickOptionComputationData` with option price and greeks.
+-   **Errors**: If calculation fails or times out.
+
+### `DataMarketManager::cancel_calculate_option_price(&self, req_id: i32) -> Result<(), IBKRError>`
+
+Cancels an ongoing option price calculation.
+-   **Errors**: If cancellation message fails.
+
+### `DataMarketManager::request_histogram_data(&self, contract: &Contract, use_rth: bool, time_period: &str, _histogram_options: &[(String, String)]) -> Result<i32, IBKRError>`
+
+Requests histogram data. Non-blocking. Data via `MarketDataHandler::histogram_data`.
+-   `contract`: The `Contract`.
+-   `use_rth`: `true` for regular trading hours only.
+-   `time_period`: Time period (e.g., "3 days").
+-   `_histogram_options`: Reserved.
+-   **Returns**: Request ID (`i32`).
+-   **Errors**: If request fails or server version too low.
+
+### `DataMarketManager::get_histogram_data(&self, contract: &Contract, use_rth: bool, time_period: &str, _histogram_options: &[(String, String)], timeout: Duration) -> Result<Vec<HistogramEntry>, IBKRError>`
+
+Requests histogram data and blocks until received or timeout.
+-   (Same args as `request_histogram_data` plus `timeout`)
+-   **Returns**: `Vec<HistogramEntry>`.
+-   **Errors**: If request fails, times out, or server version too low.
+
+### `DataMarketManager::cancel_histogram_data(&self, req_id: i32) -> Result<(), IBKRError>`
+
+Cancels an ongoing histogram data request.
+-   **Errors**: If cancellation message fails or server version too low.
+
+### `DataMarketManager::request_historical_ticks(&self, contract: &Contract, start_date_time: Option<chrono::DateTime<chrono::Utc>>, end_date_time: Option<chrono::DateTime<chrono::Utc>>, number_of_ticks: i32, what_to_show: WhatToShow, use_rth: bool, ignore_size: bool, misc_options: &[(String, String)]) -> Result<i32, IBKRError>`
+
+Requests historical tick data. Non-blocking. Data via `MarketDataHandler::historical_ticks_*`.
+-   `start_date_time`, `end_date_time`: Optional date range.
+-   `number_of_ticks`: Number of ticks (max 1000), or 0 for all in range.
+-   `what_to_show`: `WhatToShow` enum ("TRADES", "MIDPOINT", "BID_ASK").
+-   `use_rth`: `true` for regular trading hours only.
+-   `ignore_size`: For "BID_ASK", `true` to omit sizes.
+-   `misc_options`: Additional options.
+-   **Returns**: Request ID (`i32`).
+-   **Errors**: If request fails or server version too low.
+
+### `DataMarketManager::get_historical_ticks(&self, contract: &Contract, start_date_time: Option<chrono::DateTime<chrono::Utc>>, end_date_time: Option<chrono::DateTime<chrono::Utc>>, number_of_ticks: i32, what_to_show: WhatToShow, use_rth: bool, ignore_size: bool, misc_options: &[(String, String)], timeout: Duration) -> Result<Vec<HistoricalTick>, IBKRError>`
+
+Requests historical tick data and blocks until received or timeout.
+-   (Same args as `request_historical_ticks` plus `timeout`)
+-   **Returns**: `Vec<HistoricalTick>`.
+-   **Errors**: If request fails, times out, or server version too low.
+
+### `DataMarketManager::cancel_historical_ticks(&self, req_id: i32) -> Result<(), IBKRError>`
+
+Cancels an ongoing historical ticks request (uses `cancelHistoricalData` message).
+-   **Errors**: If cancellation message fails.
 
 ### Quote Type Alias
 
@@ -815,11 +974,11 @@ Manages requests for financial fundamental data and Wall Street Horizon (WSH) ev
 
 **File:** `yatws/src/data_fin_manager.rs`
 
-### `DataFundamentalsManager::get_fundamental_data(&self, contract: &Contract, report_type: &str, fundamental_data_options:
+### `DataFundamentalsManager::get_fundamental_data(&self, contract: &Contract, report_type: FundamentalReportType, fundamental_data_options:
 &[(String, String)]) -> Result<String, IBKRError>`
 
 Requests and returns fundamental data for a contract. Blocking call. Data is XML.
--   `report_type`: E.g., "ReportsFinSummary", "ReportSnapshot", "ReportsFinStatements".
+-   `report_type`: `FundamentalReportType` enum.
 -   **Returns**: XML `String`.
 -   **Errors**: `IBKRError::Timeout` or other request/send issues.
 
