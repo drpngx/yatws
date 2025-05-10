@@ -73,12 +73,16 @@ pub struct SecDefOptParamsResult {
 }
 
 #[derive(Debug, Clone)]
-#[allow(unused)]
-struct HistoricalScheduleResult {
-  start_date_time: String,
-  end_date_time: String,
-  time_zone: String,
-  sessions: Vec<HistoricalSession>,
+/// Holds the result of a historical schedule request.
+pub struct HistoricalScheduleResult {
+  /// The start date and time of the schedule.
+  pub start_date_time: String,
+  /// The end date and time of the schedule.
+  pub end_date_time: String,
+  /// The time zone of the schedule.
+  pub time_zone: String,
+  /// A list of historical sessions within the schedule.
+  pub sessions: Vec<HistoricalSession>,
 }
 
 
@@ -99,6 +103,122 @@ impl DataRefManager {
       request_states: Mutex::new(HashMap::new()),
       request_cond: Condvar::new(),
     })
+  }
+
+  /// Requests the historical trading schedule for a contract.
+  ///
+  /// # Arguments
+  /// * `contract` - The contract for which to request the schedule.
+  /// * `start_date` - The start date/time of the period. If `None`, `duration_str` defaults to "1 Y".
+  /// * `end_date` - The end date/time of the period. If `None`, defaults to the current time.
+  /// * `time_zone_id` - The desired time zone for the schedule. Note: This parameter is currently
+  ///   not directly used by the TWS API for "SCHEDULE" requests via `reqHistoricalData`. The
+  ///   returned schedule will contain its own timezone information. This parameter is included
+  ///   for API consistency or potential future use.
+  ///
+  /// # Returns
+  /// A `Result` containing the `HistoricalScheduleResult` or an `IBKRError`.
+  pub fn get_historical_schedule(
+    &self,
+    contract: &Contract,
+    start_date: Option<chrono::DateTime<chrono::Utc>>,
+    end_date: Option<chrono::DateTime<chrono::Utc>>,
+    time_zone_id: &str, // Note: This parameter is currently not used by the TWS API for SCHEDULE requests.
+  ) -> Result<HistoricalScheduleResult, IBKRError> {
+    info!("Requesting historical schedule for: {}, StartDate: {:?}, EndDate: {:?}, TimeZoneID: {}", contract.symbol, start_date, end_date, time_zone_id);
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    let final_end_date_time: Option<chrono::DateTime<chrono::Utc>> = end_date;
+    let final_duration_str: String;
+
+    match start_date {
+      Some(sd) => {
+        let effective_end_date = end_date.unwrap_or_else(chrono::Utc::now);
+        if effective_end_date <= sd {
+          return Err(IBKRError::InvalidParameter("start_date must be before end_date (or current time if end_date is None)".to_string()));
+        }
+        let duration = effective_end_date.signed_duration_since(sd);
+        let days = duration.num_days();
+
+        if days == 0 {
+          final_duration_str = "1 D".to_string(); // Changed from "1 day" to "1 D"
+        } else {
+          if days > 730 {
+            warn!("Calculated duration of {} days is very long for historical schedule. TWS may prefer 'Y' or 'M' units, or may error/truncate.", days);
+          }
+          final_duration_str = format!("{} D", days);
+        }
+      }
+      None => {
+        final_duration_str = "1 Y".to_string();
+      }
+    }
+
+    // For SCHEDULE, encoder will override:
+    // - end_date_time to ""
+    // - bar_size_setting to "1 day"
+    // - use_rth to false (0)
+    // - format_date to 1
+    // - keep_up_to_date to false (0)
+    // - strike to 0.0 (if contract.strike is None)
+    let request_msg = encoder.encode_request_historical_data(
+      req_id,
+      contract, // contract.strike is None for Contract::stock(), encoder handles this for SCHEDULE
+      final_end_date_time,
+      &final_duration_str,
+      "1 day",
+      "SCHEDULE",
+      false, // use_rth (encoder will ensure false for SCHEDULE)
+      1, // format_date (encoder will ensure 1 for SCHEDULE)
+      false, // keep_up_to_date (encoder will ensure false for SCHEDULE)
+      &[],
+    )?;
+
+    // Initialize state
+    {
+      let mut states = self.request_states.lock();
+      if states.contains_key(&req_id) {
+        return Err(IBKRError::DuplicateRequestId(req_id));
+      }
+      states.insert(req_id, DataRefRequestState::default());
+    }
+
+    self.message_broker.send_message(&request_msg)?;
+
+    // Wait for completion
+    let timeout = Duration::from_secs(20); // Adjust as needed
+    self.wait_for_completion(req_id, timeout, |state| {
+      state.historical_schedule.clone().map(Ok) // Complete when historical_schedule is Some
+    })
+  }
+
+  /// Cancels a historical schedule request.
+  ///
+  /// Note: This sends a cancellation request. The actual effect on a waiting `get_historical_schedule`
+  /// call depends on timing and TWS behavior. The waiting call might still timeout or complete
+  /// if the data arrives before the cancellation is processed.
+  pub fn cancel_historical_schedule(&self, req_id: i32) -> Result<(), IBKRError> {
+    info!("Cancelling historical schedule request: ReqID={}", req_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let cancel_msg = encoder.encode_cancel_historical_data(req_id)?;
+
+    self.message_broker.send_message(&cancel_msg)?;
+
+    // Update internal state to reflect cancellation attempt
+    {
+      let mut states = self.request_states.lock();
+      if let Some(state) = states.get_mut(&req_id) {
+        // Set an error indicating cancellation, so wait_for_completion can pick it up
+        state.error_code = Some(-1);
+        state.error_message = Some("Historical schedule request cancelled by client.".to_string());
+        self.request_cond.notify_all(); // Notify any waiting thread
+      }
+      // If req_id not found, it might have already completed or timed out.
+    }
+    Ok(())
   }
 
   // --- Helper to wait for completion ---
@@ -402,10 +522,7 @@ impl DataRefManager {
     })
   }
 
-// --- Add get_historical_schedule if needed ---
-
-
-// --- Internal error handling (called by the trait method) ---
+  // --- Internal error handling (called by the trait method) ---
   fn _internal_handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
     if req_id <= 0 { return; } // Ignore general errors
 

@@ -16,9 +16,10 @@ use yatws::{
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
-  contract::{Contract, SecType, OptionRight, Bar, WhatToShow}, // Added WhatToShow
+  contract::{Contract, SecType, OptionRight, Bar, WhatToShow, HistoricalSession},
   data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, HistoricalTick, GenericTickType, TickByTickRequestType}, // Added GenericTickType, TickByTickRequestType
-  parse_fundamental_xml
+  parse_fundamental_xml,
+  data_ref_manager::HistoricalScheduleResult,
 };
 use chrono::{Utc, Duration as ChronoDuration, NaiveDate, Datelike}; // Added Datelike
 
@@ -1759,6 +1760,61 @@ mod test_cases {
       }
     }
   }
+
+
+  pub(super) fn historical_schedule_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+    info!("--- Testing Get Historical Schedule ---");
+    let data_ref_mgr = client.data_ref();
+    let contract = Contract::stock("AAPL"); // Use a liquid stock like AAPL
+
+    // Request schedule: e.g., from now for the next 30 days.
+    let start_date = Some(Utc::now());
+    let end_date = Some(Utc::now() + ChronoDuration::days(30));
+    let time_zone_id = "America/New_York"; // Example timezone, though not used by TWS for this request.
+
+    info!(
+      "Requesting historical schedule for {}: StartDate ~{:?}, EndDate ~{:?}, TimeZoneID='{}'",
+      contract.symbol,
+      start_date.map(|dt| dt.date_naive()),
+      end_date.map(|dt| dt.date_naive()),
+      time_zone_id
+    );
+
+    match data_ref_mgr.get_historical_schedule(&contract, start_date, end_date, time_zone_id) {
+      Ok(schedule_result) => {
+        info!("Successfully received historical schedule for {}:", contract.symbol);
+        info!("  StartDateTime: {}", schedule_result.start_date_time);
+        info!("  EndDateTime:   {}", schedule_result.end_date_time);
+        info!("  TimeZone:      {}", schedule_result.time_zone);
+        info!("  Number of Sessions: {}", schedule_result.sessions.len());
+
+        if schedule_result.sessions.is_empty() {
+          warn!("Received 0 sessions in the schedule. This might be okay depending on the contract/period.");
+        } else {
+          // Log details of the first few sessions
+          for (i, session) in schedule_result.sessions.iter().enumerate().take(3) {
+            info!(
+              "    Session {}: RefDate={}, Start={}, End={}",
+              i + 1,
+              session.ref_date,
+              session.start_date_time,
+              session.end_date_time,
+            );
+          }
+        }
+        // Basic validation: Check if key fields are populated.
+        if schedule_result.start_date_time.is_empty() || schedule_result.time_zone.is_empty() {
+          error!("Historical schedule received, but key fields (start_date_time, time_zone) are empty.");
+          return Err(anyhow!("Key fields missing in historical schedule result"));
+        }
+        Ok(())
+      }
+      Err(e) => {
+        error!("Failed to get historical schedule for {}: {:?}", contract.symbol, e);
+        Err(e.into())
+      }
+    }
+  }
 } // <-- This brace closes the test_cases module
 
 // --- Test Registration ---
@@ -1786,6 +1842,7 @@ inventory::submit! { TestDefinition { name: "scanner", func: test_cases::scanner
 inventory::submit! { TestDefinition { name: "option-calculations", func: test_cases::option_calculations_impl } }
 inventory::submit! { TestDefinition { name: "histogram-data", func: test_cases::histogram_data_impl } }
 inventory::submit! { TestDefinition { name: "historical-ticks", func: test_cases::historical_ticks_impl } }
+inventory::submit! { TestDefinition { name: "historical-schedule", func: test_cases::historical_schedule_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 

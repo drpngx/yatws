@@ -1592,6 +1592,7 @@ impl Encoder {
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
@@ -1710,15 +1711,26 @@ impl Encoder {
   }
 
   pub fn encode_request_historical_data(&self, req_id: i32, contract: &Contract, end_date_time: Option<DateTime<Utc>>, duration_str: &str, bar_size_setting: &str, what_to_show: &str, use_rth: bool, format_date: i32, keep_up_to_date: bool, chart_options: &[(String, String)]) -> Result<Vec<u8>, IBKRError> {
-    debug!("Encoding request historical data: ReqID={}", req_id);
+    debug!("Encoding request historical data: ReqID={}, ContractSymbol={}, EndDateTimeInput={:?}, Duration={}, BarSizeInput={}, What={}, UseRTH={}, FormatDate={}, KeepUpToDate={}",
+           req_id, contract.symbol, end_date_time, duration_str, bar_size_setting, what_to_show, use_rth, format_date, keep_up_to_date);
+
     if self.server_version < 16 {
       return Err(IBKRError::Unsupported("Server version does not support historical data backfill.".to_string()));
     }
     if self.server_version < min_server_ver::TRADING_CLASS && (!contract.trading_class.is_none() || contract.con_id > 0) {
       return Err(IBKRError::Unsupported("Server version does not support conId and tradingClass parameters in reqHistoricalData.".to_string()));
     }
-    if self.server_version < min_server_ver::HISTORICAL_SCHEDULE && what_to_show.eq_ignore_ascii_case("SCHEDULE") {
-      return Err(IBKRError::Unsupported("Server version does not support requesting historical schedule.".to_string()));
+    if what_to_show.eq_ignore_ascii_case("SCHEDULE") {
+      if self.server_version < min_server_ver::HISTORICAL_SCHEDULE {
+        return Err(IBKRError::Unsupported("Server version does not support requesting historical schedule.".to_string()));
+      }
+      if keep_up_to_date {
+        return Err(IBKRError::InvalidParameter("keepUpToDate must be False when whatToShow is SCHEDULE.".to_string()));
+      }
+      if use_rth { // For SCHEDULE, useRTH must be 0 (false).
+        warn!("use_rth is true for a SCHEDULE request; TWS requires it to be false. Overriding to false for encoding.");
+        // The `use_rth` parameter to this function will be overridden later for SCHEDULE.
+      }
     }
 
 
@@ -2758,9 +2770,9 @@ subscription.".to_string()));
         self.write_str_to_cursor(&mut cursor, &misc_options_str)?;
       }
     } else if !misc_options.is_empty() {
-        warn!("miscOptions provided for historical ticks, but server version {} does not support it (requires {}). Sending empty.",
-              self.server_version, min_server_ver::LINKING);
-        self.write_str_to_cursor(&mut cursor, "")?;
+      warn!("miscOptions provided for historical ticks, but server version {} does not support it (requires {}). Sending empty.",
+            self.server_version, min_server_ver::LINKING);
+      self.write_str_to_cursor(&mut cursor, "")?;
     }
     // If server_version < LINKING and misc_options is empty, protocol expects no field here.
     // The TWS protocol expects fields based on version; if a field isn't supported, it's not sent.

@@ -27,6 +27,12 @@ py_binary(
 )
 
 py_binary(
+    name = "historical_schedule",
+    srcs = ["historical_schedule.py"],
+    deps = ["//:ibapi"],
+)
+
+py_binary(
     name = "realtime_data",
     srcs = ["realtime_data.py"],
     deps = ["//:ibapi"],

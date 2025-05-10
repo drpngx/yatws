@@ -45,7 +45,7 @@ method returning a subscription).
 5.  `cancelPnL`: Cancels the general PnL subscription.
 6.  `reqPnLSingle`: Subscribes to PnL updates for a single position.
 7.  `cancelPnLSingle`: Cancels the single position PnL subscription.
-8.  `reqHistoricalSchedule`: Requests historical trading session schedules for a contract.
+8.  ~~`reqHistoricalSchedule`: Requests historical trading session schedules for a contract.~~
 9.  ~~`reqHistoricalTicks`: Requests historical tick data for a contract.~~
 10. `reqHeadTimeStamp`: Requests the earliest available historical data timestamp for a contract.
 11. ~~`reqHistogramData`: Requests histogram data for a contract.~~
