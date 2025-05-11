@@ -168,7 +168,7 @@ impl AccountManager {
     // After calling subscribe, we assume the initial fetch is done or an error was returned.
     // Check if the state is populated as a final verification.
     let state = self.account_state.read();
-    if state.last_updated.is_none() || state.values.is_empty() || state.portfolio.is_empty() {
+    if state.last_updated.is_none() || state.values.is_empty() {
       // This might happen if subscribe finished but data hasn't arrived yet, or if subscribe failed silently.
       // Or if subscribe was called concurrently and the current thread didn't wait.
       // For simplicity, return an error indicating data isn't ready.
