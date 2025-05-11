@@ -18,6 +18,7 @@ This document provides an overview of the public API for YATWS (Yet Another TWS 
 - [DataMarketManager](#datamarketmanager)
   - [Quote Type Alias](#quote-type-alias)
 - [DataNewsManager](#datanewsmanager)
+- [FinancialAdvisorManager](#financialadvisormanager)
 - [DataFundamentalsManager](#datafundamentalsmanager)
 - [Financial Report Parser](#financial-report-parser)
 
@@ -80,6 +81,9 @@ Provides access to the `DataNewsManager` for news headlines and articles.
 
 ### `IBKRClient::data_financials(&self) -> Arc<DataFundamentalsManager>`
 
+Provides access to the `DataFundamentalsManager` for financial data (company fundamentals, WSH events).
+
+### `IBKRClient::financial_advisor(&self) -> Arc<FinancialAdvisorManager>`
 Provides access to the `DataFundamentalsManager` for financial data (company fundamentals, WSH events).
 
 ---
@@ -964,6 +968,38 @@ Subscribes to live news bulletins. Non-blocking.
 
 Cancels subscription to live news bulletins.
 -   **Errors**: If cancellation message fails.
+
+---
+
+## FinancialAdvisorManager
+
+Manages Financial Advisor (FA) configurations like groups, profiles, and aliases. Accessed via `IBKRClient::financial_advisor()`.
+
+**File:** `yatws/src/financial_advisor_manager.rs`
+
+### `FinancialAdvisorManager::request_fa_data(&self, fa_data_type: FADataType) -> Result<(), IBKRError>`
+
+Requests Financial Advisor configuration data from TWS. This is a blocking call that waits for TWS to send the FA data. The internal FA configuration is updated upon successful retrieval.
+-   `fa_data_type`: The type of FA data to request (`FADataType::Groups`, `FADataType::Profiles`, or `FADataType::Aliases`).
+-   **Returns**: `Ok(())` if the data was successfully requested and parsed.
+-   **Errors**: `IBKRError` if the request times out, parsing fails, or other communication issues occur.
+
+### `FinancialAdvisorManager::replace_fa_data(&self, fa_data_type: FADataType, xml_data: &str) -> Result<(), IBKRError>`
+
+Replaces Financial Advisor configuration data on TWS. This is a blocking call that waits for TWS to acknowledge the replacement.
+-   `fa_data_type`: The type of FA data to replace.
+-   `xml_data`: An XML string containing the new FA configuration.
+-   **Returns**: `Ok(())` if the replacement was successfully acknowledged by TWS.
+-   **Errors**: `IBKRError` if the request times out or other communication issues occur.
+
+### `FinancialAdvisorManager::get_config(&self) -> FinancialAdvisorConfig`
+
+Retrieves a clone of the current Financial Advisor configuration. This configuration includes hashmaps for `groups`, `profiles`, and `aliases`, along with their last update timestamps.
+-   **Returns**: A `FinancialAdvisorConfig` struct.
+
+Key related enums and structs:
+-   `FADataType`: Enum for `Groups`, `Profiles`, `Aliases`.
+-   `FinancialAdvisorConfig`, `FAGroup`, `FAProfile`, `FAAlias`: Structs representing the FA configuration data.
 
 ---
 

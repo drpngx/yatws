@@ -43,6 +43,7 @@ YATWS follows a client-manager architecture:
    - `DataRefManager`: Reference data (contract details, etc.)
    - `DataNewsManager`: News headlines and articles
    - `DataFundamentalsManager`: Financial data
+   - `FinancialAdvisorManager`: Financial Advisor configurations (groups, profiles, aliases)
 
 ## Usage Examples
 
@@ -149,6 +150,20 @@ let (contract, order) = builder
 let order_id = client.orders().place_order(contract, order)?;
 ```
 
+### Financial Advisor Configuration
+
+```rust
+// Access the FinancialAdvisorManager
+let fa_manager = client.financial_advisor();
+
+// Request FA Groups data
+fa_manager.request_fa_data(yatws::FADataType::Groups)?;
+
+// Get the current FA configuration
+let fa_config = fa_manager.get_config();
+println!("FA Groups: {:?}", fa_config.groups);
+```
+
 ### Asynchronous Event Handling
 
 ```rust
@@ -230,5 +245,6 @@ Key components include:
 - `DataRefManager`: Reference data
 - `DataNewsManager`: News data
 - `DataFundamentalsManager`: Financial data
+- `FinancialAdvisorManager`: Financial Advisor configurations
 - `OrderBuilder`: Fluent API for creating orders
 - `OptionsStrategyBuilder`: Factory for common options strategies

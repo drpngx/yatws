@@ -381,6 +381,7 @@ pub mod contract;
 pub mod order;
 pub mod data_wsh;
 pub mod news;
+pub mod financial_advisor;
 
 // Managers:
 pub mod account_manager;
@@ -390,13 +391,17 @@ pub mod data_news_manager;
 pub mod data_ref_manager;
 pub mod order_manager;
 pub mod scan_parameters;
+pub mod financial_advisor_manager;
 
 pub use order_builder::OrderBuilder;
 pub use options_strategy_builder::OptionsStrategyBuilder;
 pub use base::IBKRError;
+pub use base::RequestId;
 pub use financial_report_parser::parse_fundamental_xml;
 pub use client::IBKRClient;
 pub use client::client_manager;
+pub use financial_advisor::{FAAlias, FAGroup, FAProfile, FADataType, FinancialAdvisorConfig};
+pub use financial_advisor_manager::FinancialAdvisorManager;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

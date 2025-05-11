@@ -2829,4 +2829,41 @@ subscription.".to_string()));
 
     Ok(self.finish_encoding(cursor))
   }
+
+  /// Encodes a request for Financial Advisor (FA) data.
+  ///
+  /// # Arguments
+  /// * `fa_data_type` - An integer representing the type of FA data to request:
+  ///   - 1 for Groups
+  ///   - 2 for Profiles
+  ///   - 3 for Aliases
+  pub fn encode_request_fa_data(&self, fa_data_type: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request FA data: DataType={}", fa_data_type);
+    // REQ_FA is an old message, version 1. min_server_ver::FINANCIAL_ADVISOR (18)
+    // seems to be for TWS GUI support, not the message itself.
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqFa as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, fa_data_type)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
+  /// Encodes a message to replace Financial Advisor (FA) configuration.
+  ///
+  /// # Arguments
+  /// * `fa_data_type` - An integer representing the type of FA data to replace:
+  ///   - 1 for Groups
+  ///   - 2 for Profiles
+  ///   - 3 for Aliases
+  /// * `xml_data` - The XML string containing the new FA configuration.
+  pub fn encode_replace_fa_data(&self, fa_data_type: i32, xml_data: &str) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding replace FA data: DataType={}, XML Length={}", fa_data_type, xml_data.len());
+    trace!("Replace FA XML Data: {}", xml_data);
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReplaceFa as i32)?;
+    let version = 1;
+    self.write_int_to_cursor(&mut cursor, version)?;
+    self.write_int_to_cursor(&mut cursor, fa_data_type)?;
+    self.write_str_to_cursor(&mut cursor, xml_data)?;
+    Ok(self.finish_encoding(cursor))
+  }
 } // end impl Encoder

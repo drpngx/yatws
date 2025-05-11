@@ -295,18 +295,27 @@ pub trait NewsDataHandler: Send + Sync {
   fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
 }
 
+/// Handles Financial Advisor (FA) configuration data.
 pub trait FinancialAdvisorHandler: Send + Sync {
+  /// Receives FA configuration data (groups, profiles, or aliases).
+  ///
+  /// # Arguments
+  /// * `fa_data_type` - An integer indicating the type of FA data:
+  ///   - 1: Groups
+  ///   - 2: Profiles
+  ///   - 3: Aliases
+  /// * `xml_data` - An XML string containing the FA configuration data.
+  fn receive_fa(&self, fa_data_type: i32, xml_data: &str);
+
+  /// Callback indicating the end of a `replaceFA` request.
+  ///
+  /// # Arguments
+  /// * `req_id` - The request ID of the `replaceFA` call. (Note: TWS API docs are unclear if reqId is always provided for this message type, typically it's for requests that solicit data, not for acknowledgements of data replacement. However, some client implementations expect it.)
+  /// * `text` - A status message, often empty or indicating success/failure.
+  fn replace_fa_end(&self, req_id: i32, text: &str);
+
   /// Handles errors related to Financial Advisor features.
   fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
-}
-
-/// A dummy implementation for FinancialAdvisorHandler, used when no specific handler is provided.
-struct Dummy {}
-impl FinancialAdvisorHandler for Dummy {
-  fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
-    // Default implementation logs the error but takes no further action.
-    log::warn!("Unhandled FinancialAdvisor error (ReqID: {}): Code {:?} - {}", req_id, code, msg);
-  }
 }
 
 pub struct MessageHandler {
@@ -329,18 +338,18 @@ impl MessageHandler {
              data_ref: Arc<dyn ReferenceDataHandler>,
              data_market: Arc<dyn MarketDataHandler>,
              data_news: Arc<dyn NewsDataHandler>,
-             data_fin: Arc<dyn FinancialDataHandler>) -> Self {
-    let dummy = Arc::new(Dummy {});
+             data_fin: Arc<dyn FinancialDataHandler>,
+             fin_adv: Arc<dyn FinancialAdvisorHandler>) -> Self { // Add fin_adv parameter
     MessageHandler {
       server_version,
       client,
       account,
       order,
+      fin_adv, // Use passed fin_adv
       data_ref,
       data_market,
       data_news,
       data_fin,
-      fin_adv: dummy.clone(),
     }
   }
   pub fn get_server_version(&self) -> i32 { self.server_version }

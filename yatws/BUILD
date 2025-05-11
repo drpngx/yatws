@@ -40,7 +40,9 @@ rust_library(
         "src/data_market_manager.rs",
         "src/data_news_manager.rs",
         "src/data_fin_manager.rs",
-        "src/options_strategy_builder.rs", # Add new file
+        "src/options_strategy_builder.rs",
+        "src/financial_advisor.rs",
+        "src/financial_advisor_manager.rs",
     ],
     edition = "2021",
     proc_macro_deps = [

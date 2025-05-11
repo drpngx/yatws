@@ -3,6 +3,8 @@
 
 use thiserror::Error;
 
+pub type RequestId = i32;
+
 
 /// Errors that can occur in the IBKR API
 #[derive(Error, Debug, Clone)]
@@ -72,4 +74,11 @@ pub enum IBKRError {
 
   #[error("API error: code={0}, msg={1}")]
   ApiError(i32, String),
+}
+
+// Implement From trait for quick_xml::Error to allow `?` operator conversion
+impl From<quick_xml::Error> for IBKRError {
+  fn from(err: quick_xml::Error) -> Self {
+    IBKRError::ParseError(format!("XML parsing error: {}", err))
+  }
 }

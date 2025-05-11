@@ -30,6 +30,7 @@
 //! -   [`DataMarketManager`]: Handles market data requests (quotes, ticks, bars, depth).
 //! -   [`DataNewsManager`]: Manages news provider information and article retrieval.
 //! -   [`DataFundamentalsManager`]: Provides access to financial statement data and Wall Street Horizon (WSH) events.
+//! -   [`FinancialAdvisorManager`]: Manages Financial Advisor configurations (groups, profiles, aliases).
 //!
 //! # Example: Creating a Client and Getting Server Time
 //!
@@ -67,6 +68,7 @@ use crate::base::IBKRError;
 use std::sync::Arc;
 use client_manager::ClientManager;
 use crate::handler::MessageHandler;
+use crate::financial_advisor_manager::FinancialAdvisorManager; // Added import
 
 /// The primary client for interacting with the Interactive Brokers TWS API.
 ///
@@ -81,6 +83,7 @@ pub struct IBKRClient {
   data_market_mgr: Arc<DataMarketManager>,
   data_news_mgr: Arc<DataNewsManager>,
   data_fin_mgr: Arc<DataFundamentalsManager>,
+  financial_advisor_mgr: Arc<FinancialAdvisorManager>, // Added field
 }
 
 impl IBKRClient {
@@ -124,10 +127,12 @@ impl IBKRClient {
     let data_market_mgr = DataMarketManager::new(message_broker.clone());
     let data_news_mgr = DataNewsManager::new(message_broker.clone());
     let data_fin_mgr = DataFundamentalsManager::new(message_broker.clone());
+    let financial_advisor_mgr = FinancialAdvisorManager::new(message_broker.clone());
     let msg_handler = MessageHandler::new(server_version, client_mgr.clone(),
                                           account_mgr.clone(), order_mgr.clone(),
                                           data_ref_mgr.clone(), data_market_mgr.clone(),
-                                          data_news_mgr.clone(), data_fin_mgr.clone());
+                                          data_news_mgr.clone(), data_fin_mgr.clone(),
+                                          financial_advisor_mgr.clone());
     message_broker.set_message_handler(msg_handler);
     order_init()?;
     Ok(IBKRClient {
@@ -139,6 +144,7 @@ impl IBKRClient {
       data_market_mgr,
       data_news_mgr,
       data_fin_mgr,
+      financial_advisor_mgr,
     })
   }
 
@@ -175,10 +181,12 @@ impl IBKRClient {
     let data_market_mgr = DataMarketManager::new(message_broker.clone());
     let data_news_mgr = DataNewsManager::new(message_broker.clone());
     let data_fin_mgr = DataFundamentalsManager::new(message_broker.clone());
+    let financial_advisor_mgr = FinancialAdvisorManager::new(message_broker.clone());
     let msg_handler = MessageHandler::new(server_version, client_mgr.clone(),
                                           account_mgr.clone(), order_mgr.clone(),
                                           data_ref_mgr.clone(), data_market_mgr.clone(),
-                                          data_news_mgr.clone(), data_fin_mgr.clone());
+                                          data_news_mgr.clone(), data_fin_mgr.clone(),
+                                          financial_advisor_mgr.clone());
     message_broker.set_message_handler(msg_handler);
     order_init()?;
     Ok(IBKRClient {
@@ -190,6 +198,7 @@ impl IBKRClient {
       data_market_mgr,
       data_news_mgr,
       data_fin_mgr,
+      financial_advisor_mgr,
     })
   }
 
@@ -250,6 +259,14 @@ impl IBKRClient {
   /// (e.g., financial statements, reports) and Wall Street Horizon (WSH) corporate event data.
   pub fn data_financials(&self) -> Arc<DataFundamentalsManager> {
     self.data_fin_mgr.clone()
+  }
+
+  /// Provides access to the [`FinancialAdvisorManager`] for FA configurations.
+  ///
+  /// The `FinancialAdvisorManager` allows requesting and replacing FA groups,
+  /// profiles, and aliases.
+  pub fn financial_advisor(&self) -> Arc<FinancialAdvisorManager> {
+    self.financial_advisor_mgr.clone()
   }
 }
 
