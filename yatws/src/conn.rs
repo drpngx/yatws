@@ -85,7 +85,7 @@ mod socket {
   use super::{ConnectionLogger, LogDirection};
   use crate::base::IBKRError;
   use crate::handler::MessageHandler;
-  use crate::message_parser::process_message;
+  use crate::message_parser::{msg_to_string, process_message};
   use crate::min_server_ver::min_server_ver;
 
   use parking_lot::Mutex as PLMutex; // Use specific name if needed
@@ -356,7 +356,7 @@ mod socket {
               // --- End Logging ---
 
               if let Err(e) = process_message(&mut handler, &msg_data) {
-                error!("Error processing message: {:?}", e);
+                error!("Error processing message [{}]: {:?}", msg_to_string(&msg_data), e);
               }
             },
             Err(IBKRError::Timeout(_)) => {

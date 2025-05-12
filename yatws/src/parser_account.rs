@@ -297,7 +297,7 @@ pub fn process_pnl(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) 
 
 /// Process PnL single message
 pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  // Example: 95·11·20·-2.2151342773440774·-2.2150912773440723·1.7976931348623157E308·4920.799865722656·
   let req_id = parser.read_int()?;
   let pos = parser.read_int()?;
   let daily_pnl = parser.read_double()?;
