@@ -1,9 +1,3 @@
-# Strings
-- `OrderBuilder`:
-  - `add_combo_leg`
-  - `with_next_condition`
-  - `add_time_condition`
-
 # Missing features from ibapi:
 1.  `account_updates_multi`: Request account updates for multiple accounts/models.
 2.  `auto_open_orders`: Request status updates about future orders placed from TWS, with optional auto-binding.

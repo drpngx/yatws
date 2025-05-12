@@ -471,9 +471,9 @@ is_decrease: bool) -> Self`
 
 ### Condition Methods
 
--   `with_next_condition_conjunction(conjunction: &str) -> Self` ("and" or "or")
+-   `with_next_condition_conjunction(conjunction: ConditionConjunction) -> Self`
 -   `add_price_condition(con_id: i32, exchange: &str, price: f64, trigger_method: TriggerMethod, is_more: bool) -> Self`
--   `add_time_condition(time: &str, is_more: bool) -> Self` (time format: "YYYYMMDD HH:MM:SS (optional timezone)")
+-   `add_time_condition(time: DateTime<Utc>, is_more: bool) -> Self` (Time is UTC, formatted as "YYYYMMDD HH:MM:SS")
 -   `add_margin_condition(percent: i32, is_more: bool) -> Self`
 -   `add_execution_condition(symbol: &str, sec_type: &str, exchange: &str) -> Self`
 -   `add_volume_condition(con_id: i32, exchange: &str, volume: i32, is_more: bool) -> Self` (Requires SMART routing)
@@ -1018,16 +1018,16 @@ Enum representing supported IBKR Algos and their parameters. Used with `OrderBui
 ```rust
 pub enum IBKRAlgo {
   Adaptive { priority: AdaptivePriority },
-  ArrivalPrice { max_pct_vol: f64, risk_aversion: RiskAversion, start_time: Option<String>, end_time: Option<String>, allow_past_end_time: bool, force_completion: bool },
-  ClosePrice { max_pct_vol: f64, risk_aversion: RiskAversion, start_time: Option<String>, force_completion: bool },
-  DarkIce { display_size: i32, start_time: Option<String>, end_time: Option<String>, allow_past_end_time: bool },
-  AccumulateDistribute { component_size: i32, time_between_orders: i32, randomize_time_20pct: bool, randomize_size_55pct: bool, give_up: Option<i32>, catch_up_in_time: bool, wait_for_fill: bool, active_time_start: Option<String>, active_time_end: Option<String> },
-  PercentageOfVolume { pct_vol: f64, start_time: Option<String>, end_time: Option<String>, no_take_liq: bool },
-  TWAP { strategy_type: TwapStrategyType, start_time: Option<String>, end_time: Option<String>, allow_past_end_time: bool },
-  PriceVariantPctVol { pct_vol: f64, delta_pct_vol: f64, min_pct_vol_for_price: f64, max_pct_vol_for_price: f64, start_time: Option<String>, end_time: Option<String>, no_take_liq: bool },
-  SizeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<String>, end_time: Option<String>, no_take_liq: bool },
-  TimeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<String>, end_time: Option<String>, no_take_liq: bool },
-  VWAP { max_pct_vol: f64, start_time: Option<String>, end_time: Option<String>, allow_past_end_time: bool, no_take_liq: bool, speed_up: bool },
+  ArrivalPrice { max_pct_vol: f64, risk_aversion: RiskAversion, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool, force_completion: bool },
+  ClosePrice { max_pct_vol: f64, risk_aversion: RiskAversion, start_time: Option<DateTime<Utc>>, force_completion: bool },
+  DarkIce { display_size: i32, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool },
+  AccumulateDistribute { component_size: i32, time_between_orders: i32, randomize_time_20pct: bool, randomize_size_55pct: bool, give_up: Option<i32>, catch_up_in_time: bool, wait_for_fill: bool, active_time_start: Option<DateTime<Utc>>, active_time_end: Option<DateTime<Utc>> },
+  PercentageOfVolume { pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
+  TWAP { strategy_type: TwapStrategyType, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool },
+  PriceVariantPctVol { pct_vol: f64, delta_pct_vol: f64, min_pct_vol_for_price: f64, max_pct_vol_for_price: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
+  SizeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
+  TimeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
+  VWAP { max_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool, no_take_liq: bool, speed_up: bool },
   BalanceImpactRisk { max_pct_vol: f64, risk_aversion: RiskAversion, force_completion: bool },
   MinimiseImpact { max_pct_vol: f64 },
   Custom { strategy: String, params: Vec<(String, String)> }, // Escape hatch
@@ -1037,8 +1037,9 @@ pub enum IBKRAlgo {
 pub enum AdaptivePriority { Urgent, Normal, Patient }
 pub enum RiskAversion { GetDone, Aggressive, Neutral, Passive }
 pub enum TwapStrategyType { Marketable, MatchingMidpoint, MatchingSameSide, MatchingLast }
+pub enum ConditionConjunction { And, Or }
 ```
-(See `order.rs` for full details and validation ranges).
+(See `order.rs` and `order_builder.rs` for full details and validation ranges).
 
 ---
 

@@ -820,8 +820,8 @@ pub enum IBKRAlgo {
   ArrivalPrice {
     max_pct_vol: f64, // 0.01 to 0.50 (1% to 50%)
     risk_aversion: RiskAversion,
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
-    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<DateTime<Utc>>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     allow_past_end_time: bool,
     force_completion: bool,
   },
@@ -829,14 +829,14 @@ pub enum IBKRAlgo {
   ClosePrice {
     max_pct_vol: f64, // 0.01 to 0.50
     risk_aversion: RiskAversion,
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     force_completion: bool,
   },
   /// Dark Ice Algo: Hides displayed volume using randomization.
   DarkIce {
     display_size: i32, // Must be > 0
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
-    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<DateTime<Utc>>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     allow_past_end_time: bool,
   },
   /// Accumulate/Distribute Algo: Slices large orders into random increments.
@@ -849,21 +849,21 @@ pub enum IBKRAlgo {
     give_up: Option<i32>, // Clearing number, only for "AD" strategy
     catch_up_in_time: bool,
     wait_for_fill: bool,
-    active_time_start: Option<String>, // "YYYYMMDD-hh:mm:ss TMZ"
-    active_time_end: Option<String>,   // "YYYYMMDD-hh:mm:ss TMZ"
+    active_time_start: Option<DateTime<Utc>>, // "YYYYMMDD-hh:mm:ss TMZ"
+    active_time_end: Option<DateTime<Utc>>,   // "YYYYMMDD-hh:mm:ss TMZ"
   },
   /// Percentage of Volume Algo: Limits participation based on ADV.
   PercentageOfVolume {
     pct_vol: f64, // 0.01 to 0.50
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
-    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<DateTime<Utc>>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     no_take_liq: bool,
   },
   /// Time Weighted Average Price (TWAP) Algo: Aims for average price over a period.
   TWAP {
     strategy_type: TwapStrategyType,
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
-    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<DateTime<Utc>>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     allow_past_end_time: bool,
   },
   /// Price Variant Percentage of Volume Algo: Participation rate varies with market price.
@@ -872,31 +872,31 @@ pub enum IBKRAlgo {
     delta_pct_vol: f64, // Change rate, 0.01 to 1.00
     min_pct_vol_for_price: f64, // 0.01 to 0.50
     max_pct_vol_for_price: f64, // 0.01 to 0.50
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
-    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<DateTime<Utc>>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     no_take_liq: bool,
   },
   /// Size Variant Percentage of Volume Algo: Participation rate varies with remaining order size.
   SizeVariantPctVol {
     start_pct_vol: f64, // 0.01 to 0.50
     end_pct_vol: f64,   // 0.01 to 0.50
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
-    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<DateTime<Utc>>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     no_take_liq: bool,
   },
   /// Time Variant Percentage of Volume Algo: Participation rate varies linearly over time.
   TimeVariantPctVol {
     start_pct_vol: f64, // 0.01 to 0.50
     end_pct_vol: f64,   // 0.01 to 0.50
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
-    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<DateTime<Utc>>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     no_take_liq: bool,
   },
   /// Volume Weighted Average Price (VWAP) Algo: Aims for VWAP over a period.
   VWAP {
     max_pct_vol: f64, // 0.01 to 0.50
-    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
-    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    start_time: Option<DateTime<Utc>>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<DateTime<Utc>>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
     allow_past_end_time: bool,
     no_take_liq: bool,
     speed_up: bool, // Compensate for limit price presence

@@ -72,9 +72,16 @@ pub struct OrderBuilder {
   is_adjusted: bool,
   trailing_unit: Option<TrailingStopUnit>,
   // Internal state for condition conjunction
-  next_condition_conjunction: Option<String>, // Stores " and " or " or "
+  next_condition_conjunction: Option<ConditionConjunction>,
   // Internal state for IBKR Algo
   ibkr_algo: Option<crate::order::IBKRAlgo>,
+}
+
+/// Specifies the conjunction for combining order conditions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionConjunction {
+  And,
+  Or,
 }
 
 impl OrderBuilder {
@@ -289,14 +296,18 @@ impl OrderBuilder {
     self
   }
 
-  pub fn add_combo_leg(mut self, con_id: i32, ratio: i32, action: &str, exchange: &str) -> Self {
+  pub fn add_combo_leg(mut self, con_id: i32, ratio: i32, action: OrderSide, exchange: &str) -> Self {
     if !self.is_combo {
       self = self.for_combo();
+    }
+    // Validate action for combo leg - typically BUY or SELL. SSHORT might also be valid.
+    if !matches!(action, OrderSide::Buy | OrderSide::Sell | OrderSide::SellShort) {
+      log::warn!("Using potentially unsupported OrderSide '{:?}' for combo leg action. Typically BUY or SELL.", action);
     }
     self.contract.combo_legs.push(ComboLeg {
       con_id,
       ratio,
-      action: action.to_string(), // "BUY" or "SELL"
+      action: action.to_string(),
       exchange: exchange.to_string(),
       open_close: 0, // Default: Same as parent
       short_sale_slot: 0, // Default
@@ -743,21 +754,19 @@ impl OrderBuilder {
 
   // --- Condition Methods (Direct String Formatting) ---
 
-  /// Sets the conjunction (" and " or " or ") to be prepended to the *next* condition added.
-  pub fn with_next_condition_conjunction(mut self, conjunction: &str) -> Self {
-    let conj_str = conjunction.trim().to_lowercase();
-    if conj_str == "and" || conj_str == "or" {
-      self.next_condition_conjunction = Some(format!(" {} ", conj_str));
-    } else {
-      log::warn!("Invalid conjunction specified: '{}'. Use 'and' or 'or'.", conjunction);
-      self.next_condition_conjunction = None; // Default to AND (no prefix)
-    }
+  /// Sets the conjunction to be prepended to the *next* condition added.
+  pub fn with_next_condition_conjunction(mut self, conjunction: ConditionConjunction) -> Self {
+    self.next_condition_conjunction = Some(conjunction);
     self
   }
 
   // Helper to add formatted condition string
   fn add_formatted_condition(mut self, condition_str: String) -> Self {
-    let prefix = self.next_condition_conjunction.take().unwrap_or_default();
+    let prefix = match self.next_condition_conjunction.take() {
+      Some(ConditionConjunction::And) => " and ".to_string(),
+      Some(ConditionConjunction::Or) => " or ".to_string(),
+      None => String::new(), // Default if no conjunction was set for the next one
+    };
     self.order.conditions.push(format!("{}{}", prefix, condition_str));
     self
   }
@@ -771,10 +780,12 @@ impl OrderBuilder {
     self.add_formatted_condition(condition_str)
   }
 
-  /// Adds a Time condition. `time` format: "YYYYMMDD HH:MM:SS (optional timezone)".
-  pub fn add_time_condition(self, time: &str, is_more: bool) -> Self {
-    // Basic validation of time format might be useful here
-    let condition_str = format!("Time,isMore={},time={}", is_more, time);
+  /// Adds a Time condition.
+  /// `time` is specified in UTC. TWS API expects "YYYYMMDD HH:MM:SS (optional timezone)".
+  /// This method will format it as "YYYYMMDD HH:MM:SS", implying UTC or server local time.
+  pub fn add_time_condition(self, time: DateTime<Utc>, is_more: bool) -> Self {
+    let time_str = time.format("%Y%m%d %H:%M:%S").to_string();
+    let condition_str = format!("Time,isMore={},time={}", is_more, time_str);
     self.add_formatted_condition(condition_str)
   }
 
@@ -1043,6 +1054,31 @@ impl OrderBuilder {
     let mut final_order = self.order; // OrderRequest is not Copy, this is a move.
     // Since build(self) consumes self, this is fine.
     if let Some(algo_enum_instance) = self.ibkr_algo { // self.ibkr_algo is Option<IBKRAlgo>, algo_enum_instance is IBKRAlgo
+      // Helper to format DateTime<Utc> for algo params.
+      // TWS expects "YYYYMMDD-HH:MM:SS TMZ" or "HH:MM:SS TMZ". We'll use UTC.
+      // AccumulateDistribute activeTimeStart/End: "YYYYMMDD-hh:mm:ss TMZ"
+      // Others: "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+      // For simplicity and consistency, we'll use "YYYYMMDD-HH:MM:SS UTC" for date-times
+      // and "HH:MM:SS UTC" for time-only, unless a specific algo dictates otherwise.
+      // The IB docs mention for AccumulateDistribute: "The Time Zone in "startTime" and "endTime" attributes is ignored and always defaulted to GMT"
+      // This implies sending "HH:MM:SS" without a timezone might be okay for that specific algo if only time is relevant.
+      // However, to be explicit, we'll send with " UTC".
+      let format_datetime_for_algo = |dt: DateTime<Utc>, is_date_required: bool| -> String {
+        if is_date_required { // e.g. activeTimeStart/End for AD
+          dt.format("%Y%m%d-%H:%M:%S UTC").to_string()
+        } else { // e.g. startTime/endTime for VWAP, ArrivalPx etc.
+          // Check if date part is significantly different from today, if so, include date.
+          // This is a heuristic. If user provides a DateTime<Utc> from a different day,
+          // they likely intend for that date to be part of the algo param.
+          // Otherwise, just time is fine.
+          // For now, let's be explicit: if it's a DateTime<Utc>, include the date part.
+          // The TWS docs are a bit vague on when "hh:mm:ss TMZ" is sufficient vs "YYYYMMDD-hh:mm:ss TMZ".
+          // Using the longer form is safer.
+          dt.format("%Y%m%d-%H:%M:%S UTC").to_string()
+          // Alternative for time-only: dt.format("%H:%M:%S UTC").to_string()
+        }
+      };
+
       match algo_enum_instance {
         crate::order::IBKRAlgo::Adaptive { priority } => {
           final_order.algo_strategy = Some("Adaptive".to_string());
@@ -1053,8 +1089,8 @@ impl OrderBuilder {
           let mut p = Vec::new();
           p.push(("maxPctVol".to_string(), max_pct_vol.to_string()));
           p.push(("riskAversion".to_string(), risk_aversion.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
-          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
+          if let Some(et_dt) = end_time { p.push(("endTime".to_string(), format_datetime_for_algo(et_dt, false))); }
           p.push(("allowPastEndTime".to_string(), if allow_past_end_time { "1".to_string() } else { "0".to_string() }));
           p.push(("forceCompletion".to_string(), if force_completion { "1".to_string() } else { "0".to_string() }));
           final_order.algo_strategy = Some("ArrivalPx".to_string());
@@ -1065,7 +1101,7 @@ impl OrderBuilder {
           let mut p = Vec::new();
           p.push(("maxPctVol".to_string(), max_pct_vol.to_string()));
           p.push(("riskAversion".to_string(), risk_aversion.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
           p.push(("forceCompletion".to_string(), if force_completion { "1".to_string() } else { "0".to_string() }));
           final_order.algo_strategy = Some("ClosePx".to_string());
           final_order.algo_params = p;
@@ -1074,8 +1110,8 @@ impl OrderBuilder {
           if display_size <= 0 { return Err(IBKRError::InvalidOrder("DarkIce displaySize must be positive".into())); }
           let mut p = Vec::new();
           p.push(("displaySize".to_string(), display_size.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
-          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
+          if let Some(et_dt) = end_time { p.push(("endTime".to_string(), format_datetime_for_algo(et_dt, false))); }
           p.push(("allowPastEndTime".to_string(), if allow_past_end_time { "1".to_string() } else { "0".to_string() }));
           final_order.algo_strategy = Some("DarkIce".to_string());
           final_order.algo_params = p;
@@ -1091,8 +1127,8 @@ impl OrderBuilder {
           if let Some(gu) = give_up { p.push(("giveUp".to_string(), gu.to_string())); }
           p.push(("catchUp".to_string(), if catch_up_in_time { "1".to_string() } else { "0".to_string() }));
           p.push(("waitForFill".to_string(), if wait_for_fill { "1".to_string() } else { "0".to_string() }));
-          if let Some(st) = active_time_start { p.push(("activeTimeStart".to_string(), st)); }
-          if let Some(et) = active_time_end { p.push(("activeTimeEnd".to_string(), et)); }
+          if let Some(st_dt) = active_time_start { p.push(("activeTimeStart".to_string(), format_datetime_for_algo(st_dt, true))); } // AD uses YYYYMMDD-HH:MM:SS
+          if let Some(et_dt) = active_time_end { p.push(("activeTimeEnd".to_string(), format_datetime_for_algo(et_dt, true))); } // AD uses YYYYMMDD-HH:MM:SS
           final_order.algo_strategy = Some("AD".to_string());
           final_order.algo_params = p;
         }
@@ -1100,8 +1136,8 @@ impl OrderBuilder {
           if !(0.01..=0.5).contains(&pct_vol) { return Err(IBKRError::InvalidOrder("PercentageOfVolume pctVol must be between 0.01 and 0.50".into())); }
           let mut p = Vec::new();
           p.push(("pctVol".to_string(), pct_vol.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
-          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
+          if let Some(et_dt) = end_time { p.push(("endTime".to_string(), format_datetime_for_algo(et_dt, false))); }
           p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
           final_order.algo_strategy = Some("PctVol".to_string());
           final_order.algo_params = p;
@@ -1115,8 +1151,8 @@ impl OrderBuilder {
             crate::order::TwapStrategyType::MatchingLast => "Matching Last",
           };
           p.push(("strategyType".to_string(), strat_str.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
-          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
+          if let Some(et_dt) = end_time { p.push(("endTime".to_string(), format_datetime_for_algo(et_dt, false))); }
           p.push(("allowPastEndTime".to_string(), if allow_past_end_time { "1".to_string() } else { "0".to_string() }));
           final_order.algo_strategy = Some("Twap".to_string());
           final_order.algo_params = p;
@@ -1131,8 +1167,8 @@ impl OrderBuilder {
           p.push(("deltaPctVol".to_string(), delta_pct_vol.to_string()));
           p.push(("minPctVol4Px".to_string(), min_pct_vol_for_price.to_string()));
           p.push(("maxPctVol4Px".to_string(), max_pct_vol_for_price.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
-          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
+          if let Some(et_dt) = end_time { p.push(("endTime".to_string(), format_datetime_for_algo(et_dt, false))); }
           p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
           final_order.algo_strategy = Some("PctVolPx".to_string());
           final_order.algo_params = p;
@@ -1143,8 +1179,8 @@ impl OrderBuilder {
           let mut p = Vec::new();
           p.push(("startPctVol".to_string(), start_pct_vol.to_string()));
           p.push(("endPctVol".to_string(), end_pct_vol.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
-          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
+          if let Some(et_dt) = end_time { p.push(("endTime".to_string(), format_datetime_for_algo(et_dt, false))); }
           p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
           final_order.algo_strategy = Some("PctVolSz".to_string());
           final_order.algo_params = p;
@@ -1155,8 +1191,8 @@ impl OrderBuilder {
           let mut p = Vec::new();
           p.push(("startPctVol".to_string(), start_pct_vol.to_string()));
           p.push(("endPctVol".to_string(), end_pct_vol.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
-          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
+          if let Some(et_dt) = end_time { p.push(("endTime".to_string(), format_datetime_for_algo(et_dt, false))); }
           p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
           final_order.algo_strategy = Some("PctVolTm".to_string());
           final_order.algo_params = p;
@@ -1165,8 +1201,8 @@ impl OrderBuilder {
           if !(0.01..=0.5).contains(&max_pct_vol) { return Err(IBKRError::InvalidOrder("VWAP maxPctVol must be between 0.01 and 0.50".into())); }
           let mut p = Vec::new();
           p.push(("maxPctVol".to_string(), max_pct_vol.to_string()));
-          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
-          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          if let Some(st_dt) = start_time { p.push(("startTime".to_string(), format_datetime_for_algo(st_dt, false))); }
+          if let Some(et_dt) = end_time { p.push(("endTime".to_string(), format_datetime_for_algo(et_dt, false))); }
           p.push(("allowPastEndTime".to_string(), if allow_past_end_time { "1".to_string() } else { "0".to_string() }));
           p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
           p.push(("speedUp".to_string(), if speed_up { "1".to_string() } else { "0".to_string() }));

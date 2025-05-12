@@ -976,7 +976,12 @@ mod test_cases {
       .limit(150.00)
       .for_stock("AAPL")
       .with_tif(TimeInForce::Day)
+      // Example: Add a time condition - ensure you have `chrono::Utc` in scope
+      // .add_time_condition(Utc::now() + ChronoDuration::minutes(5), true) // Condition: time is after 5 mins from now
     // .with_account("YOUR_ACCOUNT_ID") // Optional: Specify account if needed
+      // Example: Add another condition with explicit conjunction
+      // .with_next_condition_conjunction(yatws::order_builder::ConditionConjunction::And)
+      // .add_volume_condition(265598, "SMART", 1000000, true) // Example volume condition
       .build()?;
 
     info!("Checking What-If for: {:?} {} {} @ {}",
