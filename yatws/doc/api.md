@@ -122,13 +122,15 @@ continuous updates and fetching snapshots. Accessed via `IBKRClient::account()`.
 
 **File:** `yatws/src/account_manager.rs`
 
-### `AccountManager::get_account_value(&self, key: &str) -> Result<Option<AccountValue>, IBKRError>`
+### `AccountManager::get_account_value(&self, key: AccountValueKey) -> Result<Option<AccountValue>, IBKRError>`
 
-Retrieves a specific account value by its TWS tag name (e.g., "NetLiquidation"). Requires active subscription.
+Retrieves a specific account value by its `AccountValueKey` enum variant. Requires active subscription.
+-   `key`: The `AccountValueKey` enum variant representing the desired account value.
+-   **Returns**: `Ok(Some(AccountValue))` if found, `Ok(None)` if not, or `Err(IBKRError)`.
 
 ### `AccountManager::get_account_info(&self) -> Result<AccountInfo, IBKRError>`
 
-Retrieves a consolidated summary of account information (ID, type, equity, buying power, etc.). Requires active subscription.
+Retrieves a consolidated summary of account information. This includes metrics like account ID, type, base currency, equity (net liquidation), buying power, cash balances, margin requirements (initial, maintenance, look-ahead), P&L figures, day trades remaining, and more. Requires active subscription.
 -   **Errors**: If subscription fails, data not populated, or essential values missing/unparsable.
 
 ### `AccountManager::get_buying_power(&self) -> Result<f64, IBKRError>`
@@ -139,9 +141,9 @@ Retrieves current buying power. Requires active subscription.
 
 Retrieves total cash balance. Requires active subscription.
 
-### `AccountManager::get_equity(&self) -> Result<f64, IBKRError>`
+### `AccountManager::get_net_liquidation(&self) -> Result<f64, IBKRError>`
 
-Retrieves net liquidation value (equity). Attempts "NetLiquidation", then "EquityWithLoanValue". Requires active subscription.
+Retrieves the net liquidation value (equity) of the account. Requires active subscription.
 
 ### `AccountManager::list_open_positions(&self) -> Result<Vec<Position>, IBKRError>`
 

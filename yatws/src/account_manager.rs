@@ -60,7 +60,7 @@
 //! }
 //! ```
 
-use crate::account::{AccountInfo, AccountState, AccountValue, Position, AccountObserver, Execution, ExecutionFilter};
+use crate::account::{AccountInfo, AccountState, AccountValue, Position, AccountObserver, Execution, ExecutionFilter, AccountValueKey}; // Added AccountValueKey
 use crate::base::IBKRError;
 use crate::contract::Contract;
 use crate::handler::AccountHandler;
@@ -192,16 +192,17 @@ impl AccountManager {
   /// call by other getter methods.
   ///
   /// # Arguments
-  /// * `key` - The TWS tag name for the desired account value.
+  /// * `key` - The `AccountValueKey` enum variant representing the desired account value.
   ///
   /// # Returns
   /// `Ok(Some(AccountValue))` if the key is found, `Ok(None)` if not, or `Err(IBKRError)`
   /// if not subscribed or other issues occur.
-  pub fn get_account_value(&self, key: &str) -> Result<Option<AccountValue>, IBKRError> {
+  pub fn get_account_value(&self, key: AccountValueKey) -> Result<Option<AccountValue>, IBKRError> {
     self.ensure_subscribed()?; // Ensure subscription is active
     let state = self.account_state.read();
+    let key_str = key.to_string(); // Get the string representation from the enum
     // Optional: Check for poison if needed: if state.is_poisoned() { ... }
-    Ok(state.values.get(key).cloned())
+    Ok(state.values.get(&key_str).cloned())
   }
 
   /// Internal helper to subscribe to PnL single for a given con_id.
@@ -319,18 +320,55 @@ impl AccountManager {
       state.values.get(key).map_or(String::new(), |v| v.value.clone())
     };
 
+    // Populate the expanded AccountInfo struct
     Ok(AccountInfo {
+      // --- Core Identifiers ---
       account_id: state.account_id.clone(),
       account_type: get_string_or_default("AccountType"),
       base_currency: get_string_or_default("Currency"),
-      equity: parse_or_err("NetLiquidation").or_else(|_| parse_or_err("EquityWithLoanValue")).unwrap_or(0.0),
-      buying_power: parse_or_err("BuyingPower").unwrap_or(0.0),
-      cash_balance: parse_or_err("TotalCashValue").unwrap_or(0.0),
+
+      // --- Key Balances & Equity ---
+      net_liquidation: parse_or_zero("NetLiquidation"),
+      total_cash_value: parse_or_zero("TotalCashValue"),
+      settled_cash: parse_or_zero("SettledCash"),
+      accrued_cash: parse_or_zero("AccruedCash"),
+      buying_power: parse_or_zero("BuyingPower"),
+      equity_with_loan_value: parse_or_zero("EquityWithLoanValue"),
+      previous_equity_with_loan_value: parse_or_zero("PreviousEquityWithLoanValue"),
+      gross_position_value: parse_or_zero("GrossPositionValue"),
+
+      // --- Margin Requirements ---
+      reg_t_equity: parse_or_zero("ReqTEquity"), // Assuming ReqTEquity maps here
+      reg_t_margin: parse_or_zero("ReqTMargin"), // Assuming ReqTMargin maps here
+      sma: parse_or_zero("SMA"),
+      init_margin_req: parse_or_zero("InitMarginReq"),
+      maint_margin_req: parse_or_zero("MaintMarginReq"),
+      full_init_margin_req: parse_or_zero("FullInitMarginReq"),
+      full_maint_margin_req: parse_or_zero("FullMaintMarginReq"),
+
+      // --- Available Funds & Liquidity ---
+      available_funds: parse_or_zero("AvailableFunds"),
+      excess_liquidity: parse_or_zero("ExcessLiquidity"),
+      cushion: parse_or_zero("Cushion"),
+      full_available_funds: parse_or_zero("FullAvailableFunds"),
+      full_excess_liquidity: parse_or_zero("FullExcessLiquidity"),
+
+      // --- Look Ahead Margin ---
+      look_ahead_next_change: get_string_or_default("LookAheadNextChange"),
+      look_ahead_init_margin_req: parse_or_zero("LookAheadInitMarginReq"),
+      look_ahead_maint_margin_req: parse_or_zero("LookAheadMaintMarginReq"),
+      look_ahead_available_funds: parse_or_zero("LookAheadAvailableFunds"),
+      look_ahead_excess_liquidity: parse_or_zero("LookAheadExcessLiquidity"),
+
+      // --- Other ---
+      highest_severity: parse_int_or_minus_one("HighestSeverity"),
       day_trades_remaining: parse_int_or_minus_one("DayTradesRemaining"),
-      leverage: parse_or_zero("Leverage-S"),
-      maintenance_margin: parse_or_err("MaintMarginReq").or_else(|_| parse_or_err("FullMaintMarginReq")).unwrap_or(0.0),
-      initial_margin: parse_or_err("InitMarginReq").or_else(|_| parse_or_err("FullInitMarginReq")).unwrap_or(0.0),
-      excess_liquidity: parse_or_err("ExcessLiquidity").or_else(|_| parse_or_err("FullExcessLiquidity")).unwrap_or(0.0),
+      leverage_s: parse_or_zero("Leverage-S"),
+      daily_pnl: parse_or_zero("DailyPnL"),
+      unrealized_pnl: parse_or_zero("UnrealizedPnL"),
+      realized_pnl: parse_or_zero("RealizedPnL"),
+
+      // --- Timestamp ---
       updated_at: state.last_updated.unwrap_or_else(Utc::now),
     })
   }
@@ -350,12 +388,10 @@ impl AccountManager {
   }
 
   /// Retrieves the net liquidation value (equity) of the account.
-  /// Attempts to parse "NetLiquidation" first, then "EquityWithLoanValue" as a fallback.
   /// Requires an active subscription.
-  pub fn get_equity(&self) -> Result<f64, IBKRError> {
+  pub fn get_net_liquidation(&self) -> Result<f64, IBKRError> {
     self.ensure_subscribed()?;
     self.get_parsed_value("NetLiquidation")
-      .or_else(|_| self.get_parsed_value("EquityWithLoanValue"))
   }
 
   /// Retrieves a list of all open positions in the account's portfolio.

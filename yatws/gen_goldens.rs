@@ -14,6 +14,7 @@ use std::time::Duration;
 use yatws::{
   IBKRError,
   IBKRClient,
+  account::AccountValueKey, // Added AccountValueKey
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
   contract::{Contract, SecType, OptionRight, WhatToShow},
@@ -132,6 +133,12 @@ mod test_cases {
     match acct_mgr.get_account_info() {
       Ok(info) => {
         info!("Account Info: {:#?}", info);
+        // Example of getting a specific value using the enum
+        match acct_mgr.get_account_value(AccountValueKey::BuyingPower) {
+            Ok(Some(val)) => info!("Specific Value - Buying Power: {} {:?}", val.value, val.currency),
+            Ok(None) => warn!("Specific Value - Buying Power not found."),
+            Err(e) => error!("Error getting specific value - Buying Power: {:?}", e),
+        }
       }
       Err(e) => {
         // Don't fail test if info fails but positions might work (e.g., after timeout)

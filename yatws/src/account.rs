@@ -6,22 +6,92 @@ use crate::order::OrderSide;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
-/// Account information
+/// Account information - A consolidated view of key account metrics.
+/// Populated primarily from `accountSummary` messages.
 #[derive(Debug, Clone)]
 pub struct AccountInfo {
+  // --- Core Identifiers ---
   pub account_id: String,
   pub account_type: String,
   pub base_currency: String,
-  pub equity: f64,
+
+  // --- Key Balances & Equity ---
+  /// Net Liquidation Value (often referred to as Equity)
+  pub net_liquidation: f64,
+  /// Total Cash Value
+  pub total_cash_value: f64,
+  /// Settled Cash
+  pub settled_cash: f64,
+  /// Accrued Cash (interest, dividends)
+  pub accrued_cash: f64,
+  /// Buying Power
   pub buying_power: f64,
-  pub cash_balance: f64,
-  pub day_trades_remaining: i32,
-  pub leverage: f64,
-  pub maintenance_margin: f64,
-  pub initial_margin: f64,
+  /// Equity with Loan Value
+  pub equity_with_loan_value: f64,
+  /// Previous Day's Equity with Loan Value
+  pub previous_equity_with_loan_value: f64,
+  /// Gross Position Value (sum of absolute values of positions)
+  pub gross_position_value: f64,
+
+  // --- Margin Requirements ---
+  /// Reg T Equity
+  pub reg_t_equity: f64,
+  /// Reg T Margin
+  pub reg_t_margin: f64,
+  /// Special Memorandum Account (SMA)
+  pub sma: f64,
+  /// Initial Margin Requirement
+  pub init_margin_req: f64,
+  /// Maintenance Margin Requirement
+  pub maint_margin_req: f64,
+  /// Full Initial Margin Requirement
+  pub full_init_margin_req: f64,
+  /// Full Maintenance Margin Requirement
+  pub full_maint_margin_req: f64,
+
+  // --- Available Funds & Liquidity ---
+  /// Available Funds
+  pub available_funds: f64,
+  /// Excess Liquidity
   pub excess_liquidity: f64,
+  /// Cushion (Excess Liquidity as a percentage of Net Liquidation)
+  pub cushion: f64,
+  /// Full Available Funds
+  pub full_available_funds: f64,
+  /// Full Excess Liquidity
+  pub full_excess_liquidity: f64,
+
+  // --- Look Ahead Margin ---
+  /// Time of next margin change (HHMMSS format)
+  pub look_ahead_next_change: String, // Keep as string for HHMMSS
+  /// Look Ahead Initial Margin Requirement
+  pub look_ahead_init_margin_req: f64,
+  /// Look Ahead Maintenance Margin Requirement
+  pub look_ahead_maint_margin_req: f64,
+  /// Look Ahead Available Funds
+  pub look_ahead_available_funds: f64,
+  /// Look Ahead Excess Liquidity
+  pub look_ahead_excess_liquidity: f64,
+
+  // --- Other ---
+  /// Highest margin requirement severity level
+  pub highest_severity: i32, // Or String? TWS sends integer
+  /// Day Trades Remaining (Pattern Day Trader)
+  pub day_trades_remaining: i32,
+  /// Leverage (for specific products, often -S suffix)
+  pub leverage_s: f64,
+  /// Daily Profit and Loss
+  pub daily_pnl: f64,
+  /// Unrealized Profit and Loss
+  pub unrealized_pnl: f64,
+  /// Realized Profit and Loss
+  pub realized_pnl: f64,
+
+  // --- Timestamp ---
+  /// Time of the last update received for any value in this summary
   pub updated_at: DateTime<Utc>,
 }
+
 
 /// Account state for internal state tracking
 #[derive(Debug, Clone, Default)]
@@ -40,6 +110,89 @@ pub struct AccountValue {
   pub currency: Option<String>,
   pub account_id: String,
 }
+
+/// Enum representing the keys for account values requested from TWS.
+/// Use `AccountValueKey::to_string()` to get the TWS tag name.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AccountValueKey {
+  AccountType,
+  NetLiquidation,
+  TotalCashValue,
+  SettledCash,
+  AccruedCash,
+  BuyingPower,
+  EquityWithLoanValue,
+  PreviousEquityWithLoanValue,
+  GrossPositionValue,
+  ReqTEquity,
+  ReqTMargin,
+  SMA,
+  InitMarginReq,
+  MaintMarginReq,
+  AvailableFunds,
+  ExcessLiquidity,
+  Cushion,
+  FullInitMarginReq,
+  FullMaintMarginReq,
+  FullAvailableFunds,
+  FullExcessLiquidity,
+  LookAheadNextChange,
+  LookAheadInitMarginReq,
+  LookAheadMaintMarginReq,
+  LookAheadAvailableFunds,
+  LookAheadExcessLiquidity,
+  HighestSeverity,
+  DayTradesRemaining,
+  LeverageS, // Note: TWS uses "Leverage-S"
+  Currency,
+  DailyPnL,
+  UnrealizedPnL,
+  RealizedPnL,
+  // Add other keys as needed
+  Other(String), // For keys not explicitly listed
+}
+
+impl std::fmt::Display for AccountValueKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AccountValueKey::AccountType => write!(f, "AccountType"),
+            AccountValueKey::NetLiquidation => write!(f, "NetLiquidation"),
+            AccountValueKey::TotalCashValue => write!(f, "TotalCashValue"),
+            AccountValueKey::SettledCash => write!(f, "SettledCash"),
+            AccountValueKey::AccruedCash => write!(f, "AccruedCash"),
+            AccountValueKey::BuyingPower => write!(f, "BuyingPower"),
+            AccountValueKey::EquityWithLoanValue => write!(f, "EquityWithLoanValue"),
+            AccountValueKey::PreviousEquityWithLoanValue => write!(f, "PreviousEquityWithLoanValue"),
+            AccountValueKey::GrossPositionValue => write!(f, "GrossPositionValue"),
+            AccountValueKey::ReqTEquity => write!(f, "ReqTEquity"),
+            AccountValueKey::ReqTMargin => write!(f, "ReqTMargin"),
+            AccountValueKey::SMA => write!(f, "SMA"),
+            AccountValueKey::InitMarginReq => write!(f, "InitMarginReq"),
+            AccountValueKey::MaintMarginReq => write!(f, "MaintMarginReq"),
+            AccountValueKey::AvailableFunds => write!(f, "AvailableFunds"),
+            AccountValueKey::ExcessLiquidity => write!(f, "ExcessLiquidity"),
+            AccountValueKey::Cushion => write!(f, "Cushion"),
+            AccountValueKey::FullInitMarginReq => write!(f, "FullInitMarginReq"),
+            AccountValueKey::FullMaintMarginReq => write!(f, "FullMaintMarginReq"),
+            AccountValueKey::FullAvailableFunds => write!(f, "FullAvailableFunds"),
+            AccountValueKey::FullExcessLiquidity => write!(f, "FullExcessLiquidity"),
+            AccountValueKey::LookAheadNextChange => write!(f, "LookAheadNextChange"),
+            AccountValueKey::LookAheadInitMarginReq => write!(f, "LookAheadInitMarginReq"),
+            AccountValueKey::LookAheadMaintMarginReq => write!(f, "LookAheadMaintMarginReq"),
+            AccountValueKey::LookAheadAvailableFunds => write!(f, "LookAheadAvailableFunds"),
+            AccountValueKey::LookAheadExcessLiquidity => write!(f, "LookAheadExcessLiquidity"),
+            AccountValueKey::HighestSeverity => write!(f, "HighestSeverity"),
+            AccountValueKey::DayTradesRemaining => write!(f, "DayTradesRemaining"),
+            AccountValueKey::LeverageS => write!(f, "Leverage-S"), // Special case for hyphen
+            AccountValueKey::Currency => write!(f, "Currency"),
+            AccountValueKey::DailyPnL => write!(f, "DailyPnL"),
+            AccountValueKey::UnrealizedPnL => write!(f, "UnrealizedPnL"),
+            AccountValueKey::RealizedPnL => write!(f, "RealizedPnL"),
+            AccountValueKey::Other(s) => write!(f, "{}", s),
+        }
+    }
+}
+
 
 /// Portfolio position
 #[derive(Debug, Clone)]
