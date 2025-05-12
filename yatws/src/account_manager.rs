@@ -117,6 +117,7 @@ pub struct AccountManager {
   pnl_single_subscriptions: RwLock<HashMap<i32, i32>>, // con_id -> pnl_req_id
   pnl_single_req_id_to_con_id: RwLock<HashMap<i32, i32>>, // pnl_req_id -> con_id
   pnl_filter: RwLock<Option<Arc<HashSet<i32>>>>, // Stores the current P&L filter (con_ids)
+  pre_liquidation_warning_received: AtomicBool, // Flag if code 2148 was received this session
 }
 
 /// Manages account summary, portfolio positions, P&L, and execution data.
@@ -154,6 +155,7 @@ impl AccountManager {
       pnl_single_subscriptions: RwLock::new(HashMap::new()),
       pnl_single_req_id_to_con_id: RwLock::new(HashMap::new()),
       pnl_filter: RwLock::new(None),
+      pre_liquidation_warning_received: AtomicBool::new(false),
     })
   }
 
@@ -1112,6 +1114,21 @@ impl AccountManager {
     }
   }
 
+  /// Checks if a pre-liquidation warning (TWS error code 2148) has been received
+  /// during the current API session.
+  ///
+  /// This flag indicates that TWS sent the warning message at least once since
+  /// the client connected. It does **not** indicate the current liquidation status
+  /// of the account, only that the warning condition was met at some point.
+  /// The flag is reset when a new `IBKRClient` session is started.
+  /// Check the account info cushion field to see how close you are.
+  ///
+  /// # Returns
+  /// `true` if the warning was received in this session, `false` otherwise.
+  pub fn has_received_pre_liquidation_warning(&self) -> bool {
+    self.pre_liquidation_warning_received.load(Ordering::Relaxed)
+  }
+
 
   // --- Observer Notification Helpers ---
   fn notify_account_update(&self, info: &AccountInfo) {
@@ -1692,6 +1709,14 @@ impl AccountHandler for AccountManager {
 
     // If not matched to a specific request, log as a general account error
     error!("Unhandled Account error: ReqID={}, Code={:?}, Msg={}", req_id, code, msg);
+    // Check specifically for PreLiquidationWarning
+    if code == ClientErrorCode::PreLiquidationWarning {
+        info!("Pre-liquidation warning (2148) received this session.");
+        self.pre_liquidation_warning_received.store(true, Ordering::Relaxed);
+        // Note: We still log it as an error/warning above, but also set the flag.
+        // We might decide *not* to return early here if other logic needs to run for warnings.
+    }
+
     // TODO: Notify observers of general account errors?
   }
 }

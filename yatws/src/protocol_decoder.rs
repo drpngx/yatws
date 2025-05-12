@@ -312,6 +312,8 @@ pub enum ClientErrorCode {
   MarketDataFarmConnecting = 2119,
   /// Cross Side Warning
   CrossSideWarning = 2137,
+  /// Liquidation Warning
+  PreLiquidationWarning = 2148,
   /// Sec-def data farm connection is OK
   SecurityDefinitionDataFarmConnected = 2158,
   /// Etrade Only Not Supported Warning
@@ -1005,6 +1007,7 @@ impl fmt::Display for ClientErrorCode {
       ClientErrorCode::OutsideRthAttributeIgnored => "Order Event Warning: Attribute \"Outside Regular Trading Hours\" is ignored based on the order type and destination. PlaceOrder is now processed.",
       ClientErrorCode::TwsToServerConnectionBroken => "Connectivity between TWS and server is broken. It will be restored automatically.",
       ClientErrorCode::CrossSideWarning => "Cross Side Warning",
+      ClientErrorCode::PreLiquidationWarning => "Your account, while currently margin compliant, maintains qualifying equity with a Margin Cushion level less than 10% above that which is required.",
       ClientErrorCode::SecurityDefinitionDataFarmConnected => "Sec-def data farm connection is OK",
       ClientErrorCode::EtradeOnlyNotSupportedWarning => "Etrade Only Not Supported Warning",
       ClientErrorCode::FirmQuoteOnlyNotSupportedWarning => "Firm Quote Only Not Supported Warning",
@@ -1413,6 +1416,7 @@ impl TryFrom<i32> for ClientErrorCode {
       2110 => Ok(ClientErrorCode::TwsToServerConnectionBroken),
       2119 => Ok(ClientErrorCode::MarketDataFarmConnecting),
       2137 => Ok(ClientErrorCode::CrossSideWarning),
+      2148 => Ok(ClientErrorCode::PreLiquidationWarning),
       2158 => Ok(ClientErrorCode::SecurityDefinitionDataFarmConnected),
       2168 => Ok(ClientErrorCode::EtradeOnlyNotSupportedWarning),
       2169 => Ok(ClientErrorCode::FirmQuoteOnlyNotSupportedWarning),

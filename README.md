@@ -38,7 +38,7 @@ YATWS follows a client-manager architecture:
 1. **Core Client (`IBKRClient`)**: Central connection point to TWS/Gateway
 2. **Specialized Managers**: Domain-specific functionality organized into managers:
    - `OrderManager`: Order placement, modification, and tracking
-   - `AccountManager`: Account and portfolio data
+   - `AccountManager`: Account and portfolio data (summary, positions, P&L, executions, liquidation warnings)
    - `DataMarketManager`: Real-time and historical market data
    - `DataRefManager`: Reference data (contract details, etc.)
    - `DataNewsManager`: News headlines and articles
@@ -78,6 +78,11 @@ let positions = client.account().list_open_positions()?;
 
 // Get today's executions
 let executions = client.account().get_day_executions()?;
+
+// Check for pre-liquidation warning
+if client.account().has_received_pre_liquidation_warning() {
+    println!("Warning: Pre-liquidation warning received this session.");
+}
 ```
 
 ### Order Management
@@ -240,7 +245,7 @@ Key components include:
 
 - `IBKRClient`: Primary client for interacting with the TWS API
 - `OrderManager`: Order-related operations
-- `AccountManager`: Account and portfolio data
+- `AccountManager`: Account and portfolio data (including liquidation warning status)
 - `DataMarketManager`: Market data operations
 - `DataRefManager`: Reference data
 - `DataNewsManager`: News data

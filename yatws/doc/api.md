@@ -212,6 +212,12 @@ Stops receiving continuous updates for account summary and positions. Sends `can
 `Ok(())` if not subscribed.
 -   **Errors**: If cancellation messages fail to encode or send.
 
+### `AccountManager::has_received_pre_liquidation_warning(&self) -> bool`
+
+Checks if a pre-liquidation warning (TWS error code 2148) has been received during the current API session.
+-   **Returns**: `true` if the warning was received in this session, `false` otherwise.
+-   **Note**: This flag indicates receipt of the warning in the session, not the current account status. It may have been received in a previous sesion or may no longer be valid. Check `cushion` in account info.
+
 ### AccountObserver Trait
 
 **File:** `yatws/src/account.rs` (definition assumed, documented based on usage in `AccountManager`)
