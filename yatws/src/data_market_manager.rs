@@ -76,7 +76,7 @@ use crate::data::{
   MarketDataSubscription, MarketDataType, MarketDepthRow, MarketDepthSubscription,
   RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData, HistoricalTick,
   TickByTickSubscription, TickOptionComputationData, TickType, HistogramEntry, HistogramDataRequestState, HistoricalTicksRequestState,
-  HistoricalDataRequestState, ScannerSubscriptionState, GenericTickType, TickByTickRequestType, // Added GenericTickType, TickByTickRequestType
+  HistoricalDataRequestState, ScannerSubscriptionState, GenericTickType, TickByTickRequestType, DurationUnit, TimePeriodUnit, // Added TimePeriodUnit
 };
 use crate::handler::MarketDataHandler;
 use crate::protocol_encoder::Encoder;
@@ -1797,7 +1797,7 @@ impl DataMarketManager {
   /// * `contract` - The [`Contract`] for which to request historical data.
   /// * `end_date_time` - Optional `DateTime<Utc>` specifying the end point of the historical data.
   ///   If `None`, data up to the present time is requested.
-  /// * `duration_str` - The duration of data to request (e.g., "1 Y", "3 M", "60 D", "3600 S").
+  /// * `duration` - A [`DurationUnit`] enum specifying the duration of data to request (e.g., `DurationUnit::Day(3)`).
   /// * `bar_size_setting` - A [`crate::contract::BarSize`] enum specifying the size of each bar.
   /// * `what_to_show` - A [`WhatToShow`] enum specifying the type of data to include in bars.
   /// * `use_rth` - If `true`, only include data from regular trading hours.
@@ -1847,7 +1847,7 @@ impl DataMarketManager {
     &self,
     contract: &Contract,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>, // Use chrono DateTime
-    duration_str: &str, // e.g., "1 Y", "3 M", "60 D", "3600 S"
+    duration: DurationUnit, // Changed from &str to DurationUnit
     bar_size_setting: crate::contract::BarSize,
     what_to_show: WhatToShow, // Changed from &str
     use_rth: bool,
@@ -1857,6 +1857,7 @@ impl DataMarketManager {
     chart_options: &[(String, String)], // TagValue list
   ) -> Result<Vec<Bar>, IBKRError> {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
+    let duration_str = duration.to_string(); // Convert enum to string for logging and encoding
     info!("Requesting historical data: Contract={}, Duration={}, BarSize={}, What={}, KeepUpToDate={}, Type={:?}",
           contract.symbol, duration_str, bar_size_setting, what_to_show, keep_up_to_date, desired_mkt_data_type); // what_to_show will use Display
 
@@ -1868,7 +1869,7 @@ impl DataMarketManager {
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_historical_data(
-      req_id, contract, end_date_time, duration_str, &bar_size_setting.to_string(),
+      req_id, contract, end_date_time, &duration_str, &bar_size_setting.to_string(), // Pass duration_str here
       &what_to_show.to_string(), use_rth, format_date, keep_up_to_date, chart_options,
     )?;
 
@@ -2371,7 +2372,7 @@ impl DataMarketManager {
   /// # Arguments
   /// * `contract` - The [`Contract`] for which to request histogram data.
   /// * `use_rth` - If `true`, include only data from regular trading hours.
-  /// * `time_period` - The time period for the histogram (e.g., "3 days", "1 week", "2 months").
+  /// * `time_period` - A [`TimePeriodUnit`] enum specifying the time period (e.g., `TimePeriodUnit::Day(3)`).
   /// * `_histogram_options` - Currently unused for `reqHistogramData`. Reserved for future use or alternative methods.
   ///
   /// # Returns
@@ -2383,11 +2384,12 @@ impl DataMarketManager {
     &self,
     contract: &Contract,
     use_rth: bool,
-    time_period: &str,
+    time_period: TimePeriodUnit, // Changed from &str
     _histogram_options: &[(String, String)], // Currently unused for REQ_HISTOGRAM_DATA
   ) -> Result<i32, IBKRError> {
-    info!("Requesting histogram data: Contract={}, UseRTH={}, TimePeriod={}",
-          contract.symbol, use_rth, time_period);
+    let time_period_str = time_period.to_string(); // Convert enum to string for logging and encoding
+    info!("Requesting histogram data: Contract={}, UseRTH={}, TimePeriod='{}'",
+          contract.symbol, use_rth, time_period_str); // Log the string representation
 
     if self.message_broker.get_server_version()? < min_server_ver::HISTOGRAM {
       return Err(IBKRError::Unsupported("Server version does not support histogram data requests.".to_string()));
@@ -2398,7 +2400,7 @@ impl DataMarketManager {
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_histogram_data(
-      req_id, contract, use_rth, time_period
+      req_id, contract, use_rth, &time_period_str // Pass the string representation
     )?;
 
     // Initialize and store state
@@ -2411,7 +2413,7 @@ impl DataMarketManager {
         req_id,
         contract: contract.clone(),
         use_rth,
-        time_period: time_period.to_string(),
+        time_period, // Store the enum
         items: Vec::new(),
         completed: false,
         error_code: None,
@@ -2429,7 +2431,7 @@ impl DataMarketManager {
   /// an error occurs, or the timeout is reached.
   ///
   /// # Arguments
-  /// * `contract`, `use_rth`, `time_period`, `_histogram_options`: Same as for `request_histogram_data`.
+  /// * `contract`, `use_rth`, `time_period` (as `TimePeriodUnit`), `_histogram_options`: Same as for `request_histogram_data`.
   /// * `timeout` - Maximum duration to wait for the histogram data.
   ///
   /// # Returns
@@ -2441,16 +2443,16 @@ impl DataMarketManager {
     &self,
     contract: &Contract,
     use_rth: bool,
-    time_period: &str,
+    time_period: TimePeriodUnit, // Changed from &str
     _histogram_options: &[(String, String)], // Currently unused for REQ_HISTOGRAM_DATA
     timeout: Duration,
   ) -> Result<Vec<HistogramEntry>, IBKRError> {
-    info!("Requesting blocking histogram data: Contract={}, UseRTH={}, TimePeriod={}, Timeout={:?}",
-          contract.symbol, use_rth, time_period, timeout);
+    info!("Requesting blocking histogram data: Contract={}, UseRTH={}, TimePeriod='{}', Timeout={:?}",
+          contract.symbol, use_rth, time_period, timeout); // Log the enum (uses Display)
 
     // 1. Initiate the non-blocking request
     let req_id = self.request_histogram_data(
-      contract, use_rth, time_period, _histogram_options
+      contract, use_rth, time_period, _histogram_options // Pass the enum
     )?;
     debug!("Blocking histogram data request initiated with ReqID: {}", req_id);
 

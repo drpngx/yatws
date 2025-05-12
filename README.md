@@ -72,8 +72,17 @@ let replay_client = IBKRClient::from_db("sessions.db", "my_trading_session")?;
 client.account().subscribe_account_updates()?;
 
 // Get account summary
-let equity = client.account().get_equity()?;
-let buying_power = client.account().get_buying_power()?;
+let info = client.account().get_account_info()?;
+println!("Account Net Liq: {}", info.net_liquidation);
+
+// Get a single specific value.
+use yatws::account::AccountValueKey;
+let buying_power_value = client.account().get_account_value(AccountValueKey::BuyingPower)?;
+if let Some(bp) = buying_power_value {
+    println!("Buying Power: {} {}", bp.value, bp.currency.unwrap_or_default());
+}
+
+// List positions
 let positions = client.account().list_open_positions()?;
 
 // Get today's executions
@@ -117,12 +126,13 @@ let (bid, ask, last) = client.data_market().get_quote(
 )?;
 
 // Get historical data
+use yatws::data::DurationUnit;
 let bars = client.data_market().get_historical_data(
     &contract,
     None,                 // End time (None = now)
-    "1 D",                                  // Duration string
-    yatws::contract::BarSize::Hour1,        // Bar size using enum
-    yatws::contract::WhatToShow::Trades,    // What to show using enum
+    DurationUnit::Day(1),
+    yatws::contract::BarSize::Hour1,
+    yatws::contract::WhatToShow::Trades,
     true,                 // Use RTH
     1,                    // Date format
     false,                // Keep up to date?

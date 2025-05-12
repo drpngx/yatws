@@ -244,6 +244,93 @@ impl FromStr for GenericTickType {
   }
 }
 
+/// Represents a duration for TWS API requests (e.g., historical data).
+/// Use `DurationUnit::to_string()` to get the TWS-compatible string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DurationUnit {
+  Second(i32),
+  Day(i32),
+  Week(i32),
+  Month(i32),
+  Year(i32),
+}
+
+impl fmt::Display for DurationUnit {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      DurationUnit::Second(n) => write!(f, "{} S", n),
+      DurationUnit::Day(n) => write!(f, "{} D", n),
+      DurationUnit::Week(n) => write!(f, "{} W", n),
+      DurationUnit::Month(n) => write!(f, "{} M", n),
+      DurationUnit::Year(n) => write!(f, "{} Y", n),
+    }
+  }
+}
+
+impl FromStr for DurationUnit {
+  type Err = IBKRError;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    let parts: Vec<&str> = s.trim().split_whitespace().collect();
+    if parts.len() != 2 {
+      return Err(IBKRError::ParseError(format!("Invalid DurationUnit string format: '{}'", s)));
+    }
+    let value = parts[0].parse::<i32>().map_err(|_| IBKRError::ParseError(format!("Invalid number in DurationUnit string: '{}'", parts[0])))?;
+    match parts[1].to_uppercase().as_str() {
+      "S" => Ok(DurationUnit::Second(value)),
+      "D" => Ok(DurationUnit::Day(value)),
+      "W" => Ok(DurationUnit::Week(value)),
+      "M" => Ok(DurationUnit::Month(value)),
+      "Y" => Ok(DurationUnit::Year(value)),
+      _ => Err(IBKRError::ParseError(format!("Invalid unit in DurationUnit string: '{}'", parts[1]))),
+    }
+  }
+}
+
+/// Represents a time period for TWS API histogram requests.
+/// Use `TimePeriodUnit::to_string()` to get the TWS-compatible string (e.g., "3 days").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TimePeriodUnit {
+  Day(i32),
+  Week(i32),
+  Month(i32),
+  Year(i32),
+}
+
+impl fmt::Display for TimePeriodUnit {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      TimePeriodUnit::Day(n) => write!(f, "{} {}", n, if *n == 1 { "day" } else { "days" }),
+      TimePeriodUnit::Week(n) => write!(f, "{} {}", n, if *n == 1 { "week" } else { "weeks" }),
+      TimePeriodUnit::Month(n) => write!(f, "{} {}", n, if *n == 1 { "month" } else { "months" }),
+      TimePeriodUnit::Year(n) => write!(f, "{} {}", n, if *n == 1 { "year" } else { "years" }),
+    }
+  }
+}
+
+impl FromStr for TimePeriodUnit {
+  type Err = IBKRError;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    let parts: Vec<&str> = s.trim().split_whitespace().collect();
+    if parts.len() != 2 {
+      return Err(IBKRError::ParseError(format!("Invalid TimePeriodUnit string format: '{}'", s)));
+    }
+    let value = parts[0].parse::<i32>().map_err(|_| IBKRError::ParseError(format!("Invalid number in TimePeriodUnit string: '{}'", parts[0])))?;
+    let unit_str = parts[1].to_lowercase();
+
+    // Handle singular and plural forms
+    match unit_str.as_str() {
+      "day" | "days" => Ok(TimePeriodUnit::Day(value)),
+      "week" | "weeks" => Ok(TimePeriodUnit::Week(value)),
+      "month" | "months" => Ok(TimePeriodUnit::Month(value)),
+      "year" | "years" => Ok(TimePeriodUnit::Year(value)),
+      _ => Err(IBKRError::ParseError(format!("Invalid unit in TimePeriodUnit string: '{}'", parts[1]))),
+    }
+  }
+}
+
+
 /// Enum representing the type of tick-by-tick data being requested.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TickByTickRequestType {
@@ -999,7 +1086,7 @@ pub struct HistogramDataRequestState {
   pub req_id: i32,
   pub contract: Contract,
   pub use_rth: bool,
-  pub time_period: String,
+  pub time_period: TimePeriodUnit, // Changed from String
   pub items: Vec<HistogramEntry>, // Stores the received histogram data
   pub completed: bool, // Flag for completion (all data received or error)
   pub error_code: Option<i32>,

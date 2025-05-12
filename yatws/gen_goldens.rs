@@ -18,7 +18,7 @@ use yatws::{
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
   contract::{Contract, SecType, OptionRight, WhatToShow},
-  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, GenericTickType, TickByTickRequestType}, // Added GenericTickType, TickByTickRequestType
+  data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, GenericTickType, TickByTickRequestType, DurationUnit, TimePeriodUnit}, // Added TimePeriodUnit
   parse_fundamental_xml
 };
 use chrono::{Utc, Duration as ChronoDuration, NaiveDate, Datelike}; // Added Datelike
@@ -1022,7 +1022,7 @@ mod test_cases {
     let data_mgr = client.data_market();
     let contract = Contract::stock("IBM"); // Use IBM stock
     let end_date_time = None; // Request up to present
-    let duration_str = "3 D"; // Request 3 days of data
+    let duration = DurationUnit::Day(3); // Request 3 days of data using the enum
     let bar_size_setting = yatws::contract::BarSize::OneHour;
     let what_to_show = WhatToShow::Trades; // Changed from "TRADES"
     let use_rth = true;
@@ -1032,13 +1032,13 @@ mod test_cases {
 
     info!(
       "Requesting historical data for {}: Duration={}, BarSize={}, What={}, RTH={}",
-      contract.symbol, duration_str, bar_size_setting, what_to_show, use_rth // what_to_show will use Display
+      contract.symbol, duration, bar_size_setting, what_to_show, use_rth // duration and what_to_show will use Display
     );
 
     match data_mgr.get_historical_data(
       &contract,
       end_date_time,
-      duration_str,
+      duration, // Pass the enum
       bar_size_setting,
       what_to_show, // Pass the enum
       use_rth,
@@ -1682,19 +1682,19 @@ mod test_cases {
     let data_mgr = client.data_market();
     let contract = Contract::stock("GE"); // Use a liquid stock
     let use_rth = true;
-    let time_period = "3 days"; // Request histogram for the last 3 days
+    let time_period = TimePeriodUnit::Day(3); // Request histogram for the last 3 days using enum
     let histogram_options = &[]; // Not used by REQ_HISTOGRAM_DATA
     let timeout = Duration::from_secs(30);
 
     info!(
       "Requesting histogram data for {}: UseRTH={}, TimePeriod='{}', Timeout={:?}",
-      contract.symbol, use_rth, time_period, timeout
+      contract.symbol, use_rth, time_period, timeout // Log the enum (uses Display)
     );
 
     match data_mgr.get_histogram_data(
       &contract,
       use_rth,
-      time_period,
+      time_period, // Pass the enum
       histogram_options,
       timeout
     ) {

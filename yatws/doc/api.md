@@ -793,12 +793,12 @@ Cancels an active streaming market depth request.
 -   **Errors**: If cancellation message fails. Logs warning if `req_id` not found or `is_smart_depth` indeterminable.
 
 ### `DataMarketManager::get_historical_data(&self, contract: &Contract, end_date_time: Option<chrono::DateTime<chrono::Utc>>,
-duration_str: &str, bar_size_setting: crate::contract::BarSize, what_to_show: WhatToShow, use_rth: bool, format_date: i32, keep_up_to_date: bool,
+duration: DurationUnit, bar_size_setting: crate::contract::BarSize, what_to_show: WhatToShow, use_rth: bool, format_date: i32, keep_up_to_date: bool,
 market_data_type: Option<MarketDataType>, chart_options: &[(String, String)]) -> Result<Vec<Bar>, IBKRError>`
 
 Requests historical bar data. Blocking call.
 -   `end_date_time`: Optional end point. `None` for present.
--   `duration_str`: Duration (e.g., "1 Y", "60 D").
+-   `duration`: `DurationUnit` enum (e.g., `DurationUnit::Day(3)`).
 -   `bar_size_setting`: `crate::contract::BarSize` enum.
 -   `what_to_show`: `WhatToShow` enum.
 -   `use_rth`: `true` for regular trading hours only.
@@ -870,17 +870,17 @@ Calculates option price and greeks. Blocking call.
 Cancels an ongoing option price calculation.
 -   **Errors**: If cancellation message fails.
 
-### `DataMarketManager::request_histogram_data(&self, contract: &Contract, use_rth: bool, time_period: &str, _histogram_options: &[(String, String)]) -> Result<i32, IBKRError>`
+### `DataMarketManager::request_histogram_data(&self, contract: &Contract, use_rth: bool, time_period: TimePeriodUnit, _histogram_options: &[(String, String)]) -> Result<i32, IBKRError>`
 
 Requests histogram data. Non-blocking. Data via `MarketDataHandler::histogram_data`.
 -   `contract`: The `Contract`.
 -   `use_rth`: `true` for regular trading hours only.
--   `time_period`: Time period (e.g., "3 days").
+-   `time_period`: `TimePeriodUnit` enum (e.g., `TimePeriodUnit::Day(3)`).
 -   `_histogram_options`: Reserved.
 -   **Returns**: Request ID (`i32`).
 -   **Errors**: If request fails or server version too low.
 
-### `DataMarketManager::get_histogram_data(&self, contract: &Contract, use_rth: bool, time_period: &str, _histogram_options: &[(String, String)], timeout: Duration) -> Result<Vec<HistogramEntry>, IBKRError>`
+### `DataMarketManager::get_histogram_data(&self, contract: &Contract, use_rth: bool, time_period: TimePeriodUnit, _histogram_options: &[(String, String)], timeout: Duration) -> Result<Vec<HistogramEntry>, IBKRError>`
 
 Requests histogram data and blocks until received or timeout.
 -   (Same args as `request_histogram_data` plus `timeout`)

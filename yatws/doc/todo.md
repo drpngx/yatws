@@ -7,7 +7,6 @@
   - `vwap_algo`
   - `with_next_condition`
   - `add_time_condition`
-- `DataMarket`: duration strings.
 
 # Missing features from ibapi:
 1.  `account_updates_multi`: Request account updates for multiple accounts/models.
