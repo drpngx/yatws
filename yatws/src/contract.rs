@@ -691,6 +691,7 @@ pub struct Bar {
 }
 
 /// Bar size for historical data requests
+// https://interactivebrokers.github.io/tws-api/historical_bars.html#hd_barsize
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarSize {
   OneSecond,
@@ -701,10 +702,15 @@ pub enum BarSize {
   TwoMinutes,
   ThreeMinutes,
   FiveMinutes,
+  TenMinutes,
   FifteenMinutes,
+  TwentyMinutes,
   ThirtyMinutes,
   OneHour,
+  TwoHours,
+  ThreeHours,
   FourHours,
+  EightHours,
   OneDay,
   OneWeek,
   OneMonth,
@@ -721,10 +727,15 @@ impl fmt::Display for BarSize {
       BarSize::TwoMinutes => "2 mins",
       BarSize::ThreeMinutes => "3 mins",
       BarSize::FiveMinutes => "5 mins",
+      BarSize::TenMinutes => "10 mins",
       BarSize::FifteenMinutes => "15 mins",
+      BarSize::TwentyMinutes => "20 mins",
       BarSize::ThirtyMinutes => "30 mins",
       BarSize::OneHour => "1 hour",
+      BarSize::TwoHours => "2 hours",
+      BarSize::ThreeHours => "3 hours",
       BarSize::FourHours => "4 hours",
+      BarSize::EightHours => "8 hour",
       BarSize::OneDay => "1 day",
       BarSize::OneWeek => "1 week",
       BarSize::OneMonth => "1 month",
