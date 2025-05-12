@@ -340,6 +340,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::FailSendReqPnlSingle |
     ClientErrorCode::FailSendCancelPnlSingle |
     // TWS Account/Position Errors
+    ClientErrorCode::PreLiquidationWarning |
     ClientErrorCode::InstitutionalAccountMissingInfo |
     ClientErrorCode::SecurityNotAvailableOrAllowed | // Could be Contract
     ClientErrorCode::InvalidAccountValueAction | // Placeholder, DDE specific
