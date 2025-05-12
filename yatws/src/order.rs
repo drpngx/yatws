@@ -746,3 +746,175 @@ pub enum ExerciseAction {
   /// Lapse the option (let it expire worthless).
   Lapse = 2,
 }
+
+
+// --- IBKR Algo Enums ---
+
+/// Priority levels for the Adaptive Algo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdaptivePriority {
+  Urgent,
+  Normal,
+  Patient,
+}
+
+impl fmt::Display for AdaptivePriority {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      AdaptivePriority::Urgent => write!(f, "Urgent"),
+      AdaptivePriority::Normal => write!(f, "Normal"),
+      AdaptivePriority::Patient => write!(f, "Patient"),
+    }
+  }
+}
+
+/// Risk aversion levels for Arrival Price, Close Price, and Balance Impact Risk algos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RiskAversion {
+  GetDone,
+  Aggressive,
+  Neutral,
+  Passive,
+}
+
+impl fmt::Display for RiskAversion {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      RiskAversion::GetDone => write!(f, "Get Done"),
+      RiskAversion::Aggressive => write!(f, "Aggressive"),
+      RiskAversion::Neutral => write!(f, "Neutral"),
+      RiskAversion::Passive => write!(f, "Passive"),
+    }
+  }
+}
+
+/// Strategy types for the TWAP algo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TwapStrategyType {
+  Marketable,
+  MatchingMidpoint, // Renamed from Midpoint for clarity
+  MatchingSameSide,
+  MatchingLast,
+}
+
+impl fmt::Display for TwapStrategyType {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      TwapStrategyType::Marketable => write!(f, "Marketable"),
+      TwapStrategyType::MatchingMidpoint => write!(f, "Matching Midpoint"), // TWS GUI name
+      TwapStrategyType::MatchingSameSide => write!(f, "Matching Same Side"),
+      TwapStrategyType::MatchingLast => write!(f, "Matching Last"),
+    }
+  }
+}
+
+
+/// Enum representing supported IBKR Algos and their parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub enum IBKRAlgo {
+  /// Adaptive Algo: Combines SmartRouting with priority settings.
+  Adaptive {
+    priority: AdaptivePriority,
+  },
+  /// Arrival Price Algo: Aims for bid/ask midpoint at order submission time.
+  ArrivalPrice {
+    max_pct_vol: f64, // 0.01 to 0.50 (1% to 50%)
+    risk_aversion: RiskAversion,
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    allow_past_end_time: bool,
+    force_completion: bool,
+  },
+  /// Close Price Algo: Executes towards the closing auction price.
+  ClosePrice {
+    max_pct_vol: f64, // 0.01 to 0.50
+    risk_aversion: RiskAversion,
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    force_completion: bool,
+  },
+  /// Dark Ice Algo: Hides displayed volume using randomization.
+  DarkIce {
+    display_size: i32, // Must be > 0
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    allow_past_end_time: bool,
+  },
+  /// Accumulate/Distribute Algo: Slices large orders into random increments.
+  /// Note: `give_up` parameter is only supported by the "AD" strategy, not "AccuDistr".
+  AccumulateDistribute {
+    component_size: i32, // > 0
+    time_between_orders: i32, // seconds, > 0
+    randomize_time_20pct: bool,
+    randomize_size_55pct: bool,
+    give_up: Option<i32>, // Clearing number, only for "AD" strategy
+    catch_up_in_time: bool,
+    wait_for_fill: bool,
+    active_time_start: Option<String>, // "YYYYMMDD-hh:mm:ss TMZ"
+    active_time_end: Option<String>,   // "YYYYMMDD-hh:mm:ss TMZ"
+  },
+  /// Percentage of Volume Algo: Limits participation based on ADV.
+  PercentageOfVolume {
+    pct_vol: f64, // 0.01 to 0.50
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    no_take_liq: bool,
+  },
+  /// Time Weighted Average Price (TWAP) Algo: Aims for average price over a period.
+  TWAP {
+    strategy_type: TwapStrategyType,
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    allow_past_end_time: bool,
+  },
+  /// Price Variant Percentage of Volume Algo: Participation rate varies with market price.
+  PriceVariantPctVol {
+    pct_vol: f64, // 0.01 to 0.50
+    delta_pct_vol: f64, // Change rate, 0.01 to 1.00
+    min_pct_vol_for_price: f64, // 0.01 to 0.50
+    max_pct_vol_for_price: f64, // 0.01 to 0.50
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    no_take_liq: bool,
+  },
+  /// Size Variant Percentage of Volume Algo: Participation rate varies with remaining order size.
+  SizeVariantPctVol {
+    start_pct_vol: f64, // 0.01 to 0.50
+    end_pct_vol: f64,   // 0.01 to 0.50
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    no_take_liq: bool,
+  },
+  /// Time Variant Percentage of Volume Algo: Participation rate varies linearly over time.
+  TimeVariantPctVol {
+    start_pct_vol: f64, // 0.01 to 0.50
+    end_pct_vol: f64,   // 0.01 to 0.50
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    no_take_liq: bool,
+  },
+  /// Volume Weighted Average Price (VWAP) Algo: Aims for VWAP over a period.
+  VWAP {
+    max_pct_vol: f64, // 0.01 to 0.50
+    start_time: Option<String>, // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    end_time: Option<String>,   // "hh:mm:ss TMZ" or "YYYYMMDD-hh:mm:ss TMZ"
+    allow_past_end_time: bool,
+    no_take_liq: bool,
+    speed_up: bool, // Compensate for limit price presence
+  },
+  /// Balance Impact Risk Algo: Balances market impact with price risk for options.
+  BalanceImpactRisk {
+    max_pct_vol: f64, // 0.01 to 0.50
+    risk_aversion: RiskAversion,
+    force_completion: bool,
+  },
+  /// Minimise Impact Algo: Slices order to minimize impact, aiming for market average.
+  MinimiseImpact {
+    max_pct_vol: f64, // 0.01 to 0.50
+  },
+  /// Represents a custom or unsupported algo strategy defined by raw parameters.
+  /// Use this as an escape hatch if a specific algo isn't modeled yet.
+  Custom {
+    strategy: String,
+    params: Vec<(String, String)>,
+  }
+}

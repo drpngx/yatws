@@ -73,6 +73,8 @@ pub struct OrderBuilder {
   trailing_unit: Option<TrailingStopUnit>,
   // Internal state for condition conjunction
   next_condition_conjunction: Option<String>, // Stores " and " or " or "
+  // Internal state for IBKR Algo
+  ibkr_algo: Option<crate::order::IBKRAlgo>,
 }
 
 impl OrderBuilder {
@@ -96,6 +98,7 @@ impl OrderBuilder {
       is_adjusted: false,
       trailing_unit: None,
       next_condition_conjunction: None,
+      ibkr_algo: None,
     }
   }
 
@@ -726,44 +729,17 @@ impl OrderBuilder {
     self
   }
 
-  // --- Algo Methods (Keep as before) ---
-  pub fn with_algo(mut self, strategy: &str, params: Vec<(&str, &str)>) -> Self {
-    self.order.algo_strategy = Some(strategy.to_string());
-    self.order.algo_params = params
-      .into_iter()
-      .map(|(k, v)| (k.to_string(), v.to_string()))
-      .collect();
-    self
-  }
-  pub fn adaptive_algo(mut self, priority: &str) -> Self {
-    let valid_priorities = ["Urgent", "Normal", "Patient"];
-    if !valid_priorities.contains(&priority) {
-      log::warn!("Invalid Adaptive priority: {}. Using Normal.", priority);
-      self.order.algo_params = vec![("adaptivePriority".to_string(), "Normal".to_string())];
-    } else {
-      self.order.algo_params = vec![("adaptivePriority".to_string(), priority.to_string())];
-    }
-    self.order.algo_strategy = Some("Adaptive".to_string());
-    if self.order.order_type == OrderType::None {
-      self.order.order_type = OrderType::Limit; // Default to Limit if not set? Risky.
-      log::warn!("Base order type not set for Adaptive algo. Ensure LMT or MKT is intended.");
-    }
-    self
-  }
-  pub fn vwap_algo(mut self, max_pct_vol: f64, start_time: Option<&str>, end_time: Option<&str>, allow_past_end: bool, no_take_liq: bool, speed_up: bool) -> Self {
-    self.order.algo_strategy = Some("Vwap".to_string());
-    let mut params = Vec::new();
-    params.push(("maxPctVol".to_string(), max_pct_vol.to_string()));
-    if let Some(st) = start_time { params.push(("startTime".to_string(), st.to_string())); }
-    if let Some(et) = end_time { params.push(("endTime".to_string(), et.to_string())); }
-    params.push(("allowPastEndTime".to_string(), if allow_past_end { "1".to_string() } else { "0".to_string() }));
-    params.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
-    params.push(("speedUp".to_string(), if speed_up { "1".to_string() } else { "0".to_string() }));
-    self.order.algo_params = params;
-    self
-  }
-  // Add more algo helpers...
+  // --- Algo Methods ---
 
+  /// Sets the IBKR Algo strategy and its parameters for this order.
+  /// This replaces any previously set algo.
+  pub fn with_ibkr_algo(mut self, algo: crate::order::IBKRAlgo) -> Self {
+    self.ibkr_algo = Some(algo);
+    // Clear old fields in case build() is called multiple times (though it shouldn't be)
+    self.order.algo_strategy = None;
+    self.order.algo_params.clear();
+    self
+  }
 
   // --- Condition Methods (Direct String Formatting) ---
 
@@ -1063,7 +1039,187 @@ impl OrderBuilder {
       // Removed hardcoded error for conditions
     }
 
+    // --- Algo Processing ---
+    let mut final_order = self.order; // OrderRequest is not Copy, this is a move.
+    // Since build(self) consumes self, this is fine.
+    if let Some(algo_enum_instance) = self.ibkr_algo { // self.ibkr_algo is Option<IBKRAlgo>, algo_enum_instance is IBKRAlgo
+      match algo_enum_instance {
+        crate::order::IBKRAlgo::Adaptive { priority } => {
+          final_order.algo_strategy = Some("Adaptive".to_string());
+          final_order.algo_params = vec![("adaptivePriority".to_string(), priority.to_string())];
+        }
+        crate::order::IBKRAlgo::ArrivalPrice { max_pct_vol, risk_aversion, start_time, end_time, allow_past_end_time, force_completion } => {
+          if !(0.01..=0.5).contains(&max_pct_vol) { return Err(IBKRError::InvalidOrder("ArrivalPrice maxPctVol must be between 0.01 and 0.50".into())); }
+          let mut p = Vec::new();
+          p.push(("maxPctVol".to_string(), max_pct_vol.to_string()));
+          p.push(("riskAversion".to_string(), risk_aversion.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          p.push(("allowPastEndTime".to_string(), if allow_past_end_time { "1".to_string() } else { "0".to_string() }));
+          p.push(("forceCompletion".to_string(), if force_completion { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("ArrivalPx".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::ClosePrice { max_pct_vol, risk_aversion, start_time, force_completion } => {
+          if !(0.01..=0.5).contains(&max_pct_vol) { return Err(IBKRError::InvalidOrder("ClosePrice maxPctVol must be between 0.01 and 0.50".into())); }
+          let mut p = Vec::new();
+          p.push(("maxPctVol".to_string(), max_pct_vol.to_string()));
+          p.push(("riskAversion".to_string(), risk_aversion.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          p.push(("forceCompletion".to_string(), if force_completion { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("ClosePx".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::DarkIce { display_size, start_time, end_time, allow_past_end_time } => {
+          if display_size <= 0 { return Err(IBKRError::InvalidOrder("DarkIce displaySize must be positive".into())); }
+          let mut p = Vec::new();
+          p.push(("displaySize".to_string(), display_size.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          p.push(("allowPastEndTime".to_string(), if allow_past_end_time { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("DarkIce".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::AccumulateDistribute { component_size, time_between_orders, randomize_time_20pct, randomize_size_55pct, give_up, catch_up_in_time, wait_for_fill, active_time_start, active_time_end } => {
+          if component_size <= 0 { return Err(IBKRError::InvalidOrder("AccumulateDistribute componentSize must be positive".into())); }
+          if time_between_orders <= 0 { return Err(IBKRError::InvalidOrder("AccumulateDistribute timeBetweenOrders must be positive".into())); }
+          let mut p = Vec::new();
+          p.push(("componentSize".to_string(), component_size.to_string()));
+          p.push(("timeBetweenOrders".to_string(), time_between_orders.to_string()));
+          p.push(("randomizeTime20".to_string(), if randomize_time_20pct { "1".to_string() } else { "0".to_string() }));
+          p.push(("randomizeSize55".to_string(), if randomize_size_55pct { "1".to_string() } else { "0".to_string() }));
+          if let Some(gu) = give_up { p.push(("giveUp".to_string(), gu.to_string())); }
+          p.push(("catchUp".to_string(), if catch_up_in_time { "1".to_string() } else { "0".to_string() }));
+          p.push(("waitForFill".to_string(), if wait_for_fill { "1".to_string() } else { "0".to_string() }));
+          if let Some(st) = active_time_start { p.push(("activeTimeStart".to_string(), st)); }
+          if let Some(et) = active_time_end { p.push(("activeTimeEnd".to_string(), et)); }
+          final_order.algo_strategy = Some("AD".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::PercentageOfVolume { pct_vol, start_time, end_time, no_take_liq } => {
+          if !(0.01..=0.5).contains(&pct_vol) { return Err(IBKRError::InvalidOrder("PercentageOfVolume pctVol must be between 0.01 and 0.50".into())); }
+          let mut p = Vec::new();
+          p.push(("pctVol".to_string(), pct_vol.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("PctVol".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::TWAP { strategy_type, start_time, end_time, allow_past_end_time } => {
+          let mut p = Vec::new();
+          let strat_str = match strategy_type {
+            crate::order::TwapStrategyType::Marketable => "Marketable",
+            crate::order::TwapStrategyType::MatchingMidpoint => "Midpoint",
+            crate::order::TwapStrategyType::MatchingSameSide => "Matching Same Side",
+            crate::order::TwapStrategyType::MatchingLast => "Matching Last",
+          };
+          p.push(("strategyType".to_string(), strat_str.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          p.push(("allowPastEndTime".to_string(), if allow_past_end_time { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("Twap".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::PriceVariantPctVol { pct_vol, delta_pct_vol, min_pct_vol_for_price, max_pct_vol_for_price, start_time, end_time, no_take_liq } => {
+          if !(0.01..=0.5).contains(&pct_vol) { return Err(IBKRError::InvalidOrder("PriceVariantPctVol pctVol must be between 0.01 and 0.50".into())); }
+          if !(0.01..=1.0).contains(&delta_pct_vol) { return Err(IBKRError::InvalidOrder("PriceVariantPctVol deltaPctVol must be between 0.01 and 1.00".into())); }
+          if !(0.01..=0.5).contains(&min_pct_vol_for_price) { return Err(IBKRError::InvalidOrder("PriceVariantPctVol minPctVol4Px must be between 0.01 and 0.50".into())); }
+          if !(0.01..=0.5).contains(&max_pct_vol_for_price) { return Err(IBKRError::InvalidOrder("PriceVariantPctVol maxPctVol4Px must be between 0.01 and 0.50".into())); }
+          let mut p = Vec::new();
+          p.push(("pctVol".to_string(), pct_vol.to_string()));
+          p.push(("deltaPctVol".to_string(), delta_pct_vol.to_string()));
+          p.push(("minPctVol4Px".to_string(), min_pct_vol_for_price.to_string()));
+          p.push(("maxPctVol4Px".to_string(), max_pct_vol_for_price.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("PctVolPx".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::SizeVariantPctVol { start_pct_vol, end_pct_vol, start_time, end_time, no_take_liq } => {
+          if !(0.01..=0.5).contains(&start_pct_vol) { return Err(IBKRError::InvalidOrder("SizeVariantPctVol startPctVol must be between 0.01 and 0.50".into())); }
+          if !(0.01..=0.5).contains(&end_pct_vol) { return Err(IBKRError::InvalidOrder("SizeVariantPctVol endPctVol must be between 0.01 and 0.50".into())); }
+          let mut p = Vec::new();
+          p.push(("startPctVol".to_string(), start_pct_vol.to_string()));
+          p.push(("endPctVol".to_string(), end_pct_vol.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("PctVolSz".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::TimeVariantPctVol { start_pct_vol, end_pct_vol, start_time, end_time, no_take_liq } => {
+          if !(0.01..=0.5).contains(&start_pct_vol) { return Err(IBKRError::InvalidOrder("TimeVariantPctVol startPctVol must be between 0.01 and 0.50".into())); }
+          if !(0.01..=0.5).contains(&end_pct_vol) { return Err(IBKRError::InvalidOrder("TimeVariantPctVol endPctVol must be between 0.01 and 0.50".into())); }
+          let mut p = Vec::new();
+          p.push(("startPctVol".to_string(), start_pct_vol.to_string()));
+          p.push(("endPctVol".to_string(), end_pct_vol.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("PctVolTm".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::VWAP { max_pct_vol, start_time, end_time, allow_past_end_time, no_take_liq, speed_up } => {
+          if !(0.01..=0.5).contains(&max_pct_vol) { return Err(IBKRError::InvalidOrder("VWAP maxPctVol must be between 0.01 and 0.50".into())); }
+          let mut p = Vec::new();
+          p.push(("maxPctVol".to_string(), max_pct_vol.to_string()));
+          if let Some(st) = start_time { p.push(("startTime".to_string(), st)); }
+          if let Some(et) = end_time { p.push(("endTime".to_string(), et)); }
+          p.push(("allowPastEndTime".to_string(), if allow_past_end_time { "1".to_string() } else { "0".to_string() }));
+          p.push(("noTakeLiq".to_string(), if no_take_liq { "1".to_string() } else { "0".to_string() }));
+          p.push(("speedUp".to_string(), if speed_up { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("Vwap".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::BalanceImpactRisk { max_pct_vol, risk_aversion, force_completion } => {
+          if !(0.01..=0.5).contains(&max_pct_vol) { return Err(IBKRError::InvalidOrder("BalanceImpactRisk maxPctVol must be between 0.01 and 0.50".into())); }
+          let mut p = Vec::new();
+          p.push(("maxPctVol".to_string(), max_pct_vol.to_string()));
+          p.push(("riskAversion".to_string(), risk_aversion.to_string()));
+          p.push(("forceCompletion".to_string(), if force_completion { "1".to_string() } else { "0".to_string() }));
+          final_order.algo_strategy = Some("BalanceImpactRisk".to_string());
+          final_order.algo_params = p;
+        }
+        crate::order::IBKRAlgo::MinimiseImpact { max_pct_vol } => {
+          if !(0.01..=0.5).contains(&max_pct_vol) { return Err(IBKRError::InvalidOrder("MinimiseImpact maxPctVol must be between 0.01 and 0.50".into())); }
+          final_order.algo_strategy = Some("MinImpact".to_string());
+          final_order.algo_params = vec![("maxPctVol".to_string(), max_pct_vol.to_string())];
+        }
+        crate::order::IBKRAlgo::Custom { strategy, params } => { // strategy is String, params is Vec<(String, String)>
+          final_order.algo_strategy = Some(strategy); // Move the String
+          final_order.algo_params = params;         // Move the Vec
+        }
+      }
+
+      // Algo-specific validation from old build() method
+      if let Some(strategy_str) = &final_order.algo_strategy { // Renamed to avoid conflict
+        match strategy_str.as_str() { // Use strategy_str
+          "Adaptive" => {
+            if final_order.algo_params.iter().find(|(k,_)| k == "adaptivePriority").is_none() {
+              return Err(IBKRError::InvalidOrder("Internal Error: Adaptive algo missing 'adaptivePriority' parameter.".to_string()));
+            }
+            if !matches!(final_order.order_type, OrderType::Limit | OrderType::Market) {
+              log::warn!("Adaptive Algo typically used with Limit or Market orders. Current type: {}", final_order.order_type);
+            }
+          }
+          "Vwap" => {
+            if final_order.algo_params.iter().find(|(k,_)| k == "maxPctVol").is_none() {
+              return Err(IBKRError::InvalidOrder("Internal Error: VWAP algo missing 'maxPctVol' parameter.".to_string()));
+            }
+          }
+          "AD" => {
+            if final_order.algo_params.iter().find(|(k,_)| k == "componentSize").is_none() {
+              return Err(IBKRError::InvalidOrder("Internal Error: Accumulate/Distribute algo missing 'componentSize' parameter.".to_string()));
+            }
+          }
+          _ => {}
+        }
+      }
+    }
+
     // --- Finalization ---
-    Ok((self.contract, self.order))
+    Ok((self.contract, final_order))
   }
 }

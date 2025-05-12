@@ -1,10 +1,6 @@
 # Strings
 - `OrderBuilder`:
   - `add_combo_leg`
-  - `with_trading_class`
-  - `with_algo`
-  - `adaptive_algo`
-  - `vwap_algo`
   - `with_next_condition`
   - `add_time_condition`
 

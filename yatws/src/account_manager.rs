@@ -294,12 +294,6 @@ impl AccountManager {
     }
 
     // Helper closures remain the same conceptually, but access `state` guard directly
-    let parse_or_err = |key: &str| -> Result<f64, IBKRError> {
-      state.values.get(key)
-        .ok_or_else(|| IBKRError::InternalError(format!("Key '{}' not found in account values", key)))?
-        .value.parse::<f64>()
-        .map_err(|e| IBKRError::ParseError(format!("Failed to parse value for key '{}': {}", key, e)))
-    };
     let parse_or_zero = |key: &str| -> f64 {
       state.values.get(key)
         .and_then(|v| v.value.parse::<f64>().ok())
