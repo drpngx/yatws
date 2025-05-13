@@ -295,9 +295,16 @@ impl AccountManager {
 
     // Helper closures remain the same conceptually, but access `state` guard directly
     let parse_or_zero = |key: &str| -> f64 {
-      state.values.get(key)
-        .and_then(|v| v.value.parse::<f64>().ok())
-        .unwrap_or_else(|| { warn!("Failed to parse '{}', using 0.0", key); 0.0 })
+      match state.values.get(key) {
+        Some(v) => match v.value.parse::<f64>() {
+          Ok(parsed) => parsed,
+          Err(_) => {
+            warn!("Failed to parse '{}' with value '{}', using 0.0", key, v.value);
+            0.0
+          }
+        },
+        None => 0.0 // Silently return 0.0 when key not found
+      }
     };
     // let parse_int_or_err = |key: &str| -> Result<i32, IBKRError> {
     //   state.values.get(key)
@@ -1741,10 +1748,10 @@ impl AccountHandler for AccountManager {
     error!("Unhandled Account error: ReqID={}, Code={:?}, Msg={}", req_id, code, msg);
     // Check specifically for PreLiquidationWarning
     if code == ClientErrorCode::PreLiquidationWarning {
-        info!("Pre-liquidation warning (2148) received this session.");
-        self.pre_liquidation_warning_received.store(true, Ordering::Relaxed);
-        // Note: We still log it as an error/warning above, but also set the flag.
-        // We might decide *not* to return early here if other logic needs to run for warnings.
+      info!("Pre-liquidation warning (2148) received this session.");
+      self.pre_liquidation_warning_received.store(true, Ordering::Relaxed);
+      // Note: We still log it as an error/warning above, but also set the flag.
+      // We might decide *not* to return early here if other logic needs to run for warnings.
     }
 
     // TODO: Notify observers of general account errors?

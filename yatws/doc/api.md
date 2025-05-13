@@ -221,6 +221,71 @@ Checks if a pre-liquidation warning (TWS error code 2148) has been received duri
 -   **Returns**: `true` if the warning was received in this session, `false` otherwise.
 -   **Note**: This flag indicates receipt of the warning in the session, not the current account status. It may have been received in a previous sesion or may no longer be valid. Check `cushion` in account info.
 
+---
+
+## AccountSubscription
+
+Provides a focused, resource-managed way to handle the lifecycle and stream of events for a specific trading account. It encapsulates the logic of subscribing to account updates via `AccountManager` and processing them into a clean event stream.
+
+**File:** `yatws/src/account_subscription.rs`
+
+### `AccountSubscription::new(account_manager: Arc<AccountManager>) -> Result<Self, IBKRError>`
+
+Creates a new subscription to account events. Ensures the `AccountManager` is subscribed to TWS for updates, registers an internal observer, and attempts to populate initial summary and position data.
+-   `account_manager`: An `Arc` to the `AccountManager`.
+-   **Returns**: `Result<Self, IBKRError>`.
+-   **Errors**: If `AccountManager::subscribe_account_updates()` fails or other setup issues occur.
+
+### `AccountSubscription::account_id(&self) -> String`
+
+Returns the account ID that this subscription is monitoring.
+
+### `AccountSubscription::last_known_summary(&self) -> Option<AccountInfo>`
+
+Returns a clone of the most recent `AccountInfo` summary received. `None` if no summary processed yet.
+
+### `AccountSubscription::last_known_positions(&self) -> Vec<Position>`
+
+Returns a clone of the list of most recent `Position` objects. Empty if no positions processed.
+
+### `AccountSubscription::next_event(&self) -> Result<AccountEvent, crossbeam_channel::RecvError>`
+
+Blocks until the next `AccountEvent` is available.
+-   **Errors**: `RecvError` if the channel is disconnected (e.g., subscription closed).
+
+### `AccountSubscription::try_next_event(&self) -> Result<AccountEvent, crossbeam_channel::TryRecvError>`
+
+Attempts to receive the next `AccountEvent` without blocking.
+-   **Errors**: `TryRecvError::Empty` if no event available, `TryRecvError::Disconnected` if channel disconnected.
+
+### `AccountSubscription::events(&self) -> crossbeam_channel::Receiver<AccountEvent>`
+
+Returns a clone of the `Receiver` for `AccountEvent`s, allowing flexible event consumption.
+
+### `AccountSubscription::close(&mut self) -> Result<(), IBKRError>`
+
+Explicitly closes the subscription. Unregisters its internal observer and sends `AccountEvent::Closed`.
+-   **Returns**: `Ok(())` if successful.
+-   **Errors**: If already closed or observer removal fails.
+
+### AccountEvent Enum
+
+**File:** `yatws/src/account_subscription.rs`
+
+Represents different types of updates or events related to a subscribed account.
+
+```rust
+pub enum AccountEvent {
+    SummaryUpdate { info: AccountInfo, timestamp: DateTime<Utc> },
+    PositionUpdate { position: Position, timestamp: DateTime<Utc> },
+    ExecutionUpdate { execution: Execution, timestamp: DateTime<Utc> },
+    Error { error: IBKRError, timestamp: DateTime<Utc> },
+    Closed { account_id: String, timestamp: DateTime<Utc> },
+}
+```
+
+---
+
 ### AccountObserver Trait
 
 **File:** `yatws/src/account.rs` (definition assumed, documented based on usage in `AccountManager`)

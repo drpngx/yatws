@@ -15,8 +15,8 @@ This library was born out of the need to place orders in rapid succession in res
 - **Comprehensive API Coverage**: Access to orders, accounts, market data, fundamentals, news, and reference data
 - **Multiple Programming Patterns**:
   - Synchronous blocking calls with timeouts
-  - Asynchronous request/cancel pattern
-  - Observer pattern for event handling
+  - Asynchronous observer pattern
+  - Subscription model
 - **Options Strategy Builder**: Simplified creation of common options strategies
 - **Strong Type Safety**: Leverages Rust's type system for safer API interactions
 - **Session Recording/Replay**: Record TWS interactions for testing and debugging
@@ -179,25 +179,76 @@ let fa_config = fa_manager.get_config();
 println!("FA Groups: {:?}", fa_config.groups);
 ```
 
-### Asynchronous Event Handling
+## Asynchronous Event Handling
+
+YATWS supports an observer pattern for handling asynchronous events. This is a push programming model where events are pushed to you. You initiate the request and implement `on_event` methods. This is the closest to the official IBKR TWS API, except you have observers split by functionality rather than a single `EWrapper`.
+
+This is best suited for event-driven trading, such as reacting to news, order fills and buying power depletion.
+
+## Subscriptions
+Simimlar to the `ibapi` crate, you can use a subscription programming model. This is in-between the sync and async models desribed above. This is best suited for receiving a stream of data. This is a pull model where you receive an iterator of events.
+
+
+### Account Subscription Example
 
 ```rust
-// Implement the observer trait
-struct MyOrderObserver;
+use yatws::{IBKRClient, IBKRError};
+use yatws::account_subscription::{AccountSubscription, AccountEvent};
+use std::time::Duration;
+use std::thread;
 
-impl OrderObserver for MyOrderObserver {
-    fn on_order_update(&self, order: &Order) {
-        println!("Order update: {:?}", order);
+fn main() -> Result<(), IBKRError> {
+    let client = IBKRClient::new("127.0.0.1", 7497, 1, None)?; // Use a unique client_id
+    let account_manager = client.account();
+
+    let mut account_sub = AccountSubscription::new(account_manager)?;
+    println!("AccountSubscription created for account: {}", account_sub.account_id());
+
+    // Example: Print initial summary
+    if let Some(summary) = account_sub.last_known_summary() {
+        println!("Initial Net Liquidation: {}", summary.net_liquidation);
     }
 
-    fn on_order_error(&self, order_id: &str, error: &IBKRError) {
-        println!("Order error: {} - {:?}", order_id, error);
-    }
+    // Spawn a thread to listen for events
+    let event_receiver = account_sub.events(); // Get a receiver clone
+    let event_thread = thread::spawn(move || {
+        for event in event_receiver { // Iterates until channel is disconnected
+            match event {
+                AccountEvent::SummaryUpdate { info, .. } => {
+                    println!("[Thread] Account Summary Update: NetLiq = {}", info.net_liquidation);
+                }
+                AccountEvent::PositionUpdate { position, .. } => {
+                    println!("[Thread] Position Update: {} {} @ {}",
+                             position.symbol, position.quantity, position.market_price);
+                }
+                AccountEvent::ExecutionUpdate { execution, .. } => {
+                    println!("[Thread] Execution: {} {} {} @ {}",
+                             execution.side, execution.quantity, execution.symbol, execution.price);
+                }
+                AccountEvent::Error { error, .. } => {
+                    eprintln!("[Thread] AccountSubscription Error: {:?}", error);
+                }
+                AccountEvent::Closed { account_id, .. } => {
+                    println!("[Thread] AccountSubscription for {} closed.", account_id);
+                    break; // Exit loop
+                }
+            }
+        }
+    });
+
+    // Let the subscription run for a bit
+    thread::sleep(Duration::from_secs(60));
+
+    // Explicitly close the subscription
+    println!("Main thread: Closing AccountSubscription...");
+    account_sub.close()?; // This will send AccountEvent::Closed and disconnect the channel
+
+    // Wait for the event thread to finish
+    event_thread.join().expect("Event thread panicked");
+    println!("Main thread: Done.");
+
+    Ok(())
 }
-
-// Register the observer
-let observer = Box::new(MyOrderObserver);
-client.orders().add_observer(observer);
 ```
 
 ## Advanced Features

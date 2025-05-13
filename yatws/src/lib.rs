@@ -376,6 +376,7 @@ mod protocol_encoder;
 
 // Data structures.
 pub mod account;
+pub mod account_subscription;
 pub mod data;
 pub mod contract;
 pub mod order;
@@ -402,6 +403,7 @@ pub use client::IBKRClient;
 pub use client::client_manager;
 pub use financial_advisor::{FAAlias, FAGroup, FAProfile, FADataType, FinancialAdvisorConfig};
 pub use financial_advisor_manager::FinancialAdvisorManager;
+pub use account_subscription::AccountSubscription;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
