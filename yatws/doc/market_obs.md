@@ -1,18 +1,25 @@
-# Market Data Observer Pattern Implementation
+# Market Data Observer Design
 
-This document outlines the implementation of observer traits and required changes to enable callback-based processing of market data in the `DataMarketManager`.
+## Overview
+
+This document outlines a design for market data observers in the YATWS library. This design uses specialized observer traits for each market data type, allowing for more targeted and flexible subscription to specific data streams.
+
+## Design Goals
+
+1. **Type Safety**: Ensure observers only receive notifications for the specific data types they're interested in
+2. **Reduced Complexity**: Simplify observer implementations by requiring only relevant methods
+3. **Enhanced Flexibility**: Allow clients to register different observers for different data types
+4. **Consistency**: Maintain a similar observer pattern to other managers (e.g., AccountManager)
 
 ## Observer Traits
 
-### 1. MarketDataObserver
-
-For real-time market data ticks (price, size, etc.)
+### Market Data Observer
 
 ```rust
-/// Observer for regular market data ticks (prices, sizes)
+/// Observer for regular market data ticks (price, size, etc.)
 pub trait MarketDataObserver: Send + Sync {
     /// Called when a price tick is received
-    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: &TickAttrib);
+    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib);
 
     /// Called when a size tick is received
     fn on_tick_size(&self, req_id: i32, tick_type: TickType, size: f64);
@@ -23,10 +30,7 @@ pub trait MarketDataObserver: Send + Sync {
     /// Called when a generic tick is received
     fn on_tick_generic(&self, req_id: i32, tick_type: TickType, value: f64);
 
-    /// Called when an option computation tick is received
-    fn on_tick_option_computation(&self, req_id: i32, data: &TickOptionComputationData);
-
-    /// Called when a snapshot ends
+    /// Called when a snapshot is completed
     fn on_tick_snapshot_end(&self, req_id: i32);
 
     /// Called when market data type changes
@@ -34,119 +38,56 @@ pub trait MarketDataObserver: Send + Sync {
 }
 ```
 
-### 2. RealTimeBarObserver
-
-For 5-second real-time bars.
+### Other Specialized Observers
 
 ```rust
-/// Observer for real-time bars (5-second intervals)
-pub trait RealTimeBarObserver: Send + Sync {
-    /// Called when a real-time bar is received
-    fn on_real_time_bar(&self, req_id: i32, time: i64, open: f64, high: f64,
-                        low: f64, close: f64, volume: f64, wap: f64, count: i32);
+/// Observer for real-time bar data (streaming 5-second bars)
+pub trait RealTimeBarsObserver: Send + Sync {
+    /// Called when a new real-time bar is received
+    fn on_bar_update(&self, req_id: i32, bar: &Bar);
 }
-```
 
-### 3. TickByTickObserver
-
-For detailed tick-by-tick data.
-
-```rust
-/// Observer for tick-by-tick data
+/// Observer for tick-by-tick data (detailed trade and quote data)
 pub trait TickByTickObserver: Send + Sync {
-    /// Called when All Last or Last tick is received
-    fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: i64,
-                               price: f64, size: f64,
-                               tick_attrib_last: &TickAttribLast,
+    /// Called when last or all last tick data is received
+    fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: i64, price: f64,
+                               size: f64, tick_attrib_last: &TickAttribLast,
                                exchange: &str, special_conditions: &str);
 
-    /// Called when BidAsk tick is received
-    fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64,
-                              bid_price: f64, ask_price: f64,
+    /// Called when bid/ask tick data is received
+    fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64,
                               bid_size: f64, ask_size: f64,
                               tick_attrib_bid_ask: &TickAttribBidAsk);
 
-    /// Called when MidPoint tick is received
+    /// Called when midpoint tick data is received
     fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64);
 }
-```
 
-### 4. MarketDepthObserver
-
-For Level II market depth data.
-
-```rust
-/// Observer for market depth (Level II) data
+/// Observer for market depth (L2 order book) data
 pub trait MarketDepthObserver: Send + Sync {
     /// Called when L1 market depth is updated
     fn on_update_mkt_depth(&self, req_id: i32, position: i32, operation: i32,
                           side: i32, price: f64, size: f64);
 
     /// Called when L2 market depth is updated
-    fn on_update_mkt_depth_l2(&self, req_id: i32, position: i32,
-                             market_maker: &str, operation: i32,
-                             side: i32, price: f64, size: f64,
+    fn on_update_mkt_depth_l2(&self, req_id: i32, position: i32, market_maker: &str,
+                             operation: i32, side: i32, price: f64, size: f64,
                              is_smart_depth: bool);
 }
-```
 
-### 5. ScannerObserver
-
-For market scanner results.
-
-```rust
-/// Observer for market scanner data
-pub trait ScannerObserver: Send + Sync {
-    /// Called when scanner data is received
-    fn on_scanner_data(&self, req_id: i32, rank: i32,
-                      contract_details: &ContractDetails,
-                      distance: &str, benchmark: &str,
-                      projection: &str, legs_str: Option<&str>);
-
-    /// Called when scanner data ends
-    fn on_scanner_data_end(&self, req_id: i32);
-
-    /// Called when scanner parameters are received
-    fn on_scanner_parameters(&self, xml: &str);
-}
-```
-
-### 6. HistogramObserver
-
-For price histogram data.
-
-```rust
-/// Observer for histogram data
-pub trait HistogramObserver: Send + Sync {
-    /// Called when histogram data is received
-    fn on_histogram_data(&self, req_id: i32, items: &[HistogramEntry]);
-}
-```
-
-### 7. HistoricalDataObserver
-
-For historical bars.
-
-```rust
 /// Observer for historical bar data
 pub trait HistoricalDataObserver: Send + Sync {
     /// Called when a historical data bar is received
     fn on_historical_data(&self, req_id: i32, bar: &Bar);
 
-    /// Called when a historical data update bar is received (head bar)
+    /// Called when a historical data update bar is received
     fn on_historical_data_update(&self, req_id: i32, bar: &Bar);
 
-    /// Called when historical data ends
+    /// Called when historical data transmission is complete
     fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str);
 }
-```
 
-### 8. HistoricalTicksObserver
-
-For historical ticks.
-
-```rust
-/// Observer for historical ticks data
+/// Observer for historical tick data
 pub trait HistoricalTicksObserver: Send + Sync {
     /// Called when historical midpoint ticks are received
     fn on_historical_ticks(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool);
@@ -163,198 +104,182 @@ pub trait HistoricalTicksObserver: Send + Sync {
 }
 ```
 
-## Default Implementations
+## Default Trait Implementations
 
-Base traits with default implementations for all methods:
+To make it easier to implement observers, we'll provide default empty implementations for all methods:
 
 ```rust
-/// Base trait with default implementations for MarketDataObserver
-pub trait MarketDataObserverBase: Send + Sync {
-    // Default empty implementations
-    fn on_tick_price(&self, _req_id: i32, _tick_type: TickType, _price: f64,
-                    _attrib: &TickAttrib) {}
-
+impl Default for dyn MarketDataObserver {
+    fn on_tick_price(&self, _req_id: i32, _tick_type: TickType, _price: f64, _attrib: TickAttrib) {}
     fn on_tick_size(&self, _req_id: i32, _tick_type: TickType, _size: f64) {}
-
-    // ... other methods with default implementations ...
+    fn on_tick_string(&self, _req_id: i32, _tick_type: TickType, _value: &str) {}
+    fn on_tick_generic(&self, _req_id: i32, _tick_type: TickType, _value: f64) {}
+    fn on_tick_snapshot_end(&self, _req_id: i32) {}
+    fn on_market_data_type(&self, _req_id: i32, _market_data_type: MarketDataType) {}
 }
-
-// Then make the main trait extend it
-pub trait MarketDataObserver: MarketDataObserverBase {}
-
-// Do similar for other observer types
 ```
 
-## Updates to DataMarketManager
+Similar default implementations should be provided for all other observer traits.
 
-### 1. Add observer storage to the struct
+## DataMarketManager Modifications
+
+The `DataMarketManager` will be updated to include specialized observer collections and registration methods:
+
+### Internal State
 
 ```rust
-/// Manages requests for real-time and historical market data from TWS.
 pub struct DataMarketManager {
     // Existing fields...
 
     // Observer collections
-    market_data_observers: RwLock<HashMap<usize, Weak<dyn MarketDataObserver>>>,
-    rtbar_observers: RwLock<HashMap<usize, Weak<dyn RealTimeBarObserver>>>,
-    tick_by_tick_observers: RwLock<HashMap<usize, Weak<dyn TickByTickObserver>>>,
-    market_depth_observers: RwLock<HashMap<usize, Weak<dyn MarketDepthObserver>>>,
-    scanner_observers: RwLock<HashMap<usize, Weak<dyn ScannerObserver>>>,
-    histogram_observers: RwLock<HashMap<usize, Weak<dyn HistogramObserver>>>,
-    historical_data_observers: RwLock<HashMap<usize, Weak<dyn HistoricalDataObserver>>>,
-    historical_ticks_observers: RwLock<HashMap<usize, Weak<dyn HistoricalTicksObserver>>>,
+    market_data_observers: RwLock<HashMap<usize, Box<dyn MarketDataObserver + Send + Sync>>>,
+    realtime_bars_observers: RwLock<HashMap<usize, Box<dyn RealTimeBarsObserver + Send + Sync>>>,
+    tick_by_tick_observers: RwLock<HashMap<usize, Box<dyn TickByTickObserver + Send + Sync>>>,
+    market_depth_observers: RwLock<HashMap<usize, Box<dyn MarketDepthObserver + Send + Sync>>>,
+    historical_data_observers: RwLock<HashMap<usize, Box<dyn HistoricalDataObserver + Send + Sync>>>,
+    historical_ticks_observers: RwLock<HashMap<usize, Box<dyn HistoricalTicksObserver + Send + Sync>>>,
+
     next_observer_id: AtomicUsize,
 }
 ```
 
-### 2. Initialize the observer fields in constructor
+### Observer Registration Methods
 
 ```rust
 impl DataMarketManager {
-    pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
-        Arc::new(DataMarketManager {
-            message_broker,
-            subscriptions: Mutex::new(HashMap::new()),
-            request_cond: Condvar::new(),
-            current_market_data_type: Mutex::new(MarketDataType::RealTime),
-            market_data_type_cond: Condvar::new(),
-            scanner_parameters_xml: Mutex::new(None),
-            scanner_parameters_cond: Condvar::new(),
-
-            // Initialize observer collections
-            market_data_observers: RwLock::new(HashMap::new()),
-            rtbar_observers: RwLock::new(HashMap::new()),
-            tick_by_tick_observers: RwLock::new(HashMap::new()),
-            market_depth_observers: RwLock::new(HashMap::new()),
-            scanner_observers: RwLock::new(HashMap::new()),
-            histogram_observers: RwLock::new(HashMap::new()),
-            historical_data_observers: RwLock::new(HashMap::new()),
-            historical_ticks_observers: RwLock::new(HashMap::new()),
-            next_observer_id: AtomicUsize::new(1),
-        })
-    }
-}
-```
-
-### 3. Add methods to add/remove observers
-
-```rust
-impl DataMarketManager {
-    /// Adds an observer for market data ticks
-    ///
-    /// # Returns
-    /// A unique observer ID that can be used with `remove_market_data_observer`.
-    pub fn add_market_data_observer<T>(&self, observer: Arc<T>) -> usize
-    where
-        T: MarketDataObserver + 'static
-    {
-        let id = self.next_observer_id.fetch_add(1, Ordering::SeqCst);
-        let weak_ref = Arc::downgrade(&observer) as Weak<dyn MarketDataObserver>;
-        self.market_data_observers.write().insert(id, weak_ref);
-        id
+    /// Register an observer for market data tick updates
+    pub fn observe_market_data<T: MarketDataObserver + Send + Sync + 'static>(&self, observer: T) -> usize {
+        let observer_id = self.next_observer_id.fetch_add(1, Ordering::SeqCst);
+        let mut observers = self.market_data_observers.write();
+        observers.insert(observer_id, Box::new(observer));
+        debug!("Added market data observer with ID: {}", observer_id);
+        observer_id
     }
 
-    /// Removes a previously added market data observer
-    ///
-    /// # Returns
-    /// `true` if the observer was found and removed, `false` otherwise.
-    pub fn remove_market_data_observer(&self, id: usize) -> bool {
-        let mut guard = self.market_data_observers.write();
-        let result = guard.remove(&id).is_some();
-
-        // While we have the write lock, clean up any expired weak references
-        self.clean_expired_observers(&mut guard);
-
-        result
-    }
-
-    // Add similar methods for all other observer types...
-
-    // Helper to clean up expired weak references
-    fn clean_expired_observers<T: ?Sized>(&self, observers: &mut HashMap<usize, Weak<T>>) {
-        observers.retain(|_, weak_ref| weak_ref.upgrade().is_some());
-    }
-}
-```
-
-### 4. Add notification methods
-
-```rust
-impl DataMarketManager {
-    // Notification methods
-    fn notify_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: &TickAttrib) {
-        let observers = self.market_data_observers.read();
-        for (_, weak_observer) in observers.iter() {
-            if let Some(observer) = weak_observer.upgrade() {
-                observer.on_tick_price(req_id, tick_type, price, attrib);
-            }
+    /// Unregister a market data observer
+    pub fn remove_market_data_observer(&self, observer_id: usize) -> bool {
+        let mut observers = self.market_data_observers.write();
+        let removed = observers.remove(&observer_id).is_some();
+        if removed {
+            debug!("Removed market data observer with ID: {}", observer_id);
+        } else {
+            warn!("Attempted to remove non-existent market data observer ID: {}", observer_id);
         }
+        removed
     }
 
-    fn notify_tick_size(&self, req_id: i32, tick_type: TickType, size: f64) {
-        let observers = self.market_data_observers.read();
-        for (_, weak_observer) in observers.iter() {
-            if let Some(observer) = weak_observer.upgrade() {
-                observer.on_tick_size(req_id, tick_type, size);
-            }
+    /// Register an observer for real-time bar updates
+    pub fn observe_realtime_bars<T: RealTimeBarsObserver + Send + Sync + 'static>(&self, observer: T) -> usize {
+        let observer_id = self.next_observer_id.fetch_add(1, Ordering::SeqCst);
+        let mut observers = self.realtime_bars_observers.write();
+        observers.insert(observer_id, Box::new(observer));
+        debug!("Added real-time bars observer with ID: {}", observer_id);
+        observer_id
+    }
+
+    /// Unregister a real-time bars observer
+    pub fn remove_realtime_bars_observer(&self, observer_id: usize) -> bool {
+        let mut observers = self.realtime_bars_observers.write();
+        let removed = observers.remove(&observer_id).is_some();
+        if removed {
+            debug!("Removed real-time bars observer with ID: {}", observer_id);
+        } else {
+            warn!("Attempted to remove non-existent real-time bars observer ID: {}", observer_id);
         }
+        removed
     }
 
-    // Add similar notification methods for all callbacks...
+    // Similar methods for other observer types...
+    pub fn observe_tick_by_tick<T: TickByTickObserver + Send + Sync + 'static>(&self, observer: T) -> usize;
+    pub fn remove_tick_by_tick_observer(&self, observer_id: usize) -> bool;
+
+    pub fn observe_market_depth<T: MarketDepthObserver + Send + Sync + 'static>(&self, observer: T) -> usize;
+    pub fn remove_market_depth_observer(&self, observer_id: usize) -> bool;
+
+    pub fn observe_historical_data<T: HistoricalDataObserver + Send + Sync + 'static>(&self, observer: T) -> usize;
+    pub fn remove_historical_data_observer(&self, observer_id: usize) -> bool;
+
+    pub fn observe_historical_ticks<T: HistoricalTicksObserver + Send + Sync + 'static>(&self, observer: T) -> usize;
+    pub fn remove_historical_ticks_observer(&self, observer_id: usize) -> bool;
 }
 ```
 
-### 5. Update MarketDataHandler implementation to notify observers
+### MarketDataHandler Implementation Updates
 
 ```rust
 impl MarketDataHandler for DataMarketManager {
     fn tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib) {
-        trace!("Handler: Tick Price: ID={}, Type={:?}, Price={}, Attrib={:?}", req_id, tick_type, price, attrib);
-
-        // Existing implementation...
-        let mut subs = self.subscriptions.lock();
-        if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
-            // Existing logic to update state...
-        }
+        // Existing implementation to update internal state...
 
         // Notify observers
-        self.notify_tick_price(req_id, tick_type, price, &attrib);
-    }
-
-    // Update all other handler methods similarly...
-}
-```
-
-## Convenience Methods
-
-### 1. Filter Wrapper
-
-```rust
-/// A wrapper that filters market data by request ID
-pub struct RequestIdFilter<T> {
-    observer: Arc<T>,
-    req_ids: HashSet<i32>, // Only notify for these request IDs
-}
-
-impl<T: MarketDataObserver> MarketDataObserver for RequestIdFilter<T> {
-    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: &TickAttrib) {
-        if self.req_ids.contains(&req_id) {
-            self.observer.on_tick_price(req_id, tick_type, price, attrib);
+        let observers = self.market_data_observers.read();
+        for observer in observers.values() {
+            observer.on_tick_price(req_id, tick_type, price, attrib.clone());
         }
     }
 
-    // Implement other methods similarly...
-}
+    fn tick_size(&self, req_id: i32, tick_type: TickType, size: f64) {
+        // Existing implementation...
 
-// Create similar wrappers for other observer types
+        // Notify observers
+        let observers = self.market_data_observers.read();
+        for observer in observers.values() {
+            observer.on_tick_size(req_id, tick_type, size);
+        }
+    }
+
+    fn tick_string(&self, req_id: i32, tick_type: TickType, value: &str) {
+        // Existing implementation...
+
+        // Notify observers
+        let observers = self.market_data_observers.read();
+        for observer in observers.values() {
+            observer.on_tick_string(req_id, tick_type, value);
+        }
+    }
+
+    fn tick_generic(&self, req_id: i32, tick_type: TickType, value: f64) {
+        // Existing implementation...
+
+        // Notify observers
+        let observers = self.market_data_observers.read();
+        for observer in observers.values() {
+            observer.on_tick_generic(req_id, tick_type, value);
+        }
+    }
+
+    fn tick_snapshot_end(&self, req_id: i32) {
+        // Existing implementation...
+
+        // Notify observers
+        let observers = self.market_data_observers.read();
+        for observer in observers.values() {
+            observer.on_tick_snapshot_end(req_id);
+        }
+    }
+
+    fn market_data_type(&self, req_id: i32, market_data_type: MarketDataType) {
+        // Existing implementation...
+
+        // Notify observers
+        let observers = self.market_data_observers.read();
+        for observer in observers.values() {
+            observer.on_market_data_type(req_id, market_data_type);
+        }
+    }
+
+    // Similar updates for other handler methods...
+}
 ```
 
-### 2. `observe` convenience methods
+## Request-specific observers
+
+In many cases, an observer might only be interested in data for a specific request. To support this, we can provide helper methods for filtering and mapping observer registrations:
 
 ```rust
 impl DataMarketManager {
-    /// Request market data and register an observer in one step
-    pub fn observe_market_data<T>(
+    /// Request market data and events from that request to the observer.
+    pub fn request_observe_market_data<T: MarketDataObserver + Send + Sync + 'static>(
         &self,
         contract: &Contract,
         generic_tick_list: &[GenericTickType],
@@ -362,119 +287,125 @@ impl DataMarketManager {
         regulatory_snapshot: bool,
         mkt_data_options: &[(String, String)],
         market_data_type: Option<MarketDataType>,
-        observer: Arc<T>
-    ) -> Result<(i32, usize), IBKRError>
-    where
-        T: MarketDataObserver + 'static
-    {
-        // Request the market data
-        let req_id = self.request_market_data(
-            contract,
-            generic_tick_list,
-            snapshot,
-            regulatory_snapshot,
-            mkt_data_options,
-            market_data_type
-        )?;
+        observer: T
+    ) -> usize {
+        // Create a wrapper that only forwards events for the specified req_id
+        struct FilteredObserver<T: MarketDataObserver + Send + Sync> {
+            inner: T,
+            req_id: i32,
+        }
 
-        // Add the observer
-        let observer_id = self.add_market_data_observer(observer);
+        impl<T: MarketDataObserver + Send + Sync> MarketDataObserver for FilteredObserver<T> {
+            fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib) {
+                if req_id == self.req_id {
+                    self.inner.on_tick_price(req_id, tick_type, price, attrib);
+                }
+            }
 
-        Ok((req_id, observer_id))
+            // Similar implementations for other methods...
+            fn on_tick_size(&self, req_id: i32, tick_type: TickType, size: f64) {
+                if req_id == self.req_id {
+                    self.inner.on_tick_size(req_id, tick_type, size);
+                }
+            }
+
+            fn on_tick_string(&self, req_id: i32, tick_type: TickType, value: &str) {
+                if req_id == self.req_id {
+                    self.inner.on_tick_string(req_id, tick_type, value);
+                }
+            }
+
+            fn on_tick_generic(&self, req_id: i32, tick_type: TickType, value: f64) {
+                if req_id == self.req_id {
+                    self.inner.on_tick_generic(req_id, tick_type, value);
+                }
+            }
+
+            fn on_tick_snapshot_end(&self, req_id: i32) {
+                if req_id == self.req_id {
+                    self.inner.on_tick_snapshot_end(req_id);
+                }
+            }
+
+            fn on_market_data_type(&self, req_id: i32, market_data_type: MarketDataType) {
+                if req_id == self.req_id {
+                    self.inner.on_market_data_type(req_id, market_data_type);
+                }
+            }
+        }
+        let req_id = self.message_broker.next_request_id();
+        // Register the observer now before we submit any request.
+        self.observe_market_data(FilteredObserver { inner: observer, req_id })
+        // Call internal request market data which is like the present one but with a given request id.
+        self.internal_request_market_data(req_id, contract, generic_tick_list, snapshot, regulatory_snapshot, mkt_data_options, market_data_type)?;
     }
 
-    // Add similar methods for other subscription types...
+    // Similar methods for other observer types...
 }
-```
-
-## Default Observer Base Implementations
-
-```rust
-/// Default implementation of MarketDataObserver that does nothing
-pub struct DefaultMarketDataObserver;
-
-impl MarketDataObserver for DefaultMarketDataObserver {}
-impl MarketDataObserverBase for DefaultMarketDataObserver {}
-
-// Create similar defaults for other observer types
 ```
 
 ## Example Usage
 
 ```rust
-use std::sync::Arc;
-
-// Create a custom observer
+// Example: Streaming market data with observer
 struct MyMarketDataObserver;
 
-impl MarketDataObserverBase for MyMarketDataObserver {
-    // Override only the methods we care about
-    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: &TickAttrib) {
-        println!("Received price: req_id={}, type={:?}, price={}", req_id, tick_type, price);
+impl MarketDataObserver for MyMarketDataObserver {
+    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib) {
+        println!("Price update for request {}: Type={:?}, Price={}", req_id, tick_type, price);
     }
+
+    fn on_tick_size(&self, req_id: i32, tick_type: TickType, size: f64) {
+        println!("Size update for request {}: Type={:?}, Size={}", req_id, tick_type, size);
+    }
+
+    // Implement other methods as needed...
 }
 
-impl MarketDataObserver for MyMarketDataObserver {}
+// In application code:
+let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+let market_data_mgr = client.data_market();
 
-// Usage in application
-fn main() -> Result<(), IBKRError> {
-    let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
-    let market_data_mgr = client.data_market();
+// Register observer
+let observer_id = market_data_mgr.observe_market_data(MyMarketDataObserver);
 
-    let observer = Arc::new(MyMarketDataObserver);
-    let observer_id = market_data_mgr.add_market_data_observer(observer);
+// Request streaming market data
+let contract = Contract::stock("AAPL");
+let req_id = market_data_mgr.request_market_data(
+    &contract, &[], false, false, &[], None
+)?;
 
-    let contract = Contract::stock("AAPL");
-    let req_id = market_data_mgr.request_market_data(
-        &contract,
-        &[],
-        false,
-        false,
-        &[],
-        Some(MarketDataType::Delayed)
-    )?;
-
-    // Let it run for a while...
-    std::thread::sleep(std::time::Duration::from_secs(60));
-
-    // Clean up
-    market_data_mgr.cancel_market_data(req_id)?;
-    market_data_mgr.remove_market_data_observer(observer_id);
-
-    Ok(())
-}
+// Later, unregister observer if needed
+market_data_mgr.remove_market_data_observer(observer_id);
 ```
 
-## Combined Observer Trait
-
-For convenience, a combined observer trait:
+## Example with Requeste-Observe
 
 ```rust
-/// Observer that combines all market data observer traits
-pub trait MarketDataCombinedObserver:
-    MarketDataObserver +
-    RealTimeBarObserver +
-    TickByTickObserver +
-    MarketDepthObserver +
-    ScannerObserver +
-    HistogramObserver +
-    HistoricalDataObserver +
-    HistoricalTicksObserver {
-    // No additional methods
-}
-
-/// Default implementation of the combined observer
-pub struct DefaultCombinedObserver;
-
-impl MarketDataObserverBase for DefaultCombinedObserver {}
-impl MarketDataObserver for DefaultCombinedObserver {}
-// Implement all other base traits
+// Register observer only for a specific request ID
+let contract = Contract::stock("AAPL");
+let obs = MyMarketDataObserver::new(...);
+let observer_id = market_data_mgr.request_observe_market_data(
+    &contract, &[], false, false, &[], None, obs
+)?;
+// Later, unregister observer if needed
+market_data_mgr.remove_market_data_observer(observer_id);
 ```
 
-## Implementation Note
+## Implementation Plan
 
-This observer pattern can coexist with the existing blocking methods. The existing blocking methods will continue to function as before, working via condition variables, while the observer pattern provides an event-driven alternative.
+1. Define the specialized observer traits with default method implementations
+2. Add observer collections to `DataMarketManager`
+3. Implement observer registration and removal methods
+4. Update `MarketDataHandler` implementation to call observer methods
+5. Add filtered observer registration helpers
+6. Update API documentation
+7. Create usage examples
 
-The patterns are complementary:
-- Use **blocking methods** for simple one-shot queries where you need the result immediately and then continue.
-- Use the **observer pattern** for continuous streaming data or complex applications that need to react to events asynchronously.
+## Summary
+
+This design replaces a potential global `MarketDataObserver` trait with specialized traits for different market data types. It provides a more type-safe and flexible approach to observing market data, allowing clients to register specific observers for the data types they're interested in.
+
+The design for market data observers is particularly granular, with separate callback methods for different tick types, allowing fine-grained control over which data the observer receives.
+
+The implementation follows a similar pattern to the `AccountManager` observer system for consistency across the library.
