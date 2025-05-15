@@ -73,12 +73,12 @@ use crate::conn::MessageBroker;
 use crate::contract::{Bar, Contract, ContractDetails, ScanData, ScannerSubscription, WhatToShow}; // Added WhatToShow
 use crate::scan_parameters::ScanParameterResponse;
 use crate::data::{
-  MarketDataSubscription, MarketDataType, MarketDepthRow, MarketDepthSubscription,
+  MarketDataInfo, MarketDataType, MarketDepthRow, MarketDepthSubscription,
   RealTimeBarSubscription, TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData, HistoricalTick,
   TickByTickSubscription, TickOptionComputationData, TickType, HistogramEntry, HistogramDataRequestState, HistoricalTicksRequestState,
   HistoricalDataRequestState, ScannerSubscriptionState, GenericTickType, TickByTickRequestType, DurationUnit, TimePeriodUnit, // Added TimePeriodUnit
 };
-use crate::handler::MarketDataHandler;
+use crate::handler::{MarketDataHandler};
 use crate::protocol_encoder::Encoder;
 use crate::protocol_decoder::ClientErrorCode;
 use crate::base::IBKRError::Timeout;
@@ -86,8 +86,13 @@ use crate::min_server_ver::min_server_ver;
 use parking_lot::{Condvar, Mutex};
 use chrono::{Utc, TimeZone};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
 use std::time::Duration;
+use parking_lot::RwLock; // Added for observer maps
+use crate::data_observer::{ // Added for observers
+  ObserverId, MarketDataObserver, RealTimeBarsObserver, TickByTickObserver, MarketDepthObserver,
+  HistoricalDataObserver, HistoricalTicksObserver,
+};
 use log::{debug, info, trace, warn};
 
 
@@ -106,7 +111,7 @@ trait CompletableState: Clone + Send + 'static {
 }
 
 // Implement the trait for each subscription type that supports blocking waits
-impl CompletableState for MarketDataSubscription {
+impl CompletableState for MarketDataInfo {
   fn is_completed(&self) -> bool { self.completed || self.quote_received /* Also consider quote flag */ }
   fn mark_completed(&mut self) { self.completed = true; }
   fn get_error(&self) -> Option<IBKRError> {
@@ -196,8 +201,8 @@ trait TryIntoStateHelper<T> {
 }
 
 // Implement the helper trait for each target state type
-impl TryIntoStateHelper<MarketDataSubscription> for MarketSubscription {
-  fn try_into_state_helper_mut(&mut self) -> Option<&mut MarketDataSubscription> {
+impl TryIntoStateHelper<MarketDataInfo> for MarketSubscription {
+  fn try_into_state_helper_mut(&mut self) -> Option<&mut MarketDataInfo> {
     match self { MarketSubscription::TickData(s) => Some(s), _ => None }
   }
 }
@@ -251,7 +256,7 @@ impl MarketSubscription {
 #[derive(Debug)]
 enum MarketSubscription {
   /// State for a standard tick-based market data subscription.
-  TickData(MarketDataSubscription),
+  TickData(MarketDataInfo),
   /// State for a real-time bars subscription.
   RealTimeBars(RealTimeBarSubscription),
   /// State for a tick-by-tick data subscription.
@@ -330,7 +335,14 @@ pub struct DataMarketManager {
   scanner_parameters_xml: Mutex<Option<String>>,
   scanner_parameters_cond: Condvar,
   // Optional: Observer pattern for streaming data
-  // observers: RwLock<Vec<Weak<dyn MarketDataObserver>>>,
+  market_data_observers: RwLock<HashMap<ObserverId, Box<dyn MarketDataObserver + Send + Sync>>>,
+  realtime_bars_observers: RwLock<HashMap<ObserverId, Box<dyn RealTimeBarsObserver + Send + Sync>>>,
+  tick_by_tick_observers: RwLock<HashMap<ObserverId, Box<dyn TickByTickObserver + Send + Sync>>>,
+  market_depth_observers: RwLock<HashMap<ObserverId, Box<dyn MarketDepthObserver + Send + Sync>>>,
+  historical_data_observers: RwLock<HashMap<ObserverId, Box<dyn HistoricalDataObserver + Send + Sync>>>,
+  historical_ticks_observers: RwLock<HashMap<ObserverId, Box<dyn HistoricalTicksObserver + Send + Sync>>>,
+
+  next_observer_id: AtomicUsize,
 }
 
 /// Represents a market quote, typically containing Bid, Ask, and Last prices.
@@ -351,7 +363,13 @@ impl DataMarketManager {
       market_data_type_cond: Condvar::new(),
       scanner_parameters_xml: Mutex::new(None), // Initialize scanner params state
       scanner_parameters_cond: Condvar::new(),
-      // observers: RwLock::new(Vec::new()),
+      market_data_observers: RwLock::new(HashMap::new()),
+      realtime_bars_observers: RwLock::new(HashMap::new()),
+      tick_by_tick_observers: RwLock::new(HashMap::new()),
+      market_depth_observers: RwLock::new(HashMap::new()),
+      historical_data_observers: RwLock::new(HashMap::new()),
+      historical_ticks_observers: RwLock::new(HashMap::new()),
+      next_observer_id: AtomicUsize::new(0),
     })
   }
 
@@ -615,12 +633,12 @@ impl DataMarketManager {
     &self,
     req_id: i32,
     timeout: Duration,
-    mut completion_check: F,
+    completion_check: F,
     request_type_name: &str, // For logging purposes (e.g., "MarketData", "TickByTick")
   ) -> Result<S, IBKRError>
   where
-    S: Clone + Send + 'static + CompletableState, // Added CompletableState bound
-    F: FnMut(&S) -> bool, // Closure takes state ref, returns true if complete
+    S: Clone + Send + Sync + 'static + CompletableState, // Added CompletableState bound, Sync for closure
+    F: Fn(&S) -> bool, // Closure takes state ref, returns true if complete
   // Ensure the closure can access the correct state type from the enum
     MarketSubscription: TryIntoStateHelper<S>, // Use the helper trait here
   {
@@ -899,11 +917,11 @@ impl DataMarketManager {
   pub fn request_market_data(
     &self,
     contract: &Contract,
-    generic_tick_list: &[GenericTickType], // Changed from &str
+    generic_tick_list: &[GenericTickType],
     snapshot: bool,
-    regulatory_snapshot: bool, // Requires TWS 963+
-    mkt_data_options: &[(String, String)], // TagValue list
-    market_data_type: Option<MarketDataType>, // Added parameter
+    regulatory_snapshot: bool,
+    mkt_data_options: &[(String, String)],
+    market_data_type: Option<MarketDataType>,
   ) -> Result<i32, IBKRError> {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
     // Convert generic_tick_list to comma-separated string for logging and encoding
@@ -920,6 +938,39 @@ impl DataMarketManager {
     self.set_market_data_type_if_needed(desired_mkt_data_type)?;
 
     let req_id = self.message_broker.next_request_id();
+    self.internal_request_market_data(
+      req_id,
+      contract,
+      generic_tick_list,
+      snapshot,
+      regulatory_snapshot,
+      mkt_data_options,
+      desired_mkt_data_type,
+    )?;
+    Ok(req_id)
+  }
+
+  /// Internal helper to send market data request message and store state.
+  fn internal_request_market_data(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    generic_tick_list: &[GenericTickType],
+    snapshot: bool,
+    regulatory_snapshot: bool,
+    mkt_data_options: &[(String, String)],
+    desired_mkt_data_type: MarketDataType,
+  ) -> Result<(), IBKRError> {
+    // Logging for internal call might be slightly different or rely on caller
+    // For simplicity, we assume public method handles primary logging.
+    // Ensure market data type is set by the caller (public request_market_data or request_observe_market_data)
+
+    let generic_tick_list_str = generic_tick_list
+      .iter()
+      .map(|t| t.to_string())
+      .collect::<Vec<String>>()
+      .join(",");
+
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
@@ -933,7 +984,7 @@ impl DataMarketManager {
       if subs.contains_key(&req_id) {
         return Err(IBKRError::DuplicateRequestId(req_id));
       }
-      let mut state = MarketDataSubscription::new(
+      let mut state = MarketDataInfo::new(
         req_id,
         contract.clone(),
         generic_tick_list.to_vec(), // Store the Vec<GenericTickType>
@@ -948,7 +999,7 @@ impl DataMarketManager {
     }
 
     self.message_broker.send_message(&request_msg)?;
-    Ok(req_id)
+    Ok(())
   }
 
   /// Requests streaming market data (ticks) and blocks until a user-defined completion condition is met.
@@ -959,14 +1010,14 @@ impl DataMarketManager {
   ///
   /// # Arguments
   /// * `contract`, `generic_tick_list` (as `&[GenericTickType]`), `snapshot`, `regulatory_snapshot`, `mkt_data_options`, `market_data_type`:
-  ///   Same as for `request_market_data`.
+  ///   Same as for [`request_market_data`](Self::request_market_data).
   /// * `timeout` - Maximum duration to wait for the completion condition.
   /// * `completion_check` - A closure `FnMut(&MarketDataSubscription) -> bool`. It's called
   ///   repeatedly with the current state of the market data subscription. The wait continues
   ///   until this closure returns `true`.
   ///
   /// # Returns
-  /// A clone of the `MarketDataSubscription` state when the completion condition is met.
+  /// A clone of the `MarketDataInfo` state when the completion condition is met.
   ///
   /// # Errors
   /// Returns `IBKRError` if the underlying request fails, the wait times out, or other issues occur.
@@ -993,19 +1044,19 @@ impl DataMarketManager {
   /// # Ok(())
   /// # }
   /// ```
-  pub fn get_market_data<F>(
+  pub fn get_market_data<F>( // F changed to Fn from FnMut
     &self,
     contract: &Contract,
-    generic_tick_list: &[GenericTickType], // Changed from &str
+    generic_tick_list: &[GenericTickType],
     snapshot: bool, // Note: For true snapshots, get_quote might be simpler
     regulatory_snapshot: bool,
     mkt_data_options: &[(String, String)],
     market_data_type: Option<MarketDataType>,
     timeout: Duration,
-    completion_check: F, // Closure: FnMut(&MarketDataSubscription) -> bool
-  ) -> Result<MarketDataSubscription, IBKRError>
+    completion_check: F, // Closure: Fn(&MarketDataInfo) -> bool
+  ) -> Result<MarketDataInfo, IBKRError>
   where
-    F: FnMut(&MarketDataSubscription) -> bool,
+    F: Fn(&MarketDataInfo) -> bool,
   {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
     let generic_tick_list_str = generic_tick_list // For logging
@@ -1026,7 +1077,7 @@ impl DataMarketManager {
       regulatory_snapshot,
       mkt_data_options,
       Some(desired_mkt_data_type), // Pass the type
-    )?;
+    ).map_err(|e| { warn!("Error in request_market_data during get_market_data: {:?}", e); e })?;
     debug!("Blocking market data request initiated with ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
 
     // 2. Wait for completion using the generic helper
@@ -1119,58 +1170,40 @@ impl DataMarketManager {
   pub fn get_realtime_bars(
     &self,
     contract: &Contract,
-    what_to_show: WhatToShow, // Changed from &str
+    what_to_show: WhatToShow,
     use_rth: bool,
     real_time_bars_options: &[(String, String)],
-    num_bars: usize, // Number of bars to wait for
-    timeout: Duration, // Total timeout for the operation
+    num_bars: usize,
+    timeout: Duration,
   ) -> Result<Vec<Bar>, IBKRError> {
     if num_bars == 0 {
       return Err(IBKRError::ConfigurationError("num_bars must be greater than 0".to_string()));
     }
-    let bar_size = 5; // Hardcoded as per API limitation
+    // let bar_size = 5; // bar_size is now passed from request_real_time_bars or its internal helper
     info!("Requesting {} real time bars: Contract={}, What={}, RTH={}, Timeout={:?}",
           num_bars, contract.symbol, what_to_show, use_rth, timeout); // what_to_show will use Display
-    let req_id = self.message_broker.next_request_id();
-    let server_version = self.message_broker.get_server_version()?;
-    let encoder = Encoder::new(server_version);
 
-    let request_msg = encoder.encode_request_real_time_bars(
-      req_id, contract, bar_size, &what_to_show.to_string(), use_rth, real_time_bars_options,
+    let req_id = self.request_real_time_bars(
+      contract,
+      what_to_show,
+      use_rth,
+      real_time_bars_options,
     )?;
 
-    // Initialize and store state, marking target count
+    // Update state to mark target_bar_count for blocking
     {
       let mut subs = self.subscriptions.lock();
-      if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
-      let state = RealTimeBarSubscription {
-        req_id,
-        contract: contract.clone(),
-        bar_size,
-        what_to_show, // Store the enum
-        use_rth,
-        rt_bar_options: real_time_bars_options.to_vec(),
-        latest_bar: None,
-        bars: Vec::with_capacity(num_bars), // Pre-allocate
-        target_bar_count: Some(num_bars), // Mark target for blocking
-        completed: false, // Not completed yet
-        error_code: None,
-        error_message: None,
-      };
-      subs.insert(req_id, MarketSubscription::RealTimeBars(state));
-      debug!("Blocking real time bar request added for ReqID: {}", req_id);
+      if let Some(MarketSubscription::RealTimeBars(state)) = subs.get_mut(&req_id) {
+        state.target_bar_count = Some(num_bars);
+      } else {
+        return Err(IBKRError::InternalError(format!("State for real time bars req_id {} not found after request.", req_id)));
+      }
     }
-
-    // Send the request
-    self.message_broker.send_message(&request_msg)?;
 
     // Block and wait for completion
     let result = self.wait_for_realtime_bars_completion(req_id, num_bars, timeout);
 
-    // Best effort cancel after completion/timeout/error
-    // Ignore error here as the state might already be removed by the wait function
     let _ = self.cancel_real_time_bars(req_id);
-
     result
   }
 
@@ -1214,7 +1247,7 @@ impl DataMarketManager {
   pub fn get_quote(
     &self,
     contract: &Contract,
-    market_data_type: Option<MarketDataType>, // Added parameter
+    market_data_type: Option<MarketDataType>,
     timeout: Duration
   ) -> Result<Quote, IBKRError> {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
@@ -1224,42 +1257,18 @@ impl DataMarketManager {
     self.set_market_data_type_if_needed(desired_mkt_data_type)?;
 
     let req_id = self.message_broker.next_request_id();
-    let server_version = self.message_broker.get_server_version()?;
-    let encoder = Encoder::new(server_version);
 
-    // Use an empty generic tick list for snapshot requests.
-    // This often requests all available generic ticks for the snapshot.
-    // let generic_tick_list = ""; // This was for the encoder, which still takes &str
-    let snapshot = true; // For a quote, snapshot is true
-    let regulatory_snapshot = false; // Typically false for quotes unless specified
-    let mkt_data_options: Vec<(String, String)> = Vec::new();
-
-    let request_msg = encoder.encode_request_market_data(
-      req_id, contract, "" /* empty string for encoder */, snapshot, regulatory_snapshot, &mkt_data_options,
+    self.internal_request_market_data(
+      req_id, contract, &[], true, false, &[], desired_mkt_data_type
     )?;
 
-    // Initialize and store state, marking as a blocking quote request
+    // Mark as blocking quote request
     {
       let mut subs = self.subscriptions.lock();
-      if subs.contains_key(&req_id) {
-        return Err(IBKRError::DuplicateRequestId(req_id));
+      if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+        state.is_blocking_quote_request = true;
       }
-      let mut state = MarketDataSubscription::new(
-        req_id,
-        contract.clone(),
-        Vec::new(), // Use Vec::new() for an empty list of GenericTickType
-        snapshot,
-        regulatory_snapshot,
-        mkt_data_options, // This was already mkt_data_options.to_vec() in the original new()
-      );
-      state.is_blocking_quote_request = true; // Mark this specifically
-      state.market_data_type = Some(desired_mkt_data_type); // Store requested type
-      subs.insert(req_id, MarketSubscription::TickData(state));
-      debug!("Blocking quote request added for ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
     }
-
-    // Send the request
-    self.message_broker.send_message(&request_msg)?;
 
     // Block and wait for completion
     let result = self.wait_for_quote_completion(req_id, timeout);
@@ -1310,13 +1319,29 @@ impl DataMarketManager {
   pub fn request_real_time_bars(
     &self,
     contract: &Contract,
-    what_to_show: WhatToShow, // Changed from &str
+    what_to_show: WhatToShow,
     use_rth: bool,
     real_time_bars_options: &[(String, String)],
   ) -> Result<i32, IBKRError> {
     let bar_size = 5; // Hardcoded as per API limitation
     info!("Requesting real time bars: Contract={}, What={}, RTH={}", contract.symbol, what_to_show, use_rth); // what_to_show will use Display
     let req_id = self.message_broker.next_request_id();
+
+    self.internal_request_real_time_bars(
+      req_id,
+      contract,
+      what_to_show,
+      use_rth,
+      real_time_bars_options,
+      bar_size,
+    )?;
+
+    Ok(req_id)
+  }
+
+  fn internal_request_real_time_bars(
+    &self, req_id: i32, contract: &Contract, what_to_show: WhatToShow, use_rth: bool, real_time_bars_options: &[(String, String)], bar_size: i32
+  ) -> Result<(), IBKRError> {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
@@ -1335,19 +1360,17 @@ impl DataMarketManager {
         use_rth,
         rt_bar_options: real_time_bars_options.to_vec(),
         latest_bar: None,
-        bars: Vec::new(), // Initialize empty vec for streaming
-        target_bar_count: None, // Not a blocking request by default
+        bars: Vec::new(),
+        target_bar_count: None, // Default for streaming
         completed: false, // Not completed yet
         error_code: None,
         error_message: None,
       };
       subs.insert(req_id, MarketSubscription::RealTimeBars(state));
-      debug!("Streaming real time bar subscription added for ReqID: {}", req_id);
     }
-
-    self.message_broker.send_message(&request_msg)?;
-    Ok(req_id)
+    self.message_broker.send_message(&request_msg)
   }
+
 
   /// Cancels an active streaming real-time bars request.
   ///
@@ -1420,13 +1443,25 @@ impl DataMarketManager {
   pub fn request_tick_by_tick_data(
     &self,
     contract: &Contract,
-    tick_type: TickByTickRequestType, // Changed from &str
+    tick_type: TickByTickRequestType,
     number_of_ticks: i32, // 0 for streaming, >0 for historical snapshot
     ignore_size: bool, // Usually false for streaming
   ) -> Result<i32, IBKRError> {
     info!("Requesting tick-by-tick data: Contract={}, Type={}, NumTicks={}, IgnoreSize={}",
           contract.symbol, tick_type, number_of_ticks, ignore_size); // tick_type will use Display
     let req_id = self.message_broker.next_request_id();
+    self.internal_request_tick_by_tick_data(req_id, contract, tick_type, number_of_ticks, ignore_size)?;
+    Ok(req_id)
+  }
+
+  fn internal_request_tick_by_tick_data(
+    &self,
+    req_id: i32,
+    contract: &Contract,
+    tick_type: TickByTickRequestType,
+    number_of_ticks: i32,
+    ignore_size: bool,
+  ) -> Result<(), IBKRError> {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
@@ -1453,8 +1488,7 @@ impl DataMarketManager {
       debug!("Tick-by-tick subscription added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-    Ok(req_id)
+    self.message_broker.send_message(&request_msg)
   }
 
   /// Requests streaming tick-by-tick data and blocks until a user-defined completion condition is met.
@@ -1500,14 +1534,14 @@ impl DataMarketManager {
   pub fn get_tick_by_tick_data<F>(
     &self,
     contract: &Contract,
-    tick_type: TickByTickRequestType, // Changed from &str
+    tick_type: TickByTickRequestType,
     number_of_ticks: i32, // Should be 0 for streaming blocking requests
     ignore_size: bool,
     timeout: Duration,
-    completion_check: F, // Closure: FnMut(&TickByTickSubscription) -> bool
+    completion_check: F, // Closure: Fn(&TickByTickSubscription) -> bool
   ) -> Result<TickByTickSubscription, IBKRError>
   where
-    F: FnMut(&TickByTickSubscription) -> bool,
+    F: Fn(&TickByTickSubscription) -> bool,
   {
     if number_of_ticks != 0 {
       // This function is intended for blocking on *streaming* data.
@@ -1612,6 +1646,15 @@ impl DataMarketManager {
   ) -> Result<i32, IBKRError> {
     info!("Requesting market depth: Contract={}, Rows={}, Smart={}", contract.symbol, num_rows, is_smart_depth);
     let req_id = self.message_broker.next_request_id();
+    self.internal_request_market_depth(req_id, contract, num_rows, is_smart_depth, mkt_depth_options)?;
+    Ok(req_id)
+  }
+
+  fn internal_request_market_depth(
+    &self, req_id: i32, contract: &Contract, num_rows: i32, is_smart_depth: bool, mkt_depth_options: &[(String, String)]
+  ) -> Result<(), IBKRError> {
+
+
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
@@ -1637,8 +1680,7 @@ impl DataMarketManager {
       debug!("Market depth subscription added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-    Ok(req_id)
+    self.message_broker.send_message(&request_msg)
   }
 
   /// Requests streaming market depth data and blocks until a user-defined completion condition is met.
@@ -1686,10 +1728,10 @@ impl DataMarketManager {
     is_smart_depth: bool,
     mkt_depth_options: &[(String, String)],
     timeout: Duration,
-    completion_check: F, // Closure: FnMut(&MarketDepthSubscription) -> bool
+    completion_check: F, // Closure: Fn(&MarketDepthSubscription) -> bool
   ) -> Result<MarketDepthSubscription, IBKRError>
   where
-    F: FnMut(&MarketDepthSubscription) -> bool,
+    F: Fn(&MarketDepthSubscription) -> bool,
   {
     info!("Requesting blocking market depth: Contract={}, Rows={}, Smart={}, Timeout={:?}",
           contract.symbol, num_rows, is_smart_depth, timeout);
@@ -1847,13 +1889,13 @@ impl DataMarketManager {
     &self,
     contract: &Contract,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>, // Use chrono DateTime
-    duration: DurationUnit, // Changed from &str to DurationUnit
+    duration: DurationUnit,
     bar_size_setting: crate::contract::BarSize,
-    what_to_show: WhatToShow, // Changed from &str
+    what_to_show: WhatToShow,
     use_rth: bool,
     format_date: i32, // 1 for yyyyMMdd HH:mm:ss, 2 for system time (seconds)
     keep_up_to_date: bool, // Subscribe to updates after initial load
-    market_data_type: Option<MarketDataType>,
+    market_data_type: Option<MarketDataType>, // Added parameter
     chart_options: &[(String, String)], // TagValue list
   ) -> Result<Vec<Bar>, IBKRError> {
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
@@ -1865,12 +1907,29 @@ impl DataMarketManager {
     self.set_market_data_type_if_needed(desired_mkt_data_type)?;
 
     let req_id = self.message_broker.next_request_id();
+    self.internal_request_historical_data(
+      req_id, contract, end_date_time, &duration_str, &bar_size_setting.to_string(),
+      &what_to_show.to_string(), use_rth, format_date, keep_up_to_date, chart_options, desired_mkt_data_type
+    )?;
+
+    // Block and wait for completion
+    let timeout = Duration::from_secs(60); // Historical can take time
+    self.wait_for_historical_completion(req_id, timeout)
+  }
+
+  fn internal_request_historical_data(
+    &self, req_id: i32, contract: &Contract, end_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    duration_str: &str, bar_size_str: &str, what_to_show_str: &str, use_rth: bool,
+    format_date: i32, keep_up_to_date: bool, chart_options: &[(String, String)],
+    desired_mkt_data_type: MarketDataType
+  ) -> Result<(), IBKRError> {
+
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_historical_data(
-      req_id, contract, end_date_time, &duration_str, &bar_size_setting.to_string(), // Pass duration_str here
-      &what_to_show.to_string(), use_rth, format_date, keep_up_to_date, chart_options,
+      req_id, contract, end_date_time, duration_str, bar_size_str,
+      what_to_show_str, use_rth, format_date, keep_up_to_date, chart_options,
     )?;
 
     {
@@ -1887,11 +1946,7 @@ impl DataMarketManager {
       debug!("Historical data request added for ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-
-    // Block and wait for completion
-    let timeout = Duration::from_secs(60); // Historical can take time
-    self.wait_for_historical_completion(req_id, timeout)
+    self.message_broker.send_message(&request_msg)
   }
 
   /// Cancels an ongoing historical data request.
@@ -2098,6 +2153,10 @@ impl DataMarketManager {
     info!("Requesting scanner subscription: ScanCode={}, Instrument={}, Location={}",
           subscription.scan_code, subscription.instrument, subscription.location_code);
     let req_id = self.message_broker.next_request_id();
+    self.internal_request_scanner_subscription(req_id, subscription)?;
+    Ok(req_id)
+  }
+  fn internal_request_scanner_subscription(&self, req_id: i32, subscription: &ScannerSubscription) -> Result<(), IBKRError> {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
@@ -2118,8 +2177,7 @@ impl DataMarketManager {
       debug!("Scanner subscription added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-    Ok(req_id)
+    self.message_broker.send_message(&request_msg)
   }
 
   /// Requests market scanner results and blocks until the results are received,
@@ -2217,8 +2275,13 @@ impl DataMarketManager {
     if self.message_broker.get_server_version()? < min_server_ver::CALC_IMPLIED_VOLAT {
       return Err(IBKRError::Unsupported("Server version does not support implied volatility calculation.".to_string()));
     }
-
     let req_id = self.message_broker.next_request_id();
+    self.internal_calculate_implied_volatility(req_id, contract, option_price, under_price)?;
+
+    self.wait_for_option_calc_completion(req_id, timeout, "ImpliedVolatility")
+  }
+
+  fn internal_calculate_implied_volatility(&self, req_id: i32, contract: &Contract, option_price: f64, under_price: f64) -> Result<(), IBKRError> {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
@@ -2237,24 +2300,7 @@ impl DataMarketManager {
       debug!("Implied volatility calculation request added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-
-    // Wait for completion
-    let result_state = self.wait_for_completion(
-      req_id,
-      timeout,
-      |s: &OptionCalculationState| s.result.is_some(),
-      "ImpliedVolatility",
-    );
-
-    // Best effort cancel
-    if let Err(e) = self.cancel_calculate_implied_volatility(req_id) {
-      warn!("Failed to cancel implied volatility calculation request {} after blocking wait: {:?}", req_id, e);
-    }
-
-    result_state.and_then(|state| {
-      state.result.ok_or_else(|| IBKRError::InternalError(format!("Implied volatility result missing for ReqID {}", req_id)))
-    })
+    self.message_broker.send_message(&request_msg)
   }
 
   /// Cancels an ongoing implied volatility calculation request.
@@ -2302,8 +2348,13 @@ impl DataMarketManager {
     if self.message_broker.get_server_version()? < min_server_ver::CALC_OPTION_PRICE {
       return Err(IBKRError::Unsupported("Server version does not support option price calculation.".to_string()));
     }
-
     let req_id = self.message_broker.next_request_id();
+    self.internal_calculate_option_price(req_id, contract, volatility, under_price)?;
+
+    self.wait_for_option_calc_completion(req_id, timeout, "OptionPrice")
+  }
+
+  fn internal_calculate_option_price(&self, req_id: i32, contract: &Contract, volatility: f64, under_price: f64) -> Result<(), IBKRError> {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
@@ -2322,24 +2373,7 @@ impl DataMarketManager {
       debug!("Option price calculation request added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-
-    // Wait for completion
-    let result_state = self.wait_for_completion(
-      req_id,
-      timeout,
-      |s: &OptionCalculationState| s.result.is_some(),
-      "OptionPrice",
-    );
-
-    // Best effort cancel
-    if let Err(e) = self.cancel_calculate_option_price(req_id) {
-      warn!("Failed to cancel option price calculation request {} after blocking wait: {:?}", req_id, e);
-    }
-
-    result_state.and_then(|state| {
-      state.result.ok_or_else(|| IBKRError::InternalError(format!("Option price result missing for ReqID {}", req_id)))
-    })
+    self.message_broker.send_message(&request_msg)
   }
 
   /// Cancels an ongoing option price calculation request.
@@ -2384,23 +2418,28 @@ impl DataMarketManager {
     &self,
     contract: &Contract,
     use_rth: bool,
-    time_period: TimePeriodUnit, // Changed from &str
+    time_period: TimePeriodUnit,
     _histogram_options: &[(String, String)], // Currently unused for REQ_HISTOGRAM_DATA
   ) -> Result<i32, IBKRError> {
     let time_period_str = time_period.to_string(); // Convert enum to string for logging and encoding
     info!("Requesting histogram data: Contract={}, UseRTH={}, TimePeriod='{}'",
           contract.symbol, use_rth, time_period_str); // Log the string representation
-
     if self.message_broker.get_server_version()? < min_server_ver::HISTOGRAM {
       return Err(IBKRError::Unsupported("Server version does not support histogram data requests.".to_string()));
     }
-
     let req_id = self.message_broker.next_request_id();
+    self.internal_request_histogram_data(req_id, contract, use_rth, &time_period_str, time_period)?;
+    Ok(req_id)
+  }
+
+  fn internal_request_histogram_data(
+    &self, req_id: i32, contract: &Contract, use_rth: bool, time_period_str: &str, time_period_enum: TimePeriodUnit
+  ) -> Result<(), IBKRError> {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
     let request_msg = encoder.encode_request_histogram_data(
-      req_id, contract, use_rth, &time_period_str // Pass the string representation
+      req_id, contract, use_rth, time_period_str
     )?;
 
     // Initialize and store state
@@ -2413,7 +2452,7 @@ impl DataMarketManager {
         req_id,
         contract: contract.clone(),
         use_rth,
-        time_period, // Store the enum
+        time_period: time_period_enum,
         items: Vec::new(),
         completed: false,
         error_code: None,
@@ -2423,8 +2462,7 @@ impl DataMarketManager {
       debug!("Histogram data request added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-    Ok(req_id)
+    self.message_broker.send_message(&request_msg)
   }
 
   /// Requests histogram data for a contract and blocks until the data is received,
@@ -2443,7 +2481,7 @@ impl DataMarketManager {
     &self,
     contract: &Contract,
     use_rth: bool,
-    time_period: TimePeriodUnit, // Changed from &str
+    time_period: TimePeriodUnit,
     _histogram_options: &[(String, String)], // Currently unused for REQ_HISTOGRAM_DATA
     timeout: Duration,
   ) -> Result<Vec<HistogramEntry>, IBKRError> {
@@ -2524,19 +2562,26 @@ impl DataMarketManager {
     start_date_time: Option<chrono::DateTime<chrono::Utc>>,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>,
     number_of_ticks: i32,
-    what_to_show: WhatToShow, // Changed from &str
+    what_to_show: WhatToShow,
     use_rth: bool,
     ignore_size: bool,
     misc_options: &[(String, String)],
   ) -> Result<i32, IBKRError> {
     info!("Requesting historical ticks: Contract={}, What={}, NumTicks={}, Start={:?}, End={:?}",
           contract.symbol, what_to_show, number_of_ticks, start_date_time, end_date_time); // what_to_show will use Display
-
     if self.message_broker.get_server_version()? < min_server_ver::HISTORICAL_TICKS {
       return Err(IBKRError::Unsupported("Server version does not support historical ticks requests.".to_string()));
     }
-
     let req_id = self.message_broker.next_request_id();
+    self.internal_request_historical_ticks(req_id, contract, start_date_time, end_date_time, number_of_ticks, what_to_show, use_rth, ignore_size, misc_options)?;
+    Ok(req_id)
+  }
+
+  fn internal_request_historical_ticks(
+    &self, req_id: i32, contract: &Contract, start_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    end_date_time: Option<chrono::DateTime<chrono::Utc>>, number_of_ticks: i32, what_to_show: WhatToShow,
+    use_rth: bool, ignore_size: bool, misc_options: &[(String, String)]
+  ) -> Result<(), IBKRError> {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
 
@@ -2559,8 +2604,7 @@ impl DataMarketManager {
       debug!("Historical ticks request added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-    Ok(req_id)
+    self.message_broker.send_message(&request_msg)
   }
 
   /// Requests historical tick data and blocks until the data is received,
@@ -2581,7 +2625,7 @@ impl DataMarketManager {
     start_date_time: Option<chrono::DateTime<chrono::Utc>>,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>,
     number_of_ticks: i32,
-    what_to_show: WhatToShow, // Changed from &str
+    what_to_show: WhatToShow,
     use_rth: bool,
     ignore_size: bool,
     misc_options: &[(String, String)],
@@ -2623,6 +2667,354 @@ impl DataMarketManager {
     // Historical ticks are cancelled using the CancelHistoricalData message (ID 25)
     self.cancel_historical_data(req_id) // This will also handle state removal
   }
+
+  // --- Observer Registration Methods ---
+  fn new_observer_id(&self) -> ObserverId {
+    ObserverId(self.next_observer_id.fetch_add(1, Ordering::SeqCst))
+  }
+
+  /// Register an observer for market data tick updates.
+  pub fn observe_market_data<T: MarketDataObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId {
+    let observer_id = self.new_observer_id();
+    let mut observers = self.market_data_observers.write();
+    observers.insert(observer_id, Box::new(observer));
+    debug!("Added market data observer with ID: {:?}", observer_id);
+    observer_id
+  }
+
+  /// Unregister a market data observer.
+  pub fn remove_market_data_observer(&self, observer_id: ObserverId) -> bool {
+    let mut observers = self.market_data_observers.write();
+    let removed = observers.remove(&observer_id).is_some();
+    if removed {
+      debug!("Removed market data observer with ID: {:?}", observer_id);
+    } else {
+      warn!("Attempted to remove non-existent market data observer ID: {:?}", observer_id);
+    }
+    removed
+  }
+
+  /// Register an observer for real-time bar updates.
+  pub fn observe_realtime_bars<T: RealTimeBarsObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId {
+    let observer_id = self.new_observer_id();
+    let mut observers = self.realtime_bars_observers.write();
+    observers.insert(observer_id, Box::new(observer));
+    debug!("Added real-time bars observer with ID: {:?}", observer_id);
+    observer_id
+  }
+
+  /// Unregister a real-time bars observer.
+  pub fn remove_realtime_bars_observer(&self, observer_id: ObserverId) -> bool {
+    let mut observers = self.realtime_bars_observers.write();
+    let removed = observers.remove(&observer_id).is_some();
+    if removed {
+      debug!("Removed real-time bars observer with ID: {:?}", observer_id);
+    } else {
+      warn!("Attempted to remove non-existent real-time bars observer ID: {:?}", observer_id);
+    }
+    removed
+  }
+
+  /// Register an observer for tick-by-tick data updates.
+  pub fn observe_tick_by_tick<T: TickByTickObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId {
+    let observer_id = self.new_observer_id();
+    let mut observers = self.tick_by_tick_observers.write();
+    observers.insert(observer_id, Box::new(observer));
+    debug!("Added tick-by-tick observer with ID: {:?}", observer_id);
+    observer_id
+  }
+
+  /// Unregister a tick-by-tick data observer.
+  pub fn remove_tick_by_tick_observer(&self, observer_id: ObserverId) -> bool {
+    let mut observers = self.tick_by_tick_observers.write();
+    let removed = observers.remove(&observer_id).is_some();
+    if removed {
+      debug!("Removed tick-by-tick observer with ID: {:?}", observer_id);
+    } else {
+      warn!("Attempted to remove non-existent tick-by-tick observer ID: {:?}", observer_id);
+    }
+    removed
+  }
+
+  /// Register an observer for market depth updates.
+  pub fn observe_market_depth<T: MarketDepthObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId {
+    let observer_id = self.new_observer_id();
+    let mut observers = self.market_depth_observers.write();
+    observers.insert(observer_id, Box::new(observer));
+    debug!("Added market depth observer with ID: {:?}", observer_id);
+    observer_id
+  }
+
+  /// Unregister a market depth observer.
+  pub fn remove_market_depth_observer(&self, observer_id: ObserverId) -> bool {
+    let mut observers = self.market_depth_observers.write();
+    let removed = observers.remove(&observer_id).is_some();
+    if removed {
+      debug!("Removed market depth observer with ID: {:?}", observer_id);
+    } else {
+      warn!("Attempted to remove non-existent market depth observer ID: {:?}", observer_id);
+    }
+    removed
+  }
+
+  /// Register an observer for historical data updates.
+  pub fn observe_historical_data<T: HistoricalDataObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId {
+    let observer_id = self.new_observer_id();
+    let mut observers = self.historical_data_observers.write();
+    observers.insert(observer_id, Box::new(observer));
+    debug!("Added historical data observer with ID: {:?}", observer_id);
+    observer_id
+  }
+
+  /// Unregister a historical data observer.
+  pub fn remove_historical_data_observer(&self, observer_id: ObserverId) -> bool {
+    let mut observers = self.historical_data_observers.write();
+    let removed = observers.remove(&observer_id).is_some();
+    if removed {
+      debug!("Removed historical data observer with ID: {:?}", observer_id);
+    } else {
+      warn!("Attempted to remove non-existent historical data observer ID: {:?}", observer_id);
+    }
+    removed
+  }
+
+  /// Register an observer for historical ticks updates.
+  pub fn observe_historical_ticks<T: HistoricalTicksObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId {
+    let observer_id = self.new_observer_id();
+    let mut observers = self.historical_ticks_observers.write();
+    observers.insert(observer_id, Box::new(observer));
+    debug!("Added historical ticks observer with ID: {:?}", observer_id);
+    observer_id
+  }
+
+  /// Unregister a historical ticks observer.
+  pub fn remove_historical_ticks_observer(&self, observer_id: ObserverId) -> bool {
+    let mut observers = self.historical_ticks_observers.write();
+    let removed = observers.remove(&observer_id).is_some();
+    if removed {
+      debug!("Removed historical ticks observer with ID: {:?}", observer_id);
+    } else {
+      warn!("Attempted to remove non-existent historical ticks observer ID: {:?}", observer_id);
+    }
+    removed
+  }
+
+  // --- Request-Observe Methods ---
+  /// Request market data and route events from that request to the observer.
+  pub fn request_observe_market_data<T: MarketDataObserver + Send + Sync + 'static>(
+    &self,
+    contract: &Contract,
+    generic_tick_list: &[GenericTickType],
+    snapshot: bool,
+    regulatory_snapshot: bool,
+    mkt_data_options: &[(String, String)],
+    market_data_type: Option<MarketDataType>,
+    observer: T,
+  ) -> Result<(i32, ObserverId), IBKRError> {
+    struct FilteredObserver<Obs: MarketDataObserver + Send + Sync> { inner: Obs, req_id: i32, }
+    impl<Obs: MarketDataObserver + Send + Sync> MarketDataObserver for FilteredObserver<Obs> {
+      fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib) { if req_id == self.req_id { self.inner.on_tick_price(req_id, tick_type, price, attrib); } }
+      fn on_tick_size(&self, req_id: i32, tick_type: TickType, size: f64) { if req_id == self.req_id { self.inner.on_tick_size(req_id, tick_type, size); } }
+      fn on_tick_string(&self, req_id: i32, tick_type: TickType, value: &str) { if req_id == self.req_id { self.inner.on_tick_string(req_id, tick_type, value); } }
+      fn on_tick_generic(&self, req_id: i32, tick_type: TickType, value: f64) { if req_id == self.req_id { self.inner.on_tick_generic(req_id, tick_type, value); } }
+      fn on_tick_snapshot_end(&self, req_id: i32) { if req_id == self.req_id { self.inner.on_tick_snapshot_end(req_id); } }
+      fn on_market_data_type(&self, req_id: i32, market_data_type: MarketDataType) { if req_id == self.req_id { self.inner.on_market_data_type(req_id, market_data_type); } }
+    }
+
+    let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
+    self.set_market_data_type_if_needed(desired_mkt_data_type)?;
+    let req_id = self.message_broker.next_request_id();
+    let observer_id = self.observe_market_data(FilteredObserver { inner: observer, req_id });
+
+    self.internal_request_market_data(
+      req_id, contract, generic_tick_list, snapshot, regulatory_snapshot,
+      mkt_data_options, desired_mkt_data_type
+    )?;
+    Ok((req_id, observer_id))
+  }
+
+  /// Request real-time bars and route events from that request to the observer.
+  pub fn request_observe_realtime_bars<T: RealTimeBarsObserver + Send + Sync + 'static>(
+    &self,
+    contract: &Contract,
+    what_to_show: WhatToShow,
+    use_rth: bool,
+    real_time_bars_options: &[(String, String)],
+    observer: T,
+  ) -> Result<(i32, ObserverId), IBKRError> {
+    struct FilteredObserver<Obs: RealTimeBarsObserver + Send + Sync> { inner: Obs, req_id: i32, }
+    impl<Obs: RealTimeBarsObserver + Send + Sync> RealTimeBarsObserver for FilteredObserver<Obs> {
+      fn on_bar_update(&self, req_id: i32, bar: &Bar) { if req_id == self.req_id { self.inner.on_bar_update(req_id, bar); } }
+    }
+
+    let req_id = self.message_broker.next_request_id();
+    let observer_id = self.observe_realtime_bars(FilteredObserver { inner: observer, req_id });
+    let bar_size = 5; // Hardcoded as per API limitation for this request type
+
+    self.internal_request_real_time_bars(
+      req_id, contract, what_to_show, use_rth, real_time_bars_options, bar_size
+    )?;
+    Ok((req_id, observer_id))
+  }
+
+  /// Request tick-by-tick data and route events from that request to the observer.
+  pub fn request_observe_tick_by_tick<T: TickByTickObserver + Send + Sync + 'static>(
+    &self,
+    contract: &Contract,
+    tick_type: TickByTickRequestType,
+    number_of_ticks: i32,
+    ignore_size: bool,
+    observer: T,
+  ) -> Result<(i32, ObserverId), IBKRError> {
+    struct FilteredObserver<Obs: TickByTickObserver + Send + Sync> { inner: Obs, req_id: i32, }
+    impl<Obs: TickByTickObserver + Send + Sync> TickByTickObserver for FilteredObserver<Obs> {
+      fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type_val: i32, time: i64, price: f64, size: f64, tick_attrib_last: &TickAttribLast, exchange: &str, special_conditions: &str) {
+        if req_id == self.req_id { self.inner.on_tick_by_tick_all_last(req_id, tick_type_val, time, price, size, tick_attrib_last, exchange, special_conditions); }
+      }
+      fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: &TickAttribBidAsk) {
+        if req_id == self.req_id { self.inner.on_tick_by_tick_bid_ask(req_id, time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask); }
+      }
+      fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) {
+        if req_id == self.req_id { self.inner.on_tick_by_tick_mid_point(req_id, time, mid_point); }
+      }
+    }
+
+    let req_id = self.message_broker.next_request_id();
+    let observer_id = self.observe_tick_by_tick(FilteredObserver { inner: observer, req_id });
+
+    self.internal_request_tick_by_tick_data(
+      req_id, contract, tick_type, number_of_ticks, ignore_size
+    )?;
+    Ok((req_id, observer_id))
+  }
+
+  /// Request market depth data and route events from that request to the observer.
+  pub fn request_observe_market_depth<T: MarketDepthObserver + Send + Sync + 'static>(
+    &self,
+    contract: &Contract,
+    num_rows: i32,
+    is_smart_depth: bool,
+    mkt_depth_options: &[(String, String)],
+    observer: T,
+  ) -> Result<(i32, ObserverId), IBKRError> {
+    struct FilteredObserver<Obs: MarketDepthObserver + Send + Sync> { inner: Obs, req_id: i32, }
+    impl<Obs: MarketDepthObserver + Send + Sync> MarketDepthObserver for FilteredObserver<Obs> {
+      fn on_update_mkt_depth(&self, req_id: i32, position: i32, operation: i32, side: i32, price: f64, size: f64) {
+        if req_id == self.req_id { self.inner.on_update_mkt_depth(req_id, position, operation, side, price, size); }
+      }
+      fn on_update_mkt_depth_l2(&self, req_id: i32, position: i32, market_maker: &str, operation: i32, side: i32, price: f64, size: f64, is_smart_depth_val: bool) {
+        if req_id == self.req_id { self.inner.on_update_mkt_depth_l2(req_id, position, market_maker, operation, side, price, size, is_smart_depth_val); }
+      }
+    }
+
+    let req_id = self.message_broker.next_request_id();
+    let observer_id = self.observe_market_depth(FilteredObserver { inner: observer, req_id });
+
+    self.internal_request_market_depth(
+      req_id, contract, num_rows, is_smart_depth, mkt_depth_options
+    )?;
+    Ok((req_id, observer_id))
+  }
+
+  /// Request historical data and route events from that request to the observer.
+  pub fn request_observe_historical_data<T: HistoricalDataObserver + Send + Sync + 'static>(
+    &self,
+    contract: &Contract,
+    end_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    duration: DurationUnit,
+    bar_size_setting: crate::contract::BarSize,
+    what_to_show: WhatToShow,
+    use_rth: bool,
+    format_date: i32,
+    keep_up_to_date: bool,
+    market_data_type: Option<MarketDataType>,
+    chart_options: &[(String, String)],
+    observer: T,
+  ) -> Result<(i32, ObserverId), IBKRError> {
+    struct FilteredObserver<Obs: HistoricalDataObserver + Send + Sync> { inner: Obs, req_id: i32, }
+    impl<Obs: HistoricalDataObserver + Send + Sync> HistoricalDataObserver for FilteredObserver<Obs> {
+      fn on_historical_data(&self, req_id: i32, bar: &Bar) { if req_id == self.req_id { self.inner.on_historical_data(req_id, bar); } }
+      fn on_historical_data_update(&self, req_id: i32, bar: &Bar) { if req_id == self.req_id { self.inner.on_historical_data_update(req_id, bar); } }
+      fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) { if req_id == self.req_id { self.inner.on_historical_data_end(req_id, start_date, end_date); } }
+    }
+
+    let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
+    self.set_market_data_type_if_needed(desired_mkt_data_type)?;
+    let req_id = self.message_broker.next_request_id();
+    let observer_id = self.observe_historical_data(FilteredObserver { inner: observer, req_id });
+    let duration_str = duration.to_string();
+    let bar_size_str = bar_size_setting.to_string();
+    let what_to_show_str = what_to_show.to_string();
+
+    self.internal_request_historical_data(
+      req_id, contract, end_date_time, &duration_str, &bar_size_str,
+      &what_to_show_str, use_rth, format_date, keep_up_to_date, chart_options, desired_mkt_data_type
+    )?;
+    Ok((req_id, observer_id))
+  }
+
+  /// Request historical ticks and route events from that request to the observer.
+  pub fn request_observe_historical_ticks<T: HistoricalTicksObserver + Send + Sync + 'static>(
+    &self,
+    contract: &Contract,
+    start_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    end_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    number_of_ticks: i32,
+    what_to_show: WhatToShow,
+    use_rth: bool,
+    ignore_size: bool,
+    misc_options: &[(String, String)],
+    observer: T,
+  ) -> Result<(i32, ObserverId), IBKRError> {
+    struct FilteredObserver<Obs: HistoricalTicksObserver + Send + Sync> { inner: Obs, req_id: i32, }
+    impl<Obs: HistoricalTicksObserver + Send + Sync> HistoricalTicksObserver for FilteredObserver<Obs> {
+      fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool) {
+        if req_id == self.req_id { self.inner.on_historical_ticks_midpoint(req_id, ticks, done); }
+      }
+      fn on_historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
+        if req_id == self.req_id { self.inner.on_historical_ticks_bid_ask(req_id, ticks, done); }
+      }
+      fn on_historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
+        if req_id == self.req_id { self.inner.on_historical_ticks_last(req_id, ticks, done); }
+      }
+    }
+
+    if self.message_broker.get_server_version()? < min_server_ver::HISTORICAL_TICKS {
+      return Err(IBKRError::Unsupported("Server version does not support historical ticks requests.".to_string()));
+    }
+    let req_id = self.message_broker.next_request_id();
+    let observer_id = self.observe_historical_ticks(FilteredObserver { inner: observer, req_id });
+
+    self.internal_request_historical_ticks(
+      req_id, contract, start_date_time, end_date_time, number_of_ticks,
+      what_to_show, use_rth, ignore_size, misc_options
+    )?;
+    Ok((req_id, observer_id))
+  }
+
+  // Helper for option calculation completion
+  fn wait_for_option_calc_completion(
+    &self, req_id: i32, timeout: Duration, request_type_name: &str
+  ) -> Result<TickOptionComputationData, IBKRError> {
+    let result_state = self.wait_for_completion(
+      req_id,
+      timeout,
+      |s: &OptionCalculationState| s.result.is_some(),
+      request_type_name,
+    );
+    // Best effort cancel
+    let cancel_fn = match request_type_name {
+      "ImpliedVolatility" => Self::cancel_calculate_implied_volatility,
+      "OptionPrice" => Self::cancel_calculate_option_price,
+      _ => return Err(IBKRError::InternalError(format!("Unknown option calc type: {}", request_type_name))),
+    };
+    if let Err(e) = cancel_fn(self, req_id) {
+      warn!("Failed to cancel {} request {} after blocking wait: {:?}", request_type_name, req_id, e);
+    }
+    result_state.and_then(|state| {
+      state.result.ok_or_else(|| IBKRError::InternalError(format!("{} result missing for ReqID {}", request_type_name, req_id)))
+    })
+  }
 }
 
 // --- Implement MarketDataHandler Trait for DataMarketManager ---
@@ -2634,6 +3026,7 @@ impl MarketDataHandler for DataMarketManager {
     debug!("Data Market: Tick Price: ID={}, Type={:?}, Price={}, Attrib={:?}", req_id, tick_type, price, attrib);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      // Update MarketDataInfo state
       // Map tick_type enum to fields in MarketDataSubscriptionState
       match tick_type {
         TickType::BidPrice => state.bid_price = Some(price),
@@ -2672,7 +3065,12 @@ impl MarketDataHandler for DataMarketManager {
         // Notify for general blocking requests if not a quote request
         self.request_cond.notify_all();
       }
-      // self.notify_observers(req_id); // If using observer pattern
+
+      // Notify observers
+      let observers = self.market_data_observers.read();
+      for observer in observers.values() {
+        observer.on_tick_price(req_id, tick_type, price, attrib.clone());
+      }
     } else {
       // warn!("Received tick_price for unknown or non-tick subscription ID: {}", req_id);
     }
@@ -2682,6 +3080,7 @@ impl MarketDataHandler for DataMarketManager {
     trace!("Handler: Tick Size: ID={}, Type={:?}, Size={}", req_id, tick_type, size);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      // Update MarketDataInfo state
       match tick_type {
         TickType::BidSize => state.bid_size = Some(size),
         TickType::AskSize => state.ask_size = Some(size),
@@ -2707,7 +3106,12 @@ impl MarketDataHandler for DataMarketManager {
       }
       state.sizes.entry(tick_type).or_default().push(size); // Store size history using enum key
       self.request_cond.notify_all(); // Notify waiters
-      // self.notify_observers(req_id);
+
+      // Notify observers
+      let observers = self.market_data_observers.read();
+      for observer in observers.values() {
+        observer.on_tick_size(req_id, tick_type, size);
+      }
     } else {
       // warn!("Received tick_size for unknown or non-tick subscription ID: {}", req_id);
     }
@@ -2717,6 +3121,7 @@ impl MarketDataHandler for DataMarketManager {
     trace!("Handler: Tick String: ID={}, Type={:?}, Value='{}'", req_id, tick_type, value);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      // Update MarketDataInfo state
       match tick_type {
         TickType::LastTimestamp | TickType::DelayedLastTimestamp => {
           if let Ok(ts) = value.parse::<i64>() {
@@ -2742,7 +3147,12 @@ impl MarketDataHandler for DataMarketManager {
         TickType::BidExchange | TickType::AskExchange | TickType::LastExchange => state.last_exchange = Some(value.to_string()),
         _ => trace!("Unhandled string tick_type {:?} in tick_string", tick_type),
       }
-      // self.notify_observers(req_id);
+
+      // Notify observers
+      let observers = self.market_data_observers.read();
+      for observer in observers.values() {
+        observer.on_tick_string(req_id, tick_type, value);
+      }
     } else {
       // warn!("Received tick_string for unknown or non-tick subscription ID: {}", req_id);
     }
@@ -2752,6 +3162,7 @@ impl MarketDataHandler for DataMarketManager {
     trace!("Handler: Tick Generic: ID={}, Type={:?}, Value={}", req_id, tick_type, value);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickData(state)) = subs.get_mut(&req_id) {
+      // Update MarketDataInfo state
       match tick_type {
         TickType::OptionHistoricalVolatility | TickType::RtHistoricalVolatility => { /* Store vol separately? */ },
         TickType::OptionImpliedVolatility => { /* Store vol separately? */ },
@@ -2765,7 +3176,12 @@ impl MarketDataHandler for DataMarketManager {
         TickType::EstimatedIpoMidpoint | TickType::FinalIpoPrice => { /* Store IPO price separately? */ },
         _ => trace!("Unhandled generic tick_type {:?} in tick_generic", tick_type),
       }
-      // self.notify_observers(req_id);
+
+      // Notify observers
+      let observers = self.market_data_observers.read();
+      for observer in observers.values() {
+        observer.on_tick_generic(req_id, tick_type, value);
+      }
     } else {
       // warn!("Received tick_generic for unknown or non-tick subscription ID: {}", req_id);
     }
@@ -2786,10 +3202,15 @@ impl MarketDataHandler for DataMarketManager {
     match subs.get_mut(&req_id) {
       Some(MarketSubscription::TickData(state)) => {
         // Store the whole computation data struct for regular market data stream
-        state.option_computation = Some(data);
-        // self.notify_observers(req_id); // If observers are used for streaming option computations
+        state.option_computation = Some(data.clone());
         // Notify general waiters if this tick was part of a broader request
         self.request_cond.notify_all();
+
+        // Notify MarketDataObservers if they are interested in option computations via generic ticks
+        // This part is a bit ambiguous in the design. Assuming generic tick observers handle this.
+        // If a specific OptionComputationObserver was defined, it would be notified here.
+        // For now, let's assume it's covered by on_tick_generic or similar if mapped to a TickType.
+        // The `data` itself contains a `tick_type` field.
       }
       Some(MarketSubscription::OptionCalc(state)) => {
         // This is a dedicated option calculation request
@@ -2815,6 +3236,12 @@ impl MarketDataHandler for DataMarketManager {
         debug!("Snapshot end received for blocking quote ReqID {}. Notifying waiter.", req_id);
         self.request_cond.notify_all();
       }
+
+      // Notify observers
+      let observers = self.market_data_observers.read();
+      for observer in observers.values() {
+        observer.on_tick_snapshot_end(req_id);
+      }
     } else {
       // warn!("Received tick_snapshot_end for unknown or non-tick subscription ID: {}", req_id);
     }
@@ -2822,7 +3249,9 @@ impl MarketDataHandler for DataMarketManager {
 
   fn market_data_type(&self, _req_id: i32, market_data_type: MarketDataType) {
     // Note: The req_id in this message corresponds to the *original* market data request ID,
-    // not the ReqMarketDataType message itself. We update the global state.
+    // not the ReqMarketDataType message itself. We update the global state and notify observers.
+    // The _req_id parameter from the handler trait is the one associated with the original data request.
+    let req_id_for_observers = _req_id; // Use the passed req_id for observer notification
     debug!("Handler: Market Data Type Received: Type={:?}", market_data_type);
 
     // Update the manager's current market data type state
@@ -2840,6 +3269,12 @@ impl MarketDataHandler for DataMarketManager {
 
     // We don't need to update individual subscription states here, as they
     // already store the *requested* type. The global state reflects the *active* type.
+
+    // Notify observers associated with the original request ID
+    let observers = self.market_data_observers.read();
+    for observer in observers.values() {
+      observer.on_market_data_type(req_id_for_observers, market_data_type);
+    }
   }
 
   fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32) {
@@ -2883,7 +3318,14 @@ impl MarketDataHandler for DataMarketManager {
           self.request_cond.notify_all();
         }
       }
-      // self.notify_observers(req_id); // Or specific bar observer for streaming
+
+      // Notify observers
+      let observers = self.realtime_bars_observers.read();
+      if let Some(latest_bar) = &state.latest_bar { // Ensure bar is present
+        for observer in observers.values() {
+          observer.on_bar_update(req_id, latest_bar);
+        }
+      }
     } else {
       // warn!("Received real_time_bar for unknown or non-RTBar subscription ID: {}", req_id);
     }
@@ -2896,6 +3338,12 @@ impl MarketDataHandler for DataMarketManager {
     if let Some(MarketSubscription::HistoricalData(state)) = subs.get_mut(&req_id) {
       state.bars.push(bar.clone());
       // Don't notify yet, wait for end.
+
+      // Notify observers for each bar
+      let observers = self.historical_data_observers.read();
+      for observer in observers.values() {
+        observer.on_historical_data(req_id, bar);
+      }
     } else {
       // warn!("Received historical_data for unknown or non-historical subscription ID: {}", req_id);
     }
@@ -2918,7 +3366,12 @@ impl MarketDataHandler for DataMarketManager {
         state.bars.push(bar.clone()); // First update
       }
       state.update_received = true;
-      // self.notify_observers(req_id); // Notify observer about update
+
+      // Notify observers about update
+      let observers = self.historical_data_observers.read();
+      for observer in observers.values() {
+        observer.on_historical_data_update(req_id, bar);
+      }
     } else {
       // warn!("Received historical_data_update for unknown or non-historical subscription ID: {}", req_id);
     }
@@ -2932,6 +3385,12 @@ impl MarketDataHandler for DataMarketManager {
       state.end_date = end_date.to_string();
       state.end_received = true;
       info!("Historical data end received for request {}. Notifying waiter.", req_id);
+
+      // Notify observers
+      let observers = self.historical_data_observers.read();
+      for observer in observers.values() {
+        observer.on_historical_data_end(req_id, start_date, end_date);
+      }
       self.request_cond.notify_all(); // Signal waiting thread
     } else {
       // warn!("Received historical_data_end for unknown or non-historical subscription ID: {}", req_id);
@@ -2950,6 +3409,12 @@ impl MarketDataHandler for DataMarketManager {
         state.completed = true;
         info!("Historical Ticks (MidPoint) end received for request {}. Notifying waiter.", req_id);
         self.request_cond.notify_all();
+
+        // Notify observers
+        let observers = self.historical_ticks_observers.read();
+        for observer in observers.values() {
+          observer.on_historical_ticks_midpoint(req_id, ticks_data, done);
+        }
       }
     } else {
       warn!("Received historical_ticks (MidPoint) for unknown or non-HistoricalTicks subscription ID: {}", req_id);
@@ -2975,6 +3440,12 @@ impl MarketDataHandler for DataMarketManager {
         state.completed = true;
         info!("Historical Ticks (BidAsk) end received for request {}. Notifying waiter.", req_id);
         self.request_cond.notify_all();
+
+        // Notify observers
+        let observers = self.historical_ticks_observers.read();
+        for observer in observers.values() {
+          observer.on_historical_ticks_bid_ask(req_id, ticks_data, done);
+        }
       }
     } else {
       warn!("Received historical_ticks_bid_ask for unknown or non-HistoricalTicks subscription ID: {}", req_id);
@@ -3000,6 +3471,12 @@ impl MarketDataHandler for DataMarketManager {
         state.completed = true;
         info!("Historical Ticks (Last) end received for request {}. Notifying waiter.", req_id);
         self.request_cond.notify_all();
+
+        // Notify observers
+        let observers = self.historical_ticks_observers.read();
+        for observer in observers.values() {
+          observer.on_historical_ticks_last(req_id, ticks_data, done);
+        }
       }
     } else {
       warn!("Received historical_ticks_last for unknown or non-HistoricalTicks subscription ID: {}", req_id);
@@ -3013,14 +3490,20 @@ impl MarketDataHandler for DataMarketManager {
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
       let data = if tick_type == 1 {
-        TickByTickData::Last { time, price, size, tick_attrib_last, exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
+        TickByTickData::Last { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
       } else {
-        TickByTickData::AllLast { time, price, size, tick_attrib_last, exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
+        TickByTickData::AllLast { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() }
       };
       state.ticks.push(data.clone()); // Store history
       state.latest_tick = Some(data);
       self.request_cond.notify_all(); // Notify waiters
-      // self.notify_observers(req_id);
+
+      // Notify observers
+      let observers = self.tick_by_tick_observers.read();
+      for observer in observers.values() {
+        observer.on_tick_by_tick_all_last(req_id, tick_type, time, price, size,
+                                          &tick_attrib_last, exchange, special_conditions);
+      }
     } else {
       // warn!("Received tick_by_tick_all_last for unknown or non-TBT subscription ID: {}", req_id);
     }
@@ -3031,11 +3514,17 @@ impl MarketDataHandler for DataMarketManager {
     trace!("Handler: TickByTick BidAsk: ID={}, Time={}, BidPx={}, AskPx={}", req_id, time, bid_price, ask_price);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketSubscription::TickByTick(state)) = subs.get_mut(&req_id) {
-      let data = TickByTickData::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask };
+      let data = TickByTickData::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask: tick_attrib_bid_ask.clone() };
       state.ticks.push(data.clone()); // Store history
       state.latest_tick = Some(data);
       self.request_cond.notify_all(); // Notify waiters
-      // self.notify_observers(req_id);
+
+      // Notify observers
+      let observers = self.tick_by_tick_observers.read();
+      for observer in observers.values() {
+        observer.on_tick_by_tick_bid_ask(req_id, time, bid_price, ask_price, bid_size,
+                                         ask_size, &tick_attrib_bid_ask);
+      }
     } else {
       // warn!("Received tick_by_tick_bid_ask for unknown or non-TBT subscription ID: {}", req_id);
     }
@@ -3049,7 +3538,12 @@ impl MarketDataHandler for DataMarketManager {
       state.ticks.push(data.clone()); // Store history
       state.latest_tick = Some(data);
       self.request_cond.notify_all(); // Notify waiters
-      // self.notify_observers(req_id);
+
+      // Notify observers
+      let observers = self.tick_by_tick_observers.read();
+      for observer in observers.values() {
+        observer.on_tick_by_tick_mid_point(req_id, time, mid_point);
+      }
     } else {
       // warn!("Received tick_by_tick_mid_point for unknown or non-TBT subscription ID: {}", req_id);
     }
@@ -3106,7 +3600,12 @@ impl MarketDataHandler for DataMarketManager {
       }
       // Trim list if it exceeds num_rows? TWS usually manages this.
       self.request_cond.notify_all(); // Notify waiters
-      // self.notify_observers(req_id);
+
+      // Notify observers
+      let observers = self.market_depth_observers.read();
+      for observer in observers.values() {
+        observer.on_update_mkt_depth(req_id, position, operation, side, price, size);
+      }
     } else {
       // warn!("Received update_mkt_depth for unknown or non-Depth subscription ID: {}", req_id);
     }
@@ -3148,7 +3647,13 @@ impl MarketDataHandler for DataMarketManager {
         _ => warn!("Unknown market depth L2 operation: {}", operation),
       }
       self.request_cond.notify_all(); // Notify waiters
-      // self.notify_observers(req_id);
+
+      // Notify observers
+      let observers = self.market_depth_observers.read();
+      for observer in observers.values() {
+        observer.on_update_mkt_depth_l2(req_id, position, market_maker, operation,
+                                        side, price, size, is_smart_depth);
+      }
     } else {
       // warn!("Received update_mkt_depth_l2 for unknown or non-Depth subscription ID: {}", req_id);
     }

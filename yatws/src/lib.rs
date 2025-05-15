@@ -374,15 +374,18 @@ mod protocol_dec_parser;
 mod protocol_decoder;
 mod protocol_encoder;
 
-// Data structures.
+// Data structures:
 pub mod account;
-pub mod account_subscription;
 pub mod data;
 pub mod contract;
 pub mod order;
 pub mod data_wsh;
 pub mod news;
 pub mod financial_advisor;
+
+// API:
+pub mod account_subscription;
+pub mod data_observer;
 
 // Managers:
 pub mod account_manager;
@@ -397,13 +400,9 @@ pub mod financial_advisor_manager;
 pub use order_builder::OrderBuilder;
 pub use options_strategy_builder::OptionsStrategyBuilder;
 pub use base::IBKRError;
-pub use base::RequestId;
 pub use financial_report_parser::parse_fundamental_xml;
 pub use client::IBKRClient;
 pub use client::client_manager;
-pub use financial_advisor::{FAAlias, FAGroup, FAProfile, FADataType, FinancialAdvisorConfig};
-pub use financial_advisor_manager::FinancialAdvisorManager;
-pub use account_subscription::AccountSubscription;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

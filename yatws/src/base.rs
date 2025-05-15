@@ -3,9 +3,6 @@
 
 use thiserror::Error;
 
-pub type RequestId = i32;
-
-
 /// Errors that can occur in the IBKR API
 #[derive(Error, Debug, Clone)]
 pub enum IBKRError {

@@ -386,10 +386,9 @@ impl Default for TickType {
   }
 }
 
-/// Market data subscription request details and live state.
+/// Market data request details and live state.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct MarketDataSubscription {
+pub struct MarketDataInfo {
   pub req_id: i32, // TWS request ID
   pub contract: Contract,
   pub generic_tick_list: Vec<GenericTickType>, // Changed from String
@@ -449,7 +448,7 @@ pub struct MarketDataSubscription {
   pub error_message: Option<String>,
 }
 
-impl MarketDataSubscription {
+impl MarketDataInfo {
   pub fn new(
     req_id: i32,
     contract: Contract,
@@ -458,7 +457,7 @@ impl MarketDataSubscription {
     regulatory_snapshot: bool,
     mkt_data_options: Vec<(String, String)>,
   ) -> Self {
-    MarketDataSubscription {
+    MarketDataInfo {
       req_id,
       contract,
       generic_tick_list, // Store the Vec
