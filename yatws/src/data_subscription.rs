@@ -211,7 +211,6 @@ struct LatestTickValues {
 pub struct TickDataSubscription {
   state: Arc<SubscriptionState<TickDataEvent>>,
   latest_values: Arc<Mutex<LatestTickValues>>,
-  params: TickDataParams, // Store params for potential re-subscribe or inspection
 }
 
 pub struct TickDataSubscriptionBuilder {
@@ -255,7 +254,7 @@ impl TickDataSubscriptionBuilder {
       self.params.regulatory_snapshot, &self.params.mkt_data_options, mdt_to_set,
     )?;
 
-    Ok(TickDataSubscription { state, latest_values, params: self.params })
+    Ok(TickDataSubscription { state, latest_values })
   }
 }
 
@@ -317,7 +316,7 @@ impl MarketDataObserver for TickDataInternalObserver {
 pub struct RealTimeBarParams { pub what_to_show: WhatToShow, pub use_rth: bool, pub rt_bar_options: Vec<(String, String)> }
 pub type RealTimeBarEvent = Bar;
 #[derive(Debug)]
-pub struct RealTimeBarSubscription { state: Arc<SubscriptionState<RealTimeBarEvent>>, params: RealTimeBarParams }
+pub struct RealTimeBarSubscription { state: Arc<SubscriptionState<RealTimeBarEvent>> }
 pub struct RealTimeBarSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: RealTimeBarParams }
 impl RealTimeBarSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, what_to_show: WhatToShow) -> Self { Self { manager_weak, contract, params: RealTimeBarParams { what_to_show, use_rth: true, ..Default::default() } } }
@@ -331,7 +330,7 @@ impl RealTimeBarSubscriptionBuilder {
     let observer_id = manager.observe_realtime_bars(observer);
     state.set_observer_id(observer_id);
     manager.internal_request_real_time_bars(req_id, &self.contract, self.params.what_to_show, self.params.use_rth, &self.params.rt_bar_options, 5)?;
-    Ok(RealTimeBarSubscription { state, params: self.params })
+    Ok(RealTimeBarSubscription { state })
   }
 }
 impl MarketDataSubscription for RealTimeBarSubscription {
@@ -378,7 +377,7 @@ pub struct TickByTickParams { pub tick_type: TickByTickRequestType, pub number_o
 #[derive(Debug, Clone)]
 pub enum TickByTickEvent { Last { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, AllLast { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, BidAsk { time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk }, MidPoint { time: i64, mid_point: f64 }, Error(IBKRError) }
 #[derive(Debug)]
-pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent>>, params: TickByTickParams }
+pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent>> }
 pub struct TickByTickSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: TickByTickParams }
 impl TickByTickSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, tick_type: TickByTickRequestType) -> Self { Self { manager_weak, contract, params: TickByTickParams { tick_type, number_of_ticks: 0, ignore_size: false } } }
@@ -392,7 +391,7 @@ impl TickByTickSubscriptionBuilder {
     let observer_id = manager.observe_tick_by_tick(observer);
     state.set_observer_id(observer_id);
     manager.internal_request_tick_by_tick_data(req_id, &self.contract, self.params.tick_type, self.params.number_of_ticks, self.params.ignore_size)?;
-    Ok(TickByTickSubscription { state, params: self.params })
+    Ok(TickByTickSubscription { state })
   }
 }
 impl MarketDataSubscription for TickByTickSubscription {
@@ -503,7 +502,7 @@ pub struct HistoricalDataParams { pub end_date_time: Option<DateTime<Utc>>, pub 
 #[derive(Debug, Clone)]
 pub enum HistoricalDataEvent { Bar(Bar), UpdateBar(Bar), Complete { start_date: String, end_date: String }, Error(IBKRError) }
 #[derive(Debug)]
-pub struct HistoricalDataSubscription { state: Arc<SubscriptionState<HistoricalDataEvent>>, params: HistoricalDataParams }
+pub struct HistoricalDataSubscription { state: Arc<SubscriptionState<HistoricalDataEvent>> }
 pub struct HistoricalDataSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: HistoricalDataParams }
 impl HistoricalDataSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, duration: DurationUnit, bar_size: BarSize, what_to_show: WhatToShow) -> Self { Self { manager_weak, contract, params: HistoricalDataParams { duration, bar_size_setting: bar_size, what_to_show, use_rth: true, format_date: 1, keep_up_to_date: false, market_data_type: None, chart_options: Vec::new(), end_date_time: None } } }
@@ -525,7 +524,7 @@ impl HistoricalDataSubscriptionBuilder {
       warn!("Failed to set market data type to {:?} for hist_data req_id {}, proceeding.", mdt_to_set, req_id);
     }
     manager.internal_request_historical_data( req_id, &self.contract, self.params.end_date_time, &self.params.duration.to_string(), &self.params.bar_size_setting.to_string(), &self.params.what_to_show.to_string(), self.params.use_rth, self.params.format_date, self.params.keep_up_to_date, &self.params.chart_options, mdt_to_set)?;
-    Ok(HistoricalDataSubscription { state, params: self.params })
+    Ok(HistoricalDataSubscription { state })
   }
 }
 impl MarketDataSubscription for HistoricalDataSubscription {
