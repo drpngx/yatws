@@ -4,7 +4,7 @@
 use std::io::Cursor;
 use crate::base::IBKRError;
 use crate::message_parser::msg_to_string;
-use crate::contract::{Contract, SecType, ComboLeg, ScannerSubscription};
+use crate::contract::{Contract, SecType, ComboLeg, ScannerInfo};
 use crate::order::{OrderRequest, OrderType, OrderCancel};
 use crate::account::ExecutionFilter;
 use crate::data_wsh::WshEventDataRequest;
@@ -1830,27 +1830,27 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  /// Encodes a request for a scanner subscription.
-  pub fn encode_request_scanner_subscription(
+  /// Encodes a request for a scanner stream.
+  pub fn encode_request_scanner_info(
     &self,
     req_id: i32,
-    subscription: &ScannerSubscription,
+    info: &ScannerInfo,
   ) -> Result<Vec<u8>, IBKRError> {
-    debug!("Encoding request scanner subscription: ReqID={}, Subscription={:?}", req_id, subscription);
+    debug!("Encoding request scanner info: ReqID={}: {:?}", req_id, info);
 
     if self.server_version < min_server_ver::SCANNER_SUBSCRIPTION {
-      return Err(IBKRError::Unsupported("Server version does not support scanner subscriptions.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support scanner info.".to_string()));
     }
-    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && subscription.average_option_volume_above.is_some() {
+    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && info.average_option_volume_above.is_some() {
       return Err(IBKRError::Unsupported("Server version does not support averageOptionVolumeAbove in scanner
-subscription.".to_string()));
+info.".to_string()));
     }
-    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && subscription.scanner_setting_pairs.is_some() {
+    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && info.scanner_setting_pairs.is_some() {
       return Err(IBKRError::Unsupported("Server version does not support scannerSettingPairs in scanner
-subscription.".to_string()));
+info.".to_string()));
     }
-    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && subscription.stock_type_filter.is_some() {
-      return Err(IBKRError::Unsupported("Server version does not support stockTypeFilter in scanner subscription.".to_string()));
+    if self.server_version < min_server_ver::SCANNER_GENERIC_OPTS && info.stock_type_filter.is_some() {
+      return Err(IBKRError::Unsupported("Server version does not support stockTypeFilter in scanner info.".to_string()));
     }
 
 
@@ -1862,32 +1862,32 @@ subscription.".to_string()));
     self.write_int_to_cursor(&mut cursor, req_id)?;
 
     // Subscription fields
-    self.write_optional_int_to_cursor(&mut cursor, Some(subscription.number_of_rows).filter(|&n| n != i32::MAX))?;
-    self.write_str_to_cursor(&mut cursor, &subscription.instrument)?;
-    self.write_str_to_cursor(&mut cursor, &subscription.location_code)?;
-    self.write_str_to_cursor(&mut cursor, &subscription.scan_code)?;
-    self.write_optional_double_to_cursor(&mut cursor, subscription.above_price)?;
-    self.write_optional_double_to_cursor(&mut cursor, subscription.below_price)?;
-    self.write_optional_int_to_cursor(&mut cursor, subscription.above_volume)?;
-    self.write_optional_double_to_cursor(&mut cursor, subscription.market_cap_above)?;
-    self.write_optional_double_to_cursor(&mut cursor, subscription.market_cap_below)?;
-    self.write_optional_str_to_cursor(&mut cursor, subscription.moody_rating_above.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, subscription.moody_rating_below.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, subscription.sp_rating_above.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, subscription.sp_rating_below.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, subscription.maturity_date_above.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, subscription.maturity_date_below.as_deref())?;
-    self.write_optional_double_to_cursor(&mut cursor, subscription.coupon_rate_above)?;
-    self.write_optional_double_to_cursor(&mut cursor, subscription.coupon_rate_below)?;
-    self.write_optional_str_to_cursor(&mut cursor, Some(if subscription.exclude_convertible { "1" } else { "0" }))?;
+    self.write_optional_int_to_cursor(&mut cursor, Some(info.number_of_rows).filter(|&n| n != i32::MAX))?;
+    self.write_str_to_cursor(&mut cursor, &info.instrument)?;
+    self.write_str_to_cursor(&mut cursor, &info.location_code)?;
+    self.write_str_to_cursor(&mut cursor, &info.scan_code)?;
+    self.write_optional_double_to_cursor(&mut cursor, info.above_price)?;
+    self.write_optional_double_to_cursor(&mut cursor, info.below_price)?;
+    self.write_optional_int_to_cursor(&mut cursor, info.above_volume)?;
+    self.write_optional_double_to_cursor(&mut cursor, info.market_cap_above)?;
+    self.write_optional_double_to_cursor(&mut cursor, info.market_cap_below)?;
+    self.write_optional_str_to_cursor(&mut cursor, info.moody_rating_above.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, info.moody_rating_below.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, info.sp_rating_above.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, info.sp_rating_below.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, info.maturity_date_above.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, info.maturity_date_below.as_deref())?;
+    self.write_optional_double_to_cursor(&mut cursor, info.coupon_rate_above)?;
+    self.write_optional_double_to_cursor(&mut cursor, info.coupon_rate_below)?;
+    self.write_optional_str_to_cursor(&mut cursor, Some(if info.exclude_convertible { "1" } else { "0" }))?;
 
     if self.server_version >= min_server_ver::SCANNER_GENERIC_OPTS {
-      self.write_optional_int_to_cursor(&mut cursor, subscription.average_option_volume_above)?;
-      self.write_optional_str_to_cursor(&mut cursor, subscription.scanner_setting_pairs.as_deref())?;
-      self.write_optional_str_to_cursor(&mut cursor, subscription.stock_type_filter.as_deref())?;
+      self.write_optional_int_to_cursor(&mut cursor, info.average_option_volume_above)?;
+      self.write_optional_str_to_cursor(&mut cursor, info.scanner_setting_pairs.as_deref())?;
+      self.write_optional_str_to_cursor(&mut cursor, info.stock_type_filter.as_deref())?;
     }
     if self.server_version >= min_server_ver::LINKING {
-      // TODO: implement subscription_options.
+      // TODO: implement info_options.
       self.write_str_to_cursor(&mut cursor, "")?;
       self.write_str_to_cursor(&mut cursor, "")?;
     }
@@ -1896,10 +1896,10 @@ subscription.".to_string()));
   }
 
   /// Encodes a request to cancel a scanner subscription.
-  pub fn encode_cancel_scanner_subscription(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
-    debug!("Encoding cancel scanner subscription: ReqID={}", req_id);
+  pub fn encode_cancel_scanner_info(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel scanner info: ReqID={}", req_id);
     if self.server_version < min_server_ver::SCANNER_SUBSCRIPTION { // Same min version as req
-      return Err(IBKRError::Unsupported("Server version does not support scanner subscription cancellation.".to_string()));
+      return Err(IBKRError::Unsupported("Server version does not support scanner info cancellation.".to_string()));
     }
     let mut cursor = self.start_encoding(OutgoingMessageType::CancelScannerSubscription as i32)?;
     let version = 1;

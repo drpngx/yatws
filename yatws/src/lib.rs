@@ -373,6 +373,7 @@ mod parser_order;
 mod protocol_dec_parser;
 mod protocol_decoder;
 mod protocol_encoder;
+mod data_subscription;
 
 // Data structures:
 pub mod account;
@@ -382,6 +383,11 @@ pub mod order;
 pub mod data_wsh;
 pub mod news;
 pub mod financial_advisor;
+
+// Subscriptions:
+pub mod market_subscription {
+    pub use crate::data_subscription::*;
+}
 
 // API:
 pub mod account_subscription;

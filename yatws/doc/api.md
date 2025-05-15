@@ -85,7 +85,7 @@ Provides access to the `DataNewsManager` for news headlines and articles.
 Provides access to the `DataFundamentalsManager` for financial data (company fundamentals, WSH events).
 
 ### `IBKRClient::financial_advisor(&self) -> Arc<FinancialAdvisorManager>`
-Provides access to the `DataFundamentalsManager` for financial data (company fundamentals, WSH events).
+Provides access to the `FinancialAdvisorManager` for Financial Advisor configurations (groups, profiles, aliases).
 
 ---
 
@@ -765,12 +765,12 @@ Requests streaming market data (ticks). Non-blocking.
 
 ### `DataMarketManager::get_market_data<F>(&self, contract: &Contract, generic_tick_list: &[GenericTickType], snapshot: bool, regulatory_snapshot:
 bool, mkt_data_options: &[(String, String)], market_data_type: Option<MarketDataType>, timeout: Duration, completion_check: F) ->
-Result<MarketDataSubscription, IBKRError>`
-Where `F: FnMut(&MarketDataSubscription) -> bool`.
+Result<MarketDataInfo, IBKRError>`
+Where `F: Fn(&MarketDataInfo) -> bool`.
 
 Requests streaming market data and blocks until `completion_check` is true, error, or timeout. Attempts to cancel stream afterwards.
--   `completion_check`: Closure taking `&MarketDataSubscription`, returns `true` when condition met.
--   **Returns**: `MarketDataSubscription` state.
+-   `completion_check`: Closure taking `&MarketDataInfo`, returns `true` when condition met.
+-   **Returns**: `MarketDataInfo` state.
 -   **Errors**: If request fails, wait times out, etc.
 
 ### `DataMarketManager::cancel_market_data(&self, req_id: i32) -> Result<(), IBKRError>`
@@ -821,7 +821,7 @@ Requests streaming tick-by-tick data. Non-blocking.
 
 ### `DataMarketManager::get_tick_by_tick_data<F>(&self, contract: &Contract, tick_type: TickByTickRequestType, number_of_ticks: i32, ignore_size:
 bool, timeout: Duration, completion_check: F) -> Result<TickByTickSubscription, IBKRError>`
-Where `F: FnMut(&TickByTickSubscription) -> bool`.
+Where `F: Fn(&TickByTickSubscription) -> bool`.
 
 Requests streaming tick-by-tick data and blocks until `completion_check` is true, error, or timeout. Attempts to cancel stream
 afterwards. `number_of_ticks` usually `0` for this.
@@ -844,7 +844,7 @@ Requests streaming market depth data (Level II). Non-blocking.
 
 ### `DataMarketManager::get_market_depth<F>(&self, contract: &Contract, num_rows: i32, is_smart_depth: bool, mkt_depth_options:
 &[(String, String)], timeout: Duration, completion_check: F) -> Result<MarketDepthSubscription, IBKRError>`
-Where `F: FnMut(&MarketDepthSubscription) -> bool`.
+Where `F: Fn(&MarketDepthSubscription) -> bool`.
 
 Requests streaming market depth and blocks until `completion_check` is true, error, or timeout. Attempts to cancel stream afterwards.
 -   **Returns**: `MarketDepthSubscription` state.
@@ -1048,14 +1048,14 @@ Manages Financial Advisor (FA) configurations like groups, profiles, and aliases
 
 **File:** `yatws/src/financial_advisor_manager.rs`
 
-### `FinancialAdvisorManager::request_fa_data(&self, fa_data_type: FADataType) -> Result<(), IBKRError>`
+### `FinancialAdvisorManager::request_fa_data(&self, fa_data_type: crate::financial_advisor::FADataType) -> Result<(), IBKRError>`
 
 Requests Financial Advisor configuration data from TWS. This is a blocking call that waits for TWS to send the FA data. The internal FA configuration is updated upon successful retrieval.
 -   `fa_data_type`: The type of FA data to request (`FADataType::Groups`, `FADataType::Profiles`, or `FADataType::Aliases`).
 -   **Returns**: `Ok(())` if the data was successfully requested and parsed.
 -   **Errors**: `IBKRError` if the request times out, parsing fails, or other communication issues occur.
 
-### `FinancialAdvisorManager::replace_fa_data(&self, fa_data_type: FADataType, xml_data: &str) -> Result<(), IBKRError>`
+### `FinancialAdvisorManager::replace_fa_data(&self, fa_data_type: crate::financial_advisor::FADataType, xml_data: &str) -> Result<(), IBKRError>`
 
 Replaces Financial Advisor configuration data on TWS. This is a blocking call that waits for TWS to acknowledge the replacement.
 -   `fa_data_type`: The type of FA data to replace.
@@ -1069,8 +1069,8 @@ Retrieves a clone of the current Financial Advisor configuration. This configura
 -   **Returns**: A `FinancialAdvisorConfig` struct.
 
 Key related enums and structs:
--   `FADataType`: Enum for `Groups`, `Profiles`, `Aliases`.
--   `FinancialAdvisorConfig`, `FAGroup`, `FAProfile`, `FAAlias`: Structs representing the FA configuration data.
+-   `FADataType`: Enum for `Groups`, `Profiles`, `Aliases` (defined in `yatws::financial_advisor`).
+-   `FinancialAdvisorConfig`, `FAGroup`, `FAProfile`, `FAAlias`: Structs representing the FA configuration data (defined in `yatws::financial_advisor`).
 
 ---
 

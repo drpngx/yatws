@@ -1,5 +1,5 @@
 use crate::base::IBKRError;
-use crate::contract::{Contract, Bar, ScannerSubscription, ScanData, WhatToShow}; // Added WhatToShow
+use crate::contract::{Contract, Bar, ScannerInfo, ScanData, WhatToShow}; // Added WhatToShow
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt; // Add this
@@ -508,10 +508,10 @@ impl MarketDataInfo {
   }
 }
 
-/// Real-time bar subscription state
+/// Real-time bar streaming state
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct RealTimeBarSubscription {
+pub struct RealTimeBarInfo {
   pub req_id: i32,
   pub contract: Contract,
   pub bar_size: i32, // e.g., 5 for 5 seconds
@@ -527,10 +527,9 @@ pub struct RealTimeBarSubscription {
   pub error_message: Option<String>,
 }
 
-/// Tick-by-tick data subscription state
+/// Tick-by-tick data streaming state
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct TickByTickSubscription {
+pub struct TickByTickInfo {
   pub req_id: i32,
   pub contract: Contract,
   pub tick_type: TickByTickRequestType, // Changed from String
@@ -544,12 +543,11 @@ pub struct TickByTickSubscription {
   pub error_message: Option<String>,
 }
 
-/// State for a market scanner subscription.
+/// State for a market scanner streaming.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct ScannerSubscriptionState {
+pub struct ScannerInfoState {
   pub req_id: i32,
-  pub subscription: ScannerSubscription,
+  pub info: ScannerInfo,
   pub results: Vec<ScanData>,
   pub completed: bool,
   pub error_code: Option<i32>,
@@ -592,10 +590,10 @@ pub enum TickByTickData {
 }
 
 
-/// Market depth subscription state
+/// Market depth streaming state
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct MarketDepthSubscription {
+pub struct MarketDepthInfo {
   pub req_id: i32,
   pub contract: Contract,
   pub num_rows: i32,

@@ -1509,7 +1509,7 @@ mod test_cases {
     // 2. Get Scanner Results (Blocking)
     info!("Proceeding to test blocking scanner results...");
     // Define the scanner subscription parameters
-    let subscription = yatws::contract::ScannerSubscription {
+    let subscription = yatws::contract::ScannerInfo {
       number_of_rows: 10, // Request top 10 results
       instrument: "STK".to_string(),
       location_code: "STK.US.MAJOR".to_string(), // Major US exchanges
@@ -1878,7 +1878,7 @@ mod test_cases {
         .market()
         .for_contract(spy_contract.clone())
         .build()?;
-      
+
       match order_mgr.place_order(contract_ref, buy_request) {
         Ok(buy_order_id) => {
           info!("BUY order for SPY placed with ID: {}. Waiting for execution...", buy_order_id);
@@ -1951,7 +1951,7 @@ mod test_cases {
     // The thread itself has a 15s listening window. Main thread waits a bit longer to ensure closure.
     info!("Main thread: Sleeping to allow event thread to capture events...");
     if is_live {
-      std::thread::sleep(Duration::from_secs(17)); 
+      std::thread::sleep(Duration::from_secs(17));
     } else {
       // In replay, events are instant, so a very short sleep is fine.
       std::thread::sleep(Duration::from_millis(500));

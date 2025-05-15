@@ -67,7 +67,7 @@ impl fmt::Display for SecType {
 
 /// Defines the parameters for a market scanner subscription.
 #[derive(Debug, Clone, Default)]
-pub struct ScannerSubscription {
+pub struct ScannerInfo {
   pub number_of_rows: i32,
   pub instrument: String,
   pub location_code: String,

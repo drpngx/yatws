@@ -300,7 +300,7 @@ match client.account().get_equity() {
 
 ## API Reference
 
-For detailed information about the available functions, structs, and traits, please refer to the [API documentation](https://docs.rs/yatws). The reference is availalbe [on github](https://github.com/drpngx/yatws/blob/main/yatws/doc/api.md).
+For detailed information about the available functions, structs, and traits, please refer to the [API documentation on docs.rs](https://docs.rs/yatws) or the [API reference on GitHub](https://github.com/drpngx/yatws/blob/main/yatws/doc/api.md).
 
 Key components include:
 

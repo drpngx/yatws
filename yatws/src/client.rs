@@ -61,6 +61,7 @@ use crate::data_ref_manager::DataRefManager;
 use crate::data_market_manager::DataMarketManager;
 use crate::data_news_manager::DataNewsManager;
 use crate::data_fin_manager::DataFundamentalsManager;
+use crate::financial_advisor_manager::FinancialAdvisorManager;
 use crate::conn::{Connection, SocketConnection, MessageBroker};
 use crate::conn_log::ConnectionLogger;
 use crate::conn_mock::MockConnection;
@@ -68,7 +69,6 @@ use crate::base::IBKRError;
 use std::sync::Arc;
 use client_manager::ClientManager;
 use crate::handler::MessageHandler;
-use crate::financial_advisor_manager::FinancialAdvisorManager; // Added import
 
 /// The primary client for interacting with the Interactive Brokers TWS API.
 ///
