@@ -155,16 +155,16 @@ impl DataNewsManager {
   /// # Arguments
   /// * `observer` - An `Arc` to an object implementing `NewsObserver`.
   pub fn add_observer(&self, observer: Arc<dyn NewsObserver>) {
-      let mut observers = self.observers.write();
-      // Avoid adding duplicates if observer is already present (optional check)
-      if observers.iter().all(|weak| weak.strong_count() == 0 || !Arc::ptr_eq(&weak.upgrade().unwrap(), &observer)) {
-          debug!("Adding news observer");
-          observers.push(Arc::downgrade(&observer));
-      } else {
-          debug!("News observer already present, not adding again.");
-      }
-      // Clean up dead observers while we have write lock
-      observers.retain(|weak| weak.strong_count() > 0);
+    let mut observers = self.observers.write();
+    // Avoid adding duplicates if observer is already present (optional check)
+    if observers.iter().all(|weak| weak.strong_count() == 0 || !Arc::ptr_eq(&weak.upgrade().unwrap(), &observer)) {
+      debug!("Adding news observer");
+      observers.push(Arc::downgrade(&observer));
+    } else {
+      debug!("News observer already present, not adding again.");
+    }
+    // Clean up dead observers while we have write lock
+    observers.retain(|weak| weak.strong_count() > 0);
   }
 
   // Optional: Add remove_observer or clear_observers if needed
@@ -172,21 +172,21 @@ impl DataNewsManager {
   /// Clears all registered news observers.
   /// After this call, no observers will receive further news updates from this manager.
   pub fn clear_observers(&self) {
-      debug!("Clearing all news observers");
-      let mut observers = self.observers.write();
-      observers.clear();
+    debug!("Clearing all news observers");
+    let mut observers = self.observers.write();
+    observers.clear();
   }
 
   // --- Helper to notify observers ---
   fn notify_observers(&self, article: &NewsArticle) {
-      let observers = self.observers.read();
-      for weak_observer in observers.iter() {
-          if let Some(observer) = weak_observer.upgrade() {
-              trace!("Notifying observer about news article: {}", article.id);
-              observer.on_news_article(article);
-          }
-          // No cleanup here, do it during add/remove or periodically
+    let observers = self.observers.read();
+    for weak_observer in observers.iter() {
+      if let Some(observer) = weak_observer.upgrade() {
+        trace!("Notifying observer about news article: {}", article.id);
+        observer.on_news_article(article);
       }
+      // No cleanup here, do it during add/remove or periodically
+    }
   }
 
 
@@ -451,7 +451,7 @@ impl DataNewsManager {
   }
 
 
-// --- Internal error handling (called by the trait method) ---
+  // --- Internal error handling (called by the trait method) ---
   fn _internal_handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
     if req_id <= 0 { return; } // Ignore general errors
 
@@ -546,14 +546,14 @@ impl NewsDataHandler for DataNewsManager {
     // Example: Might look for patterns, but highly unreliable.
     // Let's create a basic article and notify.
     let article = NewsArticle {
-        id: format!("BULLETIN/{}", msg_id), // Create a unique ID
-        time: Utc::now(), // Timestamp is arrival time
-        provider_code: origin_exch.to_string(), // Use origin exchange as provider?
-        article_id: msg_id.to_string(),
-        headline: format!("Bulletin Type {}: {}", msg_type, news_message.chars().take(50).collect::<String>()), // Truncate msg for headline
-        content: Some(news_message.to_string()), // Full message as content
-        article_type: Some(0), // Assume plain text
-        extra_data: Some(format!("Origin: {}, Type: {}", origin_exch, msg_type)),
+      id: format!("BULLETIN/{}", msg_id), // Create a unique ID
+      time: Utc::now(), // Timestamp is arrival time
+      provider_code: origin_exch.to_string(), // Use origin exchange as provider?
+      article_id: msg_id.to_string(),
+      headline: format!("Bulletin Type {}: {}", msg_type, news_message.chars().take(50).collect::<String>()), // Truncate msg for headline
+      content: Some(news_message.to_string()), // Full message as content
+      article_type: Some(0), // Assume plain text
+      extra_data: Some(format!("Origin: {}, Type: {}", origin_exch, msg_type)),
     };
     self.notify_observers(&article);
   }
@@ -561,20 +561,20 @@ impl NewsDataHandler for DataNewsManager {
   fn tick_news(&self, _req_id: i32, time_stamp: i64, provider_code: &str, article_id: &str, headline: &str, extra_data: &str) {
     // This is streaming data -> Notify observers
     if let Some(time) = Utc.timestamp_opt(time_stamp, 0).single() {
-        let article = NewsArticle {
-            id: format!("{}/{}", provider_code, article_id), // Combine for unique ID
-            time,
-            provider_code: provider_code.to_string(),
-            article_id: article_id.to_string(),
-            headline: headline.to_string(),
-            content: None, // Content not available from tick
-            article_type: None, // Type not available from tick
-            extra_data: Some(extra_data.to_string()).filter(|s| !s.is_empty()), // Only store if non-empty
-        };
-        debug!("Handler: Tick News -> Notifying observers: {}", article.id);
-        self.notify_observers(&article);
+      let article = NewsArticle {
+        id: format!("{}/{}", provider_code, article_id), // Combine for unique ID
+        time,
+        provider_code: provider_code.to_string(),
+        article_id: article_id.to_string(),
+        headline: headline.to_string(),
+        content: None, // Content not available from tick
+        article_type: None, // Type not available from tick
+        extra_data: Some(extra_data.to_string()).filter(|s| !s.is_empty()), // Only store if non-empty
+      };
+      debug!("Handler: Tick News -> Notifying observers: {}", article.id);
+      self.notify_observers(&article);
     } else {
-        warn!("Failed to parse timestamp {} for tick news", time_stamp);
+      warn!("Failed to parse timestamp {} for tick news", time_stamp);
     }
   }
 
