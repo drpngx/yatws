@@ -23,12 +23,16 @@ pub trait MarketDataObserver: Send + Sync {
   fn on_tick_snapshot_end(&self, req_id: i32) {}
   /// Called when market data type changes.
   fn on_market_data_type(&self, req_id: i32, market_data_type: MarketDataType) {}
+  /// Called when an error occurs related to this observer's data type.
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }
 
 /// Observer for real-time bar data (streaming 5-second bars).
 pub trait RealTimeBarsObserver: Send + Sync {
   /// Called when a new real-time bar is received.
   fn on_bar_update(&self, req_id: i32, bar: &Bar) {}
+  /// Called when an error occurs related to this observer's data type.
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }
 
 /// Observer for tick-by-tick data (detailed trade and quote data).
@@ -60,6 +64,8 @@ pub trait TickByTickObserver: Send + Sync {
 
   /// Called when midpoint tick data is received.
   fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) {}
+  /// Called when an error occurs related to this observer's data type.
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }
 
 /// Observer for market depth (L2 order book) data.
@@ -87,6 +93,8 @@ pub trait MarketDepthObserver: Send + Sync {
     size: f64,
     is_smart_depth: bool,
   ) {}
+  /// Called when an error occurs related to this observer's data type.
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }
 
 /// Observer for historical bar data.
@@ -97,6 +105,8 @@ pub trait HistoricalDataObserver: Send + Sync {
   fn on_historical_data_update(&self, req_id: i32, bar: &Bar) {}
   /// Called when historical data transmission is complete.
   fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) {}
+  /// Called when an error occurs related to this observer's data type.
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }
 
 /// Observer for historical tick data.
@@ -122,4 +132,6 @@ pub trait HistoricalTicksObserver: Send + Sync {
     ticks: &[(i64, TickAttribLast, f64, f64, String, String)],
     done: bool,
   ) {}
+  /// Called when an error occurs related to this observer's data type.
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }

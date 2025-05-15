@@ -2066,8 +2066,44 @@ impl DataMarketManager {
         }
         debug!("Error received for blocking request {}, marking complete and notifying waiter.", req_id);
         self.request_cond.notify_all(); // Notify waiter immediately
+      } else {
+        // For non-blocking streaming requests, the error is stored, and observers are notified.
+        // Determine the type of stream to notify the correct observers.
+        match sub_state {
+          MarketStream::TickData(_) => {
+            let observers = self.market_data_observers.read();
+            for observer in observers.values() { observer.on_error(req_id, error_code_int, msg); }
+          }
+          MarketStream::RealTimeBars(_) => {
+            let observers = self.realtime_bars_observers.read();
+            for observer in observers.values() { observer.on_error(req_id, error_code_int, msg); }
+          }
+          MarketStream::TickByTick(_) => {
+            let observers = self.tick_by_tick_observers.read();
+            for observer in observers.values() { observer.on_error(req_id, error_code_int, msg); }
+          }
+          MarketStream::MarketDepth(_) => {
+            let observers = self.market_depth_observers.read();
+            for observer in observers.values() { observer.on_error(req_id, error_code_int, msg); }
+          }
+          // HistoricalData, Scanner, OptionCalc, HistogramData, HistoricalTicks are typically blocking or one-shot.
+          // Their errors are handled by the blocking wait logic returning an Err.
+          // However, if they were requested via request_observe_*, their FilteredObserver will handle on_error.
+          // The MarketDataHandler trait methods (e.g., historical_data_end) also set error state.
+          // If an error occurs for these types *before* their natural completion/error handling in the handler,
+          // we should still notify their specific observers if they exist.
+          MarketStream::HistoricalData(_) => {
+            let observers = self.historical_data_observers.read();
+            for observer in observers.values() { observer.on_error(req_id, error_code_int, msg); }
+          }
+          MarketStream::HistoricalTicks(_) => {
+            let observers = self.historical_ticks_observers.read();
+            for observer in observers.values() { observer.on_error(req_id, error_code_int, msg); }
+          }
+          // Scanner, OptionCalc, HistogramData do not have specific observers in this manager yet.
+          _ => {}
+        }
       }
-      // For non-blocking streaming requests, the error is just stored.
     } else {
       // Might be an error for a request that already completed/cancelled/timed out.
       trace!("Received error for unknown or completed market data request ID: {}", req_id);
@@ -2874,6 +2910,9 @@ impl DataMarketManager {
       fn on_tick_generic(&self, req_id: i32, tick_type: TickType, value: f64) { if req_id == self.req_id { self.inner.on_tick_generic(req_id, tick_type, value); } }
       fn on_tick_snapshot_end(&self, req_id: i32) { if req_id == self.req_id { self.inner.on_tick_snapshot_end(req_id); } }
       fn on_market_data_type(&self, req_id: i32, market_data_type: MarketDataType) { if req_id == self.req_id { self.inner.on_market_data_type(req_id, market_data_type); } }
+      fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+        if req_id == self.req_id { self.inner.on_error(req_id, error_code, error_message); }
+      }
     }
 
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
@@ -2900,6 +2939,9 @@ impl DataMarketManager {
     struct FilteredObserver<Obs: RealTimeBarsObserver + Send + Sync> { inner: Obs, req_id: i32, }
     impl<Obs: RealTimeBarsObserver + Send + Sync> RealTimeBarsObserver for FilteredObserver<Obs> {
       fn on_bar_update(&self, req_id: i32, bar: &Bar) { if req_id == self.req_id { self.inner.on_bar_update(req_id, bar); } }
+      fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+        if req_id == self.req_id { self.inner.on_error(req_id, error_code, error_message); }
+      }
     }
 
     let req_id = self.next_request_id(); // Use the new helper method
@@ -2932,6 +2974,9 @@ impl DataMarketManager {
       fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) {
         if req_id == self.req_id { self.inner.on_tick_by_tick_mid_point(req_id, time, mid_point); }
       }
+      fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+        if req_id == self.req_id { self.inner.on_error(req_id, error_code, error_message); }
+      }
     }
 
     let req_id = self.next_request_id(); // Use the new helper method
@@ -2959,6 +3004,9 @@ impl DataMarketManager {
       }
       fn on_update_mkt_depth_l2(&self, req_id: i32, position: i32, market_maker: &str, operation: i32, side: i32, price: f64, size: f64, is_smart_depth_val: bool) {
         if req_id == self.req_id { self.inner.on_update_mkt_depth_l2(req_id, position, market_maker, operation, side, price, size, is_smart_depth_val); }
+      }
+      fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+        if req_id == self.req_id { self.inner.on_error(req_id, error_code, error_message); }
       }
     }
 
@@ -2991,6 +3039,9 @@ impl DataMarketManager {
       fn on_historical_data(&self, req_id: i32, bar: &Bar) { if req_id == self.req_id { self.inner.on_historical_data(req_id, bar); } }
       fn on_historical_data_update(&self, req_id: i32, bar: &Bar) { if req_id == self.req_id { self.inner.on_historical_data_update(req_id, bar); } }
       fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) { if req_id == self.req_id { self.inner.on_historical_data_end(req_id, start_date, end_date); } }
+      fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+        if req_id == self.req_id { self.inner.on_error(req_id, error_code, error_message); }
+      }
     }
 
     let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
@@ -3031,6 +3082,9 @@ impl DataMarketManager {
       }
       fn on_historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
         if req_id == self.req_id { self.inner.on_historical_ticks_last(req_id, ticks, done); }
+      }
+      fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+        if req_id == self.req_id { self.inner.on_error(req_id, error_code, error_message); }
       }
     }
 

@@ -309,7 +309,7 @@ impl MarketDataObserver for TickDataInternalObserver {
   // fn on_tick_option_computation(&self, req_id: i32, data: TickOptionComputationData) { if req_id != self.state.req_id { return; } self.state.push_event(TickDataEvent::OptionComputation(data)); }
   fn on_tick_snapshot_end(&self, req_id: i32) { if req_id != self.state.req_id { return; } self.state.push_event(TickDataEvent::SnapshotEnd); self.state.mark_stream_completed(); self.state.active.store(false, Ordering::SeqCst); } // Snapshot is one-shot
   fn on_market_data_type(&self, req_id: i32, market_data_type: MarketDataType) { if req_id != self.state.req_id { return; } self.state.push_event(TickDataEvent::MarketDataTypeSet(market_data_type)); }
-  // fn on_error(&self, req_id: i32, error_code: ClientErrorCode, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code as i32, error_message.to_string()); self.state.push_event(TickDataEvent::Error(e.clone())); self.state.set_error(e); }
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(TickDataEvent::Error(e.clone())); self.state.set_error(e); }
 }
 
 // --- RealTimeBarSubscription ---
@@ -369,7 +369,7 @@ impl MarketDataIterator<RealTimeBarEvent> for RealTimeBarIterator {
 struct RealTimeBarInternalObserver { state: Arc<SubscriptionState<RealTimeBarEvent>> }
 impl RealTimeBarsObserver for RealTimeBarInternalObserver {
   fn on_bar_update(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(bar.clone()); }
-  // fn on_error(&self, req_id: i32, error_code: ClientErrorCode, error_message: &str) { if req_id != self.state.req_id { return; } self.state.set_error(IBKRError::ApiError(error_code as i32, error_message.to_string())); }
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } self.state.set_error(IBKRError::ApiError(error_code, error_message.to_string())); }
 }
 
 // --- TickByTickSubscription ---
@@ -432,7 +432,7 @@ impl TickByTickObserver for TickByTickInternalObserver {
   fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type_val: i32, time: i64, price: f64, size: f64, tick_attrib_last: &TickAttribLast, exchange: &str, special_conditions: &str) { if req_id != self.state.req_id { return; } let event = if tick_type_val == 1 { TickByTickEvent::Last { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } } else { TickByTickEvent::AllLast { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } }; self.state.push_event(event); }
   fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: &TickAttribBidAsk) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask: tick_attrib_bid_ask.clone() }); }
   fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::MidPoint { time, mid_point }); }
-  // fn on_error(&self, req_id: i32, error_code: ClientErrorCode, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code as i32, error_message.to_string()); self.state.push_event(TickByTickEvent::Error(e.clone())); self.state.set_error(e); }
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(TickByTickEvent::Error(e.clone())); self.state.set_error(e); }
 }
 
 // --- MarketDepthSubscription ---
@@ -494,7 +494,7 @@ struct MarketDepthInternalObserver { state: Arc<SubscriptionState<MarketDepthEve
 impl MarketDepthObserver for MarketDepthInternalObserver {
   fn on_update_mkt_depth(&self, req_id: i32, position: i32, operation: i32, side: i32, price: f64, size: f64) { if req_id != self.state.req_id { return; } self.state.push_event(MarketDepthEvent::UpdateL1 { position, operation, side, price, size }); }
   fn on_update_mkt_depth_l2(&self, req_id: i32, position: i32, market_maker: &str, operation: i32, side: i32, price: f64, size: f64, is_smart_depth: bool) { if req_id != self.state.req_id { return; } self.state.push_event(MarketDepthEvent::UpdateL2 { position, market_maker: market_maker.to_string(), operation, side, price, size, is_smart_depth }); }
-  // fn on_error(&self, req_id: i32, error_code: ClientErrorCode, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code as i32, error_message.to_string()); self.state.push_event(MarketDepthEvent::Error(e.clone())); self.state.set_error(e); }
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(MarketDepthEvent::Error(e.clone())); self.state.set_error(e); }
 }
 
 // --- HistoricalDataSubscription ---
@@ -565,7 +565,7 @@ impl HistoricalDataObserver for HistoricalDataInternalObserver {
   fn on_historical_data(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::Bar(bar.clone())); }
   fn on_historical_data_update(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::UpdateBar(bar.clone())); }
   fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::Complete { start_date: start_date.to_string(), end_date: end_date.to_string() }); self.state.mark_completed_and_inactive(); }
-  // fn on_error(&self, req_id: i32, error_code: ClientErrorCode, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code as i32, error_message.to_string()); self.state.push_event(HistoricalDataEvent::Error(e.clone())); self.state.set_error(e); }
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(HistoricalDataEvent::Error(e.clone())); self.state.set_error(e); }
 }
 
 // --- Phase 4: Multiple Subscription Support ---
