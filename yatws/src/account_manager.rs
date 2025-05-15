@@ -68,6 +68,7 @@ use crate::conn::MessageBroker;
 use crate::protocol_decoder::ClientErrorCode; // Added import
 use parking_lot::{RwLock, Mutex, Condvar};
 use crate::protocol_encoder::Encoder;
+use crate::account_subscription::AccountSubscription;
 
 use chrono::{Utc, TimeZone};
 use log::{debug, error, info, warn};
@@ -779,6 +780,17 @@ impl AccountManager {
     Ok(final_results)
   }
 
+  /// Creates a new subscription to account events.
+  ///
+  /// This method ensures that the underlying `AccountManager` is subscribed to TWS
+  /// for account updates. It then registers an internal observer to process these
+  /// updates into a stream of `AccountEvent`s.
+  ///
+  /// An initial attempt is made to populate the `last_known_summary` and
+  /// `last_known_positions` from the `AccountManager`.
+  pub fn create_account_subscription(account_manager: Arc<AccountManager>) -> Result<AccountSubscription, IBKRError> {
+    AccountSubscription::new(account_manager)
+  }
 
   /// Adds an observer to receive asynchronous notifications about account updates,
   /// position changes, and new executions.

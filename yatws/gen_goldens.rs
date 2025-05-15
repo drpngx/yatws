@@ -15,7 +15,8 @@ use yatws::{
   IBKRError,
   IBKRClient,
   account::AccountValueKey,
-  account_subscription::{AccountSubscription, AccountEvent},
+  account_manager::AccountManager,
+  account_subscription::AccountEvent,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder, OptionsStrategyBuilder,
   contract::{Contract, SecType, OptionRight, WhatToShow},
@@ -1844,7 +1845,7 @@ mod test_cases {
     let account_manager = client.account();
 
     // Create the subscription
-    let mut account_sub = match AccountSubscription::new(account_manager.clone()) {
+    let mut account_sub = match AccountManager::create_account_subscription(account_manager.clone()) {
       Ok(sub) => sub,
       Err(e) => {
         error!("Failed to create AccountSubscription: {:?}", e);

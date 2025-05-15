@@ -102,15 +102,7 @@ pub struct AccountSubscription {
 }
 
 impl AccountSubscription {
-  /// Creates a new subscription to account events.
-  ///
-  /// This method ensures that the underlying `AccountManager` is subscribed to TWS
-  /// for account updates. It then registers an internal observer to process these
-  /// updates into a stream of `AccountEvent`s.
-  ///
-  /// An initial attempt is made to populate the `last_known_summary` and
-  /// `last_known_positions` from the `AccountManager`.
-  pub fn new(account_manager: Arc<AccountManager>) -> Result<Self, IBKRError> {
+  pub(crate) fn new(account_manager: Arc<AccountManager>) -> Result<Self, IBKRError> {
     info!("Creating new AccountSubscription.");
     // Ensure the AccountManager's general subscription is active.
     // This call is blocking and fetches initial data into AccountManager.
