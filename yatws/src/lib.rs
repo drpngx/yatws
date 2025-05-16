@@ -27,7 +27,8 @@
 //!
 //! **Cons of YATWS:**
 //! - Newer library with potentially fewer community examples
-//! - Does not provide the ergonomic `Subscription` (yet).
+//! - Partial `Subscription` implementation
+//! - Partial testing and API interface still fluid
 //!
 //! ### YATWS vs. ib_insync (Python)
 //!
@@ -70,6 +71,7 @@
 //! let reference_data = client.data_ref();        // Contract details, etc.
 //! let news_manager = client.data_news();         // News feeds
 //! let fundamentals = client.data_financials();   // Financial data
+//! let fin_adv = client.financial_advisor();      // Financial advisor
 //! ```
 //!
 //! ## Programming Patterns
@@ -113,7 +115,12 @@
 //! client.data_market().cancel_market_data(req_id)?;
 //! ```
 //!
-//! ### 3. Observer Pattern
+//! ### 3. Generic Observer Pattern
+//!
+//! The observer pattern is similar to the IBKR TWS API programming model. You launch a
+//! request and the API will notify of results with callbacks. This is best for reacting
+//! to events. For instance, one may have a dashboard showing pending orders and current
+//! pnl that automatically updates.
 //!
 //! For handling asynchronous events like order status updates, position changes, etc.:
 //!
@@ -134,6 +141,77 @@
 //! // Register the observer
 //! let observer = Box::new(MyOrderObserver);
 //! client.orders().add_observer(observer);
+//! ```
+//!
+//! ### 3. Request-specific Observer Pattern
+//!
+//! The API will route events to observers if needed. This is useful for cases when multiple
+//! requests of the same type are in flight, for instance. For instance, you may request real-time
+//! ticks for multiple stocks. Each stock has its own observer. This is accomplished with the
+//! `request_observe` pattern.
+//!
+//! ```rust
+//! struct TestMarketObserver {
+//!   name: String,
+//! }
+//! impl MarketDataObserver for TestMarketObserver {
+//!   fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, _attrib: yatws::data::TickAttrib) {
+//!     info!("[{}] TickPrice: ReqID={}, Type={:?}, Price={}", self.name, req_id, tick_type, price);
+//!   }
+//!   ...
+//! }
+//! let observer = TestMarketObserver { name: "MSFT-Observer".to_string(), error_occurred: Default::default() };
+//! let generic_tick_list: &[GenericTickType] = &[];
+//! let snapshot = false; // Streaming
+//! let mkt_data_options = &[];
+//!  info!("Requesting observed market data for {} (Generic Ticks: '{}')...",
+//!       contract.symbol,
+//!       generic_tick_list.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","));
+//!  let (req_id, observer_id) = data_mgr.request_observe_market_data(
+//!   &contract,
+//!   generic_tick_list,
+//!   snapshot,
+//!   false, // regulatory_snapshot
+//!   mkt_data_options,
+//!   Some(MarketDataType::Delayed),
+//!   observer,
+//! ).context("Failed to request observed market data")?;
+//!
+//! ```
+//!
+//! ### 4. Subscription Pattern
+//!
+//! Used in the `ibapi` crate, this pattern uses a pull model to receive notifications
+//! in the current control flow. This is most useful for cases when you want to have
+//! streaming results and follow up in the current process. For example, you may be trading
+//! some technical pattern for a particular stock. You would collect the real-time bars
+//! and place orders if some technical indicator triggers.
+//!
+//! ```rust
+//!    let subscription = data_mgr.subscribe_market_data(&contract)
+//!      .with_snapshot(false) // Streaming
+//!      .with_market_data_type(MarketDataType::RealTime)
+//!      .submit()
+//!      .context("Failed to submit TickDataSubscription")?;
+//!
+//!    let iteration_timeout = Duration::from_secs(2);
+//!    let total_wait_duration = Duration::from_secs(600);
+//!    let start_time = std::time::Instant::now();
+//!    let mut iter = subscription.events(); // This is the stream of events
+//!
+//!    while start_time.elapsed() < total_wait_duration {
+//!      match iter.try_next(iteration_timeout) {
+//!        Some(event) => {
+//!          let should_buy = compute_technical_signal(event);
+//!          if should_buy {
+//!            ... buy ...
+//!            break;
+//!          }
+//!        }
+//!        None => { // Timeout
+//!        }
+//!      }
+//!    }
 //! ```
 //!
 //! ## Key Functional Areas
