@@ -11,24 +11,37 @@
 //!
 //! This library was born out of my need to place orders in rapid succession in response to market events. That is not easily done with existing rust crates. It takes about 3ms to send an order with this library. This was the primary goal and other interfaces (market data, etc) have been implemented for the sake of completeness. This library is in production and has traded millions of dollar volume.
 //!
+//! ## Features
+//!
+//! - **Comprehensive API Coverage**: Access to orders, accounts, market data, fundamentals, news, and reference data
+//! - **Multiple Programming Patterns**:
+//!   - Synchronous blocking calls with timeouts
+//!   - Asynchronous observer pattern
+//!   - Subscription model
+//! - **Options Strategy Builder**: Simplified creation of common options strategies
+//! - **Strong Type Safety**: Leverages Rust's type system for safer API interactions
+//! - **Session Recording/Replay**: Record TWS interactions for testing and debugging
+//! - **Domain-Specific Managers**: Organized access to different API functionalities
 //!
 //! ## Comparison with Alternative Libraries
 //!
-//! ### YATWS vs. rust-ibapi
-//! For many people, the `ibapi` crate is a fine choice. The subscription model works fine for fetching market data. This crate is more gear towards simple one-shot queries, such as `get_quote`.
+//! ### YATWS vs. `rust-ibapi`
+//! For many people, the `ibapi` crate is a fine choice. The subscription model works fine for fetching market data.
+//! The yatws crate allows different programming models if you want the flexibility.
 //!
 //! **Pros of YATWS:**
-//! - More comprehensive coverage of TWS API functionality
-//! - Ergonomic synchronous functions with built-in timeouts
 //! - Structured manager-based architecture for logical organization
+//! - Ergonomic synchronous functions with built-in timeouts
 //! - Observer pattern support for asynchronous event handling
 //! - Built-in support for common options strategies via the `OptionsStrategyBuilder`
 //! - Support for session recording and replay for testing/debugging
+//! - More comprehensive use of Rust enums and types instead of strings
 //!
 //! **Cons of YATWS:**
 //! - Newer library with potentially fewer community examples
 //! - Partial `Subscription` implementation
 //! - Partial testing and API interface still fluid
+//! - Order placement is my primary use case and the only one that is battle-tested
 //!
 //! ### YATWS vs. ib_insync (Python)
 //!
