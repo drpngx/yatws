@@ -112,7 +112,17 @@ rust_binary(
 
 rust_binary(
     name = "gen_goldens",
-    srcs = ["gen_goldens.rs"],
+    srcs = ["gen_goldens.rs",
+            "test_general.rs",
+            "test_account.rs",
+            "test_order.rs",
+            "test_fin.rs",
+            "test_market.rs",
+            "test_option.rs",
+            "test_news.rs",
+            "test_data_sub.rs",
+            "test_data_obs.rs",
+            ],
     edition = "2021",
     deps = [
         ":yatws",
@@ -123,7 +133,7 @@ rust_binary(
         "@crates//:env_logger",
         "@crates//:inventory",
         "@crates//:log",
-        "@crates//:once_cell",
+       "@crates//:once_cell",
     ],
     visibility = ["//visibility:public"],
 )
