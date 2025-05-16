@@ -9,7 +9,7 @@ use yatws::{
   data::{MarketDataType, DurationUnit},
   data_subscription::{
     HistoricalDataEvent,
-    MarketDataIterator
+    MarketDataIterator,
     MarketDataSubscription,
     TickDataEvent,
   },
