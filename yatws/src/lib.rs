@@ -388,6 +388,7 @@ pub mod data_subscription;
 
 // API:
 pub mod account_subscription;
+pub mod news_subscription;
 pub mod data_observer;
 
 // Managers:
@@ -406,6 +407,7 @@ pub use base::IBKRError;
 pub use financial_report_parser::parse_fundamental_xml;
 pub use client::IBKRClient;
 pub use client::client_manager;
+pub use news_subscription::{NewsSubscription, NewsEvent, NewsSubscriptionBuilder};
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

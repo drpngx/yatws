@@ -83,16 +83,23 @@
 
 use crate::base::IBKRError;
 use crate::conn::MessageBroker;
-use crate::protocol_decoder::ClientErrorCode; // Added import
+use crate::protocol_decoder::ClientErrorCode;
 use crate::news::{NewsProvider, NewsArticle, NewsArticleData, HistoricalNews, NewsObserver};
 use crate::handler::{NewsDataHandler};
 use crate::protocol_encoder::Encoder;
+use crate::data_observer::ObserverId;
+use crate::news_subscription;
+
 use parking_lot::{Condvar, Mutex, RwLock};
 use chrono::{Utc, TimeZone};
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Weak, atomic::{AtomicUsize, Ordering}}; // Added AtomicUsize, Ordering
 use std::time::Duration;
 use log::{debug, info, trace, warn};
+
+// Import new subscription types
+use crate::news_subscription::{HistoricalNewsEvent, HistoricalNewsSubscriptionBuilder};
+use crate::data_subscription::SubscriptionState;
 
 
 // --- State for Pending News Requests ---
@@ -123,11 +130,14 @@ struct NewsRequestState {
 ///
 /// See the [module-level documentation](index.html) for more details and examples.
 pub struct DataNewsManager {
-  message_broker: Arc<MessageBroker>,
+  pub(crate) message_broker: Arc<MessageBroker>,
   request_states: Mutex<HashMap<i32, NewsRequestState>>,
   request_cond: Condvar,
-  // --- Observer list ---
-  observers: RwLock<Vec<Weak<dyn NewsObserver>>>,
+  observers: RwLock<HashMap<ObserverId, Weak<dyn NewsObserver>>>, // Changed to HashMap
+  next_observer_id: AtomicUsize, // Added for unique ObserverId generation
+  self_weak: Weak<DataNewsManager>, // Added for builder to get weak ref to self
+  // Map for historical news event subscriptions
+  historical_news_event_subscriptions: Mutex<HashMap<i32, Weak<SubscriptionState<HistoricalNewsEvent, DataNewsManager>>>>,
 }
 
 impl DataNewsManager {
@@ -135,16 +145,22 @@ impl DataNewsManager {
   ///
   /// This is typically called internally when an `IBKRClient` is created.
   pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
-    Arc::new(DataNewsManager {
+    Arc::new_cyclic(|weak_self_ref| DataNewsManager {
       message_broker,
       request_states: Mutex::new(HashMap::new()),
       request_cond: Condvar::new(),
-      // --- Initialize observer list ---
-      observers: RwLock::new(Vec::new()),
+      observers: RwLock::new(HashMap::new()),
+      next_observer_id: AtomicUsize::new(1),
+      self_weak: weak_self_ref.clone(),
+      historical_news_event_subscriptions: Mutex::new(HashMap::new()),
     })
   }
 
-  // --- Add observer management methods ---
+  /// Generates a new unique ObserverId value.
+  /// Used by NewsSubscriptionBuilder before creating SubscriptionState.
+  pub(crate) fn new_observer_id_val(&self) -> usize {
+    self.next_observer_id.fetch_add(1, Ordering::SeqCst)
+  }
 
   /// Registers an observer to receive streaming news updates (bulletins and news ticks).
   ///
@@ -154,20 +170,38 @@ impl DataNewsManager {
   ///
   /// # Arguments
   /// * `observer` - An `Arc` to an object implementing `NewsObserver`.
-  pub fn add_observer(&self, observer: Arc<dyn NewsObserver>) {
-    let mut observers = self.observers.write();
-    // Avoid adding duplicates if observer is already present (optional check)
-    if observers.iter().all(|weak| weak.strong_count() == 0 || !Arc::ptr_eq(&weak.upgrade().unwrap(), &observer)) {
-      debug!("Adding news observer");
-      observers.push(Arc::downgrade(&observer));
-    } else {
-      debug!("News observer already present, not adding again.");
-    }
-    // Clean up dead observers while we have write lock
-    observers.retain(|weak| weak.strong_count() > 0);
+  ///
+  /// # Returns
+  /// An `ObserverId` for the registered observer, which can be used with `remove_observer`.
+  pub fn add_observer(&self, observer: Arc<dyn NewsObserver>) -> ObserverId {
+    let observer_id = ObserverId(self.next_observer_id.fetch_add(1, Ordering::SeqCst));
+    let mut observers_map = self.observers.write();
+    // Clean up dead observers before adding a new one
+    observers_map.retain(|_, weak| weak.strong_count() > 0);
+    observers_map.insert(observer_id, Arc::downgrade(&observer));
+    debug!("Added news observer with ID: {:?}", observer_id);
+    observer_id
   }
 
-  // Optional: Add remove_observer or clear_observers if needed
+  /// Removes a previously registered news observer.
+  ///
+  /// # Arguments
+  /// * `observer_id` - The `ObserverId` returned by `add_observer`.
+  ///
+  /// # Returns
+  /// `true` if an observer with the given ID was found and removed, `false` otherwise.
+  pub fn remove_observer(&self, observer_id: ObserverId) -> bool {
+    let mut observers_map = self.observers.write();
+    let removed = observers_map.remove(&observer_id).is_some();
+    if removed {
+      debug!("Removed news observer with ID: {:?}", observer_id);
+    } else {
+      warn!("Attempted to remove non-existent news observer ID: {:?}", observer_id);
+    }
+    // Clean up dead observers
+    observers_map.retain(|_, weak| weak.strong_count() > 0);
+    removed
+  }
 
   /// Clears all registered news observers.
   /// After this call, no observers will receive further news updates from this manager.
@@ -179,13 +213,22 @@ impl DataNewsManager {
 
   // --- Helper to notify observers ---
   fn notify_observers(&self, article: &NewsArticle) {
-    let observers = self.observers.read();
-    for weak_observer in observers.iter() {
+    let observers_map = self.observers.read();
+    for weak_observer in observers_map.values() {
       if let Some(observer) = weak_observer.upgrade() {
         trace!("Notifying observer about news article: {}", article.id);
         observer.on_news_article(article);
       }
       // No cleanup here, do it during add/remove or periodically
+    }
+  }
+
+  fn notify_observers_of_error(&self, error_code: i32, error_message: &str) {
+    let observers_map = self.observers.read();
+    for weak_observer in observers_map.values() {
+      if let Some(observer) = weak_observer.upgrade() {
+        observer.on_error(error_code, error_message);
+      }
     }
   }
 
@@ -417,6 +460,46 @@ impl DataNewsManager {
     })
   }
 
+  /// Internal method to request historical news and store subscription state.
+  pub(crate) fn internal_request_historical_news_stream(
+    &self,
+    req_id: i32,
+    con_id: i32,
+    provider_codes: &str,
+    start_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    end_date_time: Option<chrono::DateTime<chrono::Utc>>,
+    total_results: i32,
+    historical_news_options: &[(String, String)],
+    state_weak: Weak<SubscriptionState<HistoricalNewsEvent, DataNewsManager>>,
+  ) -> Result<(), IBKRError> {
+    info!("Internal: Requesting historical news stream: ReqID={}, ConID={}", req_id, con_id);
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_request_historical_news(
+      req_id, con_id, provider_codes, start_date_time, end_date_time, total_results, historical_news_options
+    )?;
+
+    {
+      let mut subs = self.historical_news_event_subscriptions.lock();
+      if subs.contains_key(&req_id) {
+        return Err(IBKRError::DuplicateRequestId(req_id));
+      }
+      subs.insert(req_id, state_weak);
+    }
+
+    self.message_broker.send_message(&request_msg)
+  }
+
+  /// Creates a builder for a historical news subscription.
+  pub fn subscribe_historical_news_stream(
+    &self,
+    con_id: i32,
+    provider_codes: &str,
+    total_results: i32,
+  ) -> HistoricalNewsSubscriptionBuilder {
+    HistoricalNewsSubscriptionBuilder::new(self.self_weak.clone(), con_id, provider_codes, total_results)
+  }
+
   // --- Streaming Calls (Non-blocking) ---
 
   /// Subscribes to live news bulletins from TWS. This is a non-blocking call.
@@ -446,22 +529,68 @@ impl DataNewsManager {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
     let request_msg = encoder.encode_cancel_news_bulletins()?;
-    self.message_broker.send_message(&request_msg)?; // Added semicolon
-    Ok(()) // Added Ok(())
+    self.message_broker.send_message(&request_msg)?;
+    Ok(())
   }
 
+  /// Creates a builder for a news bulletin subscription.
+  ///
+  /// News bulletins are general news items from TWS, not tied to a specific contract.
+  /// The subscription provides a stream of [`NewsEvent`](crate::news_subscription::NewsEvent)s.
+  ///
+  /// # Arguments
+  /// * `all_msgs` - If `true`, requests all available historical bulletins upon subscription
+  ///   followed by new ones. If `false`, requests only new bulletins.
+  pub fn subscribe_news_bulletins_stream(&self, all_msgs: bool) -> news_subscription::NewsSubscriptionBuilder {
+      news_subscription::NewsSubscriptionBuilder::new(self.self_weak.clone(), all_msgs)
+  }
+
+  /// Client-side cancellation of a historical news stream.
+  /// TWS does not provide a specific message to cancel historical news requests.
+  pub(crate) fn cancel_historical_news_stream(&self, req_id: i32) {
+    info!("Client-side cancelling historical news stream for ReqID: {}", req_id);
+    let mut subs = self.historical_news_event_subscriptions.lock();
+    if subs.remove(&req_id).is_some() {
+        debug!("Removed historical news event subscription state for ReqID: {}", req_id);
+    }
+  }
 
   // --- Internal error handling (called by the trait method) ---
   fn _internal_handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str) {
-    if req_id <= 0 { return; } // Ignore general errors
+    // If req_id is 0 or negative, it might be a general news system error not tied to a specific request.
+    // Or it could be an error related to news bulletins which also don't use a req_id from client perspective.
 
     let mut states = self.request_states.lock();
-    if let Some(state) = states.get_mut(&req_id) {
-      warn!("API Error received for news request {}: Code={:?}, Msg={}", req_id, code, msg);
-      state.error_code = Some(code as i32); // Store integer code
-      state.error_message = Some(msg.to_string()); // Store owned string
-      // Signal potentially waiting thread
-      self.request_cond.notify_all();
+    if req_id > 0 {
+        // Check blocking request states first
+        if let Some(state) = states.get_mut(&req_id) {
+          warn!("API Error received for specific blocking news request {}: Code={:?}, Msg={}", req_id, code, msg);
+          state.error_code = Some(code as i32);
+          state.error_message = Some(msg.to_string());
+          self.request_cond.notify_all(); // Signal waiting thread for this specific request
+          return; // Handled
+        }
+
+        // Check historical news event subscriptions
+        let mut event_subs = self.historical_news_event_subscriptions.lock();
+        if let Some(state_weak) = event_subs.get(&req_id) {
+            if let Some(state_arc) = state_weak.upgrade() {
+                warn!("API Error for historical news subscription {}: Code={:?}, Msg={}", req_id, code, msg);
+                let err = IBKRError::ApiError(code as i32, msg.to_string());
+                state_arc.push_event(HistoricalNewsEvent::Error(err.clone()));
+                state_arc.set_error(err);
+            } // Weak ref might be dead if subscription was dropped
+            event_subs.remove(&req_id); // Remove on error
+            return; // Handled
+        }
+    } else {
+    // If not handled by specific req_id maps, treat as general or bulletin error
+      // This error is not for a specific req_id-based request (e.g., get_historical_news).
+      // It could be a general news system error, or an error related to news bulletins.
+      // Notify all active observers.
+      warn!("General News API Error or Bulletin Error: Code={:?}, Msg={}. Notifying all observers.", code, msg);
+      self.notify_observers_of_error(code as i32, msg);
+      // If it's a bulletin error, the NewsSubscription's internal observer will push a NewsEvent::Error.
     }
   }
 }
@@ -514,28 +643,54 @@ impl NewsDataHandler for DataNewsManager {
 
   fn historical_news(&self, req_id: i32, time: &str, provider_code: &str, article_id: &str, headline: &str) {
     trace!("Handler: Historical News Item: ReqID={}", req_id);
-    let mut states = self.request_states.lock();
-    if let Some(state) = states.get_mut(&req_id) {
-      state.historical_news_list.push(HistoricalNews {
-        time: time.to_string(),
-        provider_code: provider_code.to_string(),
-        article_id: article_id.to_string(),
-        headline: headline.to_string(),
-      });
-    } else {
-      warn!("Received historical news item for unknown or completed request ID: {}", req_id);
+    // Check blocking request states
+    let mut blocking_states = self.request_states.lock();
+    if let Some(state) = blocking_states.get_mut(&req_id) {
+        state.historical_news_list.push(HistoricalNews {
+            time: time.to_string(),
+            provider_code: provider_code.to_string(),
+            article_id: article_id.to_string(),
+            headline: headline.to_string(),
+        });
+        return; // Handled by blocking call state
+    }
+    drop(blocking_states); // Release lock
+
+    // Check event stream subscriptions
+    let event_subs = self.historical_news_event_subscriptions.lock();
+    if let Some(state_weak) = event_subs.get(&req_id) {
+        if let Some(state_arc) = state_weak.upgrade() {
+            let item = HistoricalNews {
+                time: time.to_string(),
+                provider_code: provider_code.to_string(),
+                article_id: article_id.to_string(),
+                headline: headline.to_string(),
+            };
+            state_arc.push_event(HistoricalNewsEvent::Article(item));
+        }
     }
   }
 
   fn historical_news_end(&self, req_id: i32, has_more: bool) {
     debug!("Handler: Historical News End: ReqID={}, HasMore={}", req_id, has_more);
-    let mut states = self.request_states.lock();
-    if let Some(state) = states.get_mut(&req_id) {
-      state.historical_news_end_received = true;
-      info!("Historical news end received for request {}. Notifying waiter.", req_id);
-      self.request_cond.notify_all();
-    } else {
-      warn!("Received historical news end for unknown or completed request ID: {}", req_id);
+    // Check blocking request states
+    let mut blocking_states = self.request_states.lock();
+    if let Some(state) = blocking_states.get_mut(&req_id) {
+        state.historical_news_end_received = true;
+        info!("Historical news end received for blocking request {}. Notifying waiter.", req_id);
+        self.request_cond.notify_all();
+        // Note: blocking_states.remove(&req_id) happens in wait_for_completion
+        return; // Handled by blocking call state
+    }
+    drop(blocking_states); // Release lock
+
+    // Check event stream subscriptions
+    let mut event_subs = self.historical_news_event_subscriptions.lock();
+    if let Some(state_weak) = event_subs.remove(&req_id) { // Remove as it's complete
+        if let Some(state_arc) = state_weak.upgrade() {
+            state_arc.push_event(HistoricalNewsEvent::Complete);
+            state_arc.mark_completed_and_inactive();
+        }
     }
   }
 

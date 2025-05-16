@@ -27,6 +27,10 @@ use yatws::{
 use chrono::{Utc, Duration as ChronoDuration, NaiveDate, Datelike};
 
 // --- Test Definition Infrastructure ---
+// Import new subscription types if they are in a separate module/file
+use yatws::news_subscription::{HistoricalNewsEvent}; // Assuming it's in news_subscription.rs
+// If in historical_news_subscription.rs, adjust path:
+// use yatws::historical_news_subscription::{HistoricalNewsEvent};
 
 // Define the signature for our test functions
 type TestFn = fn(client: &IBKRClient, is_live: bool) -> Result<()>;
@@ -96,8 +100,9 @@ struct ModeArgs {
 mod test_cases {
   use super::*; // Bring in necessary types and functions
   use yatws::data_observer::{MarketDataObserver};
-  use yatws::data_subscription::{TickDataEvent, HistoricalDataEvent}; // Added for subscription tests
-  use yatws::contract::BarSize; // Added for historical subscription test
+  use yatws::data_subscription::{TickDataEvent, HistoricalDataEvent};
+  use yatws::contract::BarSize;
+  use yatws::news_subscription::NewsEvent; // Added for news subscription test
 
   // Each function implements a specific test scenario.
   // The name used for registration outside this module determines the CLI name and session name.
@@ -2036,13 +2041,13 @@ mod test_cases {
           generic_tick_list.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(","));
 
     let (req_id, observer_id) = data_mgr.request_observe_market_data(
-        &contract,
-        generic_tick_list,
-        snapshot,
-        false, // regulatory_snapshot
-        mkt_data_options,
-        Some(MarketDataType::Delayed),
-        observer,
+      &contract,
+      generic_tick_list,
+      snapshot,
+      false, // regulatory_snapshot
+      mkt_data_options,
+      Some(MarketDataType::Delayed),
+      observer,
     ).context("Failed to request observed market data")?;
 
     info!("Market data requested with ReqID: {}, ObserverID: {:?}. Waiting for data...", req_id, observer_id);
@@ -2060,16 +2065,16 @@ mod test_cases {
     // Check if the observer reported an error
     // Note: This check is basic. In a real test, you might assert specific data was received.
     let _observer_had_error = client.data_market() // Re-fetch observer from manager to check its state (if it were stored there)
-        // This part is tricky as the observer instance is consumed.
-        // For this test, we'll rely on the log output for error indication.
-        // A more robust test would involve channels or shared state updated by the observer.
-        // For gen_goldens, logging is the primary output.
-        // If the observer's on_error was called, it would have logged an error.
-        // We can't directly access `observer.error_occurred` here as it was moved.
-        // This test primarily verifies the API call and basic flow.
-        // If an error was logged by the observer, that indicates a problem.
-        // For now, assume success if no direct error from request/cancel.
-        ;
+    // This part is tricky as the observer instance is consumed.
+    // For this test, we'll rely on the log output for error indication.
+    // A more robust test would involve channels or shared state updated by the observer.
+    // For gen_goldens, logging is the primary output.
+    // If the observer's on_error was called, it would have logged an error.
+    // We can't directly access `observer.error_occurred` here as it was moved.
+    // This test primarily verifies the API call and basic flow.
+    // If an error was logged by the observer, that indicates a problem.
+    // For now, assume success if no direct error from request/cancel.
+      ;
 
     Ok(())
   }
@@ -2081,10 +2086,10 @@ mod test_cases {
 
     info!("Building TickDataSubscription for {}...", contract.symbol);
     let subscription = data_mgr.subscribe_market_data(&contract)
-        .with_snapshot(false) // Streaming
-        .with_market_data_type(MarketDataType::Delayed)
-        .submit()
-        .context("Failed to submit TickDataSubscription")?;
+      .with_snapshot(false) // Streaming
+      .with_market_data_type(MarketDataType::Delayed)
+      .submit()
+      .context("Failed to submit TickDataSubscription")?;
 
     info!("Subscription submitted with ReqID: {}. Iterating events...", subscription.request_id());
 
@@ -2097,34 +2102,34 @@ mod test_cases {
     let mut iter = subscription.events(); // Default timeout is None (blocking)
 
     while start_time.elapsed() < total_wait_duration && event_count < max_events_or_duration {
-        match iter.try_next(iteration_timeout) { // Use try_next with a timeout
-            Some(event) => {
-                info!("Received TickDataEvent: {:?}", event);
-                event_count += 1;
-                if let TickDataEvent::Error(e) = event {
-                    error!("Error event received in subscription: {:?}", e);
-                    subscription.cancel().ok(); // Best effort cancel
-                    return Err(e.into());
-                }
-            }
-            None => { // Timeout
-                if !is_live && subscription.is_completed() && !subscription.has_error() {
-                    info!("Subscription completed in replay with no error and no more events.");
-                    break;
-                }
-                if subscription.has_error() {
-                    let err = subscription.get_error().unwrap_or_else(|| IBKRError::InternalError("Unknown error in subscription".to_string()));
-                    error!("Subscription has error: {:?}", err);
-                    subscription.cancel().ok();
-                    return Err(err.into());
-                }
-                if subscription.is_completed() {
-                    info!("Subscription completed with no more events.");
-                    break;
-                }
-                debug!("No event in last {:?}, continuing iteration...", iteration_timeout);
-            }
+      match iter.try_next(iteration_timeout) { // Use try_next with a timeout
+        Some(event) => {
+          info!("Received TickDataEvent: {:?}", event);
+          event_count += 1;
+          if let TickDataEvent::Error(e) = event {
+            error!("Error event received in subscription: {:?}", e);
+            subscription.cancel().ok(); // Best effort cancel
+            return Err(e.into());
+          }
         }
+        None => { // Timeout
+          if !is_live && subscription.is_completed() && !subscription.has_error() {
+            info!("Subscription completed in replay with no error and no more events.");
+            break;
+          }
+          if subscription.has_error() {
+            let err = subscription.get_error().unwrap_or_else(|| IBKRError::InternalError("Unknown error in subscription".to_string()));
+            error!("Subscription has error: {:?}", err);
+            subscription.cancel().ok();
+            return Err(err.into());
+          }
+          if subscription.is_completed() {
+            info!("Subscription completed with no more events.");
+            break;
+          }
+          debug!("No event in last {:?}, continuing iteration...", iteration_timeout);
+        }
+      }
     }
 
     info!("Finished iterating events. Total events received: {}. Cancelling subscription...", event_count);
@@ -2132,7 +2137,7 @@ mod test_cases {
     info!("TickDataSubscription cancelled.");
 
     if event_count == 0 && is_live {
-        warn!("Received 0 events for GOOG. This might be okay if market is closed or no data ticks during the window.");
+      warn!("Received 0 events for GOOG. This might be okay if market is closed or no data ticks during the window.");
     }
     Ok(())
   }
@@ -2150,24 +2155,24 @@ mod test_cases {
 
     info!("Building HistoricalDataSubscription for {}...", contract1.symbol);
     let sub1 = data_mgr.subscribe_historical_data(&contract1, duration, bar_size, what_to_show)
-        .with_market_data_type(MarketDataType::Delayed)
-        .submit()
-        .context(format!("Failed to submit HistoricalDataSubscription for {}", contract1.symbol))?;
+      .with_market_data_type(MarketDataType::Delayed)
+      .submit()
+      .context(format!("Failed to submit HistoricalDataSubscription for {}", contract1.symbol))?;
 
     info!("Building HistoricalDataSubscription for {}...", contract2.symbol);
     let sub2 = data_mgr.subscribe_historical_data(&contract2, duration, bar_size, what_to_show)
-        .with_market_data_type(MarketDataType::Delayed)
-        .submit()
-        .context(format!("Failed to submit HistoricalDataSubscription for {}", contract2.symbol))?;
+      .with_market_data_type(MarketDataType::Delayed)
+      .submit()
+      .context(format!("Failed to submit HistoricalDataSubscription for {}", contract2.symbol))?;
 
     info!("Combining subscriptions for ReqID {} ({}) and ReqID {} ({})...",
           sub1.request_id(), contract1.symbol, sub2.request_id(), contract2.symbol);
 
     let mut multi_iter = data_mgr.combine_subscriptions::<HistoricalDataEvent>()
-        .add(&sub1, sub1.events())
-        .add(&sub2, sub2.events())
-        .build();
-        // .with_timeout(Duration::from_secs(1)); // Timeout for each try_next in the multi-iterator
+      .add(&sub1, sub1.events())
+      .add(&sub2, sub2.events())
+      .build();
+    // .with_timeout(Duration::from_secs(1)); // Timeout for each try_next in the multi-iterator
 
     let mut event_count1 = 0;
     let mut event_count2 = 0;
@@ -2185,49 +2190,49 @@ mod test_cases {
     // The default .next() on multi_iter can block if underlying iterators block.
     // Using try_next on multi_iter is better for controlled waiting.
     while start_time.elapsed() < total_wait_duration && !(completed1 && completed2) {
-        match multi_iter.try_next(iteration_timeout) { // Poll underlying iterators with a timeout
-            Some(tagged_event) => {
-                info!("Combined Event: ReqID={}, Contract={}, Event={:?}",
-                      tagged_event.req_id, tagged_event.contract.symbol, tagged_event.event);
-                if tagged_event.req_id == sub1.request_id() {
-                    event_count1 += 1;
-                    if let HistoricalDataEvent::Complete { .. } = tagged_event.event {
-                        completed1 = true;
-                        info!("Subscription for {} (ReqID {}) completed.", contract1.symbol, sub1.request_id());
-                    }
-                    if let HistoricalDataEvent::Error(e) = tagged_event.event {
-                        error!("Error from {} (ReqID {}): {:?}", contract1.symbol, sub1.request_id(), e);
-                        completed1 = true; // Treat error as completion for this sub
-                    }
-                } else if tagged_event.req_id == sub2.request_id() {
-                    event_count2 += 1;
-                    if let HistoricalDataEvent::Complete { .. } = tagged_event.event {
-                        completed2 = true;
-                        info!("Subscription for {} (ReqID {}) completed.", contract2.symbol, sub2.request_id());
-                    }
-                     if let HistoricalDataEvent::Error(e) = tagged_event.event {
-                        error!("Error from {} (ReqID {}): {:?}", contract2.symbol, sub2.request_id(), e);
-                        completed2 = true; // Treat error as completion for this sub
-                    }
-                }
+      match multi_iter.try_next(iteration_timeout) { // Poll underlying iterators with a timeout
+        Some(tagged_event) => {
+          info!("Combined Event: ReqID={}, Contract={}, Event={:?}",
+                tagged_event.req_id, tagged_event.contract.symbol, tagged_event.event);
+          if tagged_event.req_id == sub1.request_id() {
+            event_count1 += 1;
+            if let HistoricalDataEvent::Complete { .. } = tagged_event.event {
+              completed1 = true;
+              info!("Subscription for {} (ReqID {}) completed.", contract1.symbol, sub1.request_id());
             }
-            None => { // Timeout from multi_iter.try_next
-                debug!("No event from combined iterator in last poll. Checking completion status...");
-                // Check if underlying subscriptions are done, even if no 'Complete' event was caught by this loop iteration
-                if !completed1 && sub1.is_completed() {
-                    info!("Subscription for {} (ReqID {}) detected as completed (externally or error).", contract1.symbol, sub1.request_id());
-                    completed1 = true;
-                }
-                if !completed2 && sub2.is_completed() {
-                     info!("Subscription for {} (ReqID {}) detected as completed (externally or error).", contract2.symbol, sub2.request_id());
-                    completed2 = true;
-                }
-                if completed1 && completed2 {
-                    info!("Both subscriptions reported completion. Exiting loop.");
-                    break;
-                }
+            if let HistoricalDataEvent::Error(e) = tagged_event.event {
+              error!("Error from {} (ReqID {}): {:?}", contract1.symbol, sub1.request_id(), e);
+              completed1 = true; // Treat error as completion for this sub
             }
+          } else if tagged_event.req_id == sub2.request_id() {
+            event_count2 += 1;
+            if let HistoricalDataEvent::Complete { .. } = tagged_event.event {
+              completed2 = true;
+              info!("Subscription for {} (ReqID {}) completed.", contract2.symbol, sub2.request_id());
+            }
+            if let HistoricalDataEvent::Error(e) = tagged_event.event {
+              error!("Error from {} (ReqID {}): {:?}", contract2.symbol, sub2.request_id(), e);
+              completed2 = true; // Treat error as completion for this sub
+            }
+          }
         }
+        None => { // Timeout from multi_iter.try_next
+          debug!("No event from combined iterator in last poll. Checking completion status...");
+          // Check if underlying subscriptions are done, even if no 'Complete' event was caught by this loop iteration
+          if !completed1 && sub1.is_completed() {
+            info!("Subscription for {} (ReqID {}) detected as completed (externally or error).", contract1.symbol, sub1.request_id());
+            completed1 = true;
+          }
+          if !completed2 && sub2.is_completed() {
+            info!("Subscription for {} (ReqID {}) detected as completed (externally or error).", contract2.symbol, sub2.request_id());
+            completed2 = true;
+          }
+          if completed1 && completed2 {
+            info!("Both subscriptions reported completion. Exiting loop.");
+            break;
+          }
+        }
+      }
     }
 
 
@@ -2241,11 +2246,130 @@ mod test_cases {
     // multi_iter.cancel_all().ok(); // This relies on individual subscription drops
 
     if (event_count1 == 0 || event_count2 == 0) && is_live {
-        warn!("Received 0 events for one or both contracts. This might be okay depending on market data availability.");
+      warn!("Received 0 events for one or both contracts. This might be okay depending on market data availability.");
     }
     if (!completed1 && is_live && !sub1.has_error()) || (!completed2 && is_live && !sub2.has_error()) {
-         warn!("One or both subscriptions did not explicitly complete within the test window.");
+      warn!("One or both subscriptions did not explicitly complete within the test window.");
     }
+
+    Ok(())
+  }
+
+  pub(super) fn subscribe_news_bulletins_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+    info!("--- Testing Subscribe News Bulletins (NewsSubscription) ---");
+    let news_mgr = client.data_news();
+
+    info!("Building NewsSubscription (all_msgs: true)...");
+    // Request all messages, hoping to see some historical ones if available, plus any new ones.
+    let subscription = news_mgr.subscribe_news_bulletins_stream(true)
+      .submit()
+      .context("Failed to submit NewsSubscription")?;
+
+    info!("NewsSubscription submitted (ObsID: {}). Iterating events...", subscription.request_id());
+
+    let mut event_count = 0;
+    // Expect few, if any, bulletins. More events in replay if they were logged.
+    let max_events_to_process = if is_live { 5 } else { 10 };
+    let iteration_timeout = if is_live { Duration::from_secs(3) } else { Duration::from_millis(100) }; // Shorter for replay
+    let total_wait_duration = if is_live { Duration::from_secs(15) } else { Duration::from_secs(2) }; // Shorter total for replay
+    let start_time = std::time::Instant::now();
+
+    let mut iter = subscription.events();
+
+    while start_time.elapsed() < total_wait_duration && event_count < max_events_to_process {
+      match iter.try_next(iteration_timeout) {
+        Some(event) => {
+          info!("Received NewsEvent: {:?}", event);
+          event_count += 1;
+          match event {
+            NewsEvent::Error(e) => {
+              error!("Error event received in news subscription: {:?}", e);
+              // Depending on severity, might not need to cancel/return
+              // For gen_goldens, log and continue unless it's critical
+            }
+            NewsEvent::Closed{..} => {
+              info!("NewsSubscription closed event received. Exiting loop.");
+              break;
+            }
+            _ => {} // Bulletin
+          }
+        }
+        None => { // Timeout from try_next
+          if subscription.is_completed() {
+            info!("NewsSubscription completed (no more events or error).");
+            break;
+          }
+          debug!("No news event in last {:?}, continuing iteration...", iteration_timeout);
+        }
+      }
+    }
+
+    info!("Finished iterating news events. Total events received: {}. Cancelling subscription...", event_count);
+    subscription.cancel().context("Failed to cancel NewsSubscription")?;
+    info!("NewsSubscription cancelled.");
+
+    if event_count == 0 && is_live {
+      warn!("Received 0 news bulletins. This is common if no bulletins were issued during the test window or if not subscribed to news.");
+    }
+    Ok(())
+  }
+
+  pub(super) fn subscribe_historical_news_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+    info!("--- Testing Subscribe Historical News (HistoricalNewsSubscription) ---");
+    let news_mgr = client.data_news();
+    let ref_data_mgr = client.data_ref();
+
+    // Get con_id for AAPL
+    let contract_spec = Contract::stock("AAPL");
+    let contract_details_list = ref_data_mgr.get_contract_details(&contract_spec)
+      .context("Failed to get contract details for AAPL")?;
+    if contract_details_list.is_empty() {
+      return Err(anyhow!("No contract details found for AAPL."));
+    }
+    let con_id = contract_details_list[0].contract.con_id;
+    if con_id == 0 { return Err(anyhow!("Invalid con_id (0) for AAPL.")); }
+
+    let provider_codes = "BRFG,DJNL"; // Example provider codes
+    let total_results = 5;
+
+    info!("Building HistoricalNewsSubscription for AAPL (ConID: {}), Providers: {}, MaxResults: {}...",
+          con_id, provider_codes, total_results);
+
+    let subscription = news_mgr.subscribe_historical_news_stream(con_id, provider_codes, total_results)
+      .with_start_date_time(Utc::now() - ChronoDuration::days(7)) // Last 7 days
+      .with_end_date_time(Utc::now())
+      .submit()
+      .context("Failed to submit HistoricalNewsSubscription")?;
+
+    info!("HistoricalNewsSubscription submitted (ReqID: {}). Iterating events...", subscription.request_id());
+
+    let mut event_count = 0;
+    let iteration_timeout = if is_live { Duration::from_secs(3) } else { Duration::from_millis(100) };
+    let total_wait_duration = if is_live { Duration::from_secs(20) } else { Duration::from_secs(2) };
+    let start_time = std::time::Instant::now();
+    let mut iter = subscription.events();
+
+    while start_time.elapsed() < total_wait_duration && !subscription.is_completed() {
+      match iter.try_next(iteration_timeout) {
+        Some(event) => {
+          info!("Received HistoricalNewsEvent: {:?}", event);
+          event_count += 1;
+          if let HistoricalNewsEvent::Error(ref e) = event {
+            error!("Error event in historical news subscription: {:?}", e);
+            // Don't necessarily cancel/return, let it complete or timeout
+          }
+          if let HistoricalNewsEvent::Closed = event { break; }
+        }
+        None => { // Timeout from try_next
+          if subscription.is_completed() { info!("Subscription completed."); break; }
+          debug!("No historical news event in last {:?}, continuing...", iteration_timeout);
+        }
+      }
+    }
+
+    info!("Finished iterating historical news events. Total events: {}. Cancelling...", event_count);
+    subscription.cancel().context("Failed to cancel HistoricalNewsSubscription")?;
+    info!("HistoricalNewsSubscription cancelled.");
 
     Ok(())
   }
@@ -2282,6 +2406,8 @@ inventory::submit! { TestDefinition { name: "account-subscription", func: test_c
 inventory::submit! { TestDefinition { name: "observe-market-data", func: test_cases::observe_market_data_impl } }
 inventory::submit! { TestDefinition { name: "subscribe-market-data", func: test_cases::subscribe_market_data_impl } }
 inventory::submit! { TestDefinition { name: "subscribe-historical-combined", func: test_cases::subscribe_historical_combined_impl } }
+inventory::submit! { TestDefinition { name: "subscribe-news-bulletins", func: test_cases::subscribe_news_bulletins_impl } }
+inventory::submit! { TestDefinition { name: "subscribe-historical-news", func: test_cases::subscribe_historical_news_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 

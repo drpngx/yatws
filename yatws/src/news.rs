@@ -52,4 +52,7 @@ pub struct NewsArticle {
 /// News observer trait
 pub trait NewsObserver: Send + Sync {
   fn on_news_article(&self, article: &NewsArticle);
+  /// Called when a general error related to the news system occurs,
+  /// or an error specific to a news stream this observer is part of.
+  fn on_error(&self, error_code: i32, error_message: &str);
 }

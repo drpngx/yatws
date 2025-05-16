@@ -2754,7 +2754,7 @@ impl DataMarketManager {
 
   /// Creates a builder for combining multiple subscriptions into a single event stream.
   /// The generic type `T` must be the common event type produced by the iterators being combined.
-  pub fn combine_subscriptions<T: Clone + Send + Sync + 'static>(&self) -> MultiSubscriptionBuilder<T> {
+  pub fn combine_subscriptions<T: Clone + Send + Sync + 'static>(&self) -> MultiSubscriptionBuilder<T, DataMarketManager> {
     MultiSubscriptionBuilder::new()
   }
 

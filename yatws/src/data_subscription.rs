@@ -15,12 +15,18 @@ use crate::data_market_manager::DataMarketManagerTrait as DataMarketManager; // 
 
 use crate::data_observer::{
   HistoricalDataObserver, MarketDataObserver, MarketDepthObserver, ObserverId,
-  RealTimeBarsObserver, TickByTickObserver,
+  RealTimeBarsObserver, TickByTickObserver, // Removed HistoricalTicksObserver as it's not used here
 };
-// use crate::protocol_decoder::ClientErrorCode; // Removed
+
+// NewsManager is only used as a generic parameter M in SubscriptionState,
+// so it doesn't need to be directly imported here if not used otherwise.
+// #[cfg(not(feature = "generate_bindings"))]
+// use crate::data_news_manager::DataNewsManager; // Added for NewsSubscription
+// #[cfg(feature = "generate_bindings")]
+// use crate::data_news_manager::DataNewsManagerTrait as DataNewsManager; // For testing/mocking
 
 use chrono::{DateTime, Utc};
-use log::{error, info, trace, warn}; // debug removed
+use log::{error, info, trace, warn}; // Removed unused debug
 use parking_lot::{Condvar, Mutex};
 use std::collections::VecDeque;
 use std::sync::{
@@ -52,24 +58,40 @@ pub trait MarketDataIterator<T>: Iterator<Item = T> + Send + Sync + 'static {
   fn collect_available(&mut self) -> Vec<T>;
 }
 
-#[derive(Debug)]
-pub(crate) struct SubscriptionState<E: Clone + Send + Sync + 'static> {
-  pub req_id: i32,
-  pub contract: Contract,
+pub(crate) struct SubscriptionState<E: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> {
+  pub req_id: i32, // For data subscriptions, this is TWS req_id. For news, ObserverId.0.
+  pub contract: Contract, // May be default for non-contract specific subs like news bulletins
   pub(crate) completed: AtomicBool, // True if request naturally finished or cancelled/errored
   pub(crate) active: AtomicBool,    // False if cancelled or errored out, or one-shot completed
   pub(crate) error: Mutex<Option<IBKRError>>,
   pub(crate) events_queue: Mutex<VecDeque<E>>,
   pub(crate) condvar: Condvar,
-  pub(crate) manager_weak: Weak<DataMarketManager>,
-  pub(crate) observer_id: Mutex<Option<ObserverId>>,
+  pub(crate) manager_weak: Weak<M>, // Generic manager type
+  pub(crate) observer_id: Mutex<Option<ObserverId>>, // ID used to unregister observer from manager
 }
 
-impl<E: Clone + Send + Sync + 'static> SubscriptionState<E> {
+// Manual Debug implementation for SubscriptionState
+// This is necessary because M (manager type) might not implement Debug (e.g., due to Condvar).
+impl<E: Clone + Send + Sync + 'static + std::fmt::Debug, M: ?Sized + Send + Sync + 'static> std::fmt::Debug for SubscriptionState<E, M> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("SubscriptionState")
+      .field("req_id", &self.req_id)
+      .field("contract", &self.contract)
+      .field("completed", &self.completed.load(Ordering::Relaxed))
+      .field("active", &self.active.load(Ordering::Relaxed))
+      .field("error", &self.error.lock()) // Lock and format Option<IBKRError>
+      .field("events_queue_len", &self.events_queue.lock().len()) // Show queue length
+    // manager_weak and condvar are not typically useful to Debug
+      .field("observer_id", &self.observer_id.lock())
+      .finish()
+  }
+}
+
+impl<E: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> SubscriptionState<E, M> {
   pub(crate) fn new(
     req_id: i32,
     contract: Contract,
-    manager_weak: Weak<DataMarketManager>,
+    manager_weak: Weak<M>, // Generic manager type
   ) -> Self {
     Self {
       req_id,
@@ -154,21 +176,19 @@ impl<E: Clone + Send + Sync + 'static> SubscriptionState<E> {
   }
 }
 
-pub(crate) struct BaseIterator<E: Clone + Send + Sync + 'static> {
-  pub(crate) state: Arc<SubscriptionState<E>>,
+pub(crate) struct BaseIterator<E: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> {
+  pub(crate) state: Arc<SubscriptionState<E, M>>, // Generic manager type
   pub(crate) default_timeout: Option<Duration>,
 }
 
-impl<E: Clone + Send + Sync + 'static> Iterator for BaseIterator<E> {
+impl<E: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> Iterator for BaseIterator<E, M> {
   type Item = E;
   fn next(&mut self) -> Option<Self::Item> {
     self.state.pop_event_with_timeout(self.default_timeout)
   }
 }
 
-impl<E: Clone + Send + Sync + 'static> MarketDataIterator<E> for BaseIterator<E> {
-  // with_timeout removed from trait, concrete types can still have it if needed
-  // or rely on default_timeout being set before boxing.
+impl<E: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> MarketDataIterator<E> for BaseIterator<E, M> {
   fn try_next(&mut self, timeout: Duration) -> Option<E> {
     self.state.pop_event_with_timeout(Some(timeout))
   }
@@ -209,12 +229,12 @@ struct LatestTickValues {
 
 #[derive(Debug)]
 pub struct TickDataSubscription {
-  state: Arc<SubscriptionState<TickDataEvent>>,
+  state: Arc<SubscriptionState<TickDataEvent, DataMarketManager>>,
   latest_values: Arc<Mutex<LatestTickValues>>,
 }
 
 pub struct TickDataSubscriptionBuilder {
-  manager_weak: Weak<DataMarketManager>,
+  manager_weak: Weak<DataMarketManager>, // Specific manager type
   contract: Contract,
   params: TickDataParams,
 }
@@ -236,7 +256,7 @@ impl TickDataSubscriptionBuilder {
     let manager = self.manager_weak.upgrade().ok_or(IBKRError::NotConnected)?;
     let req_id = manager.next_request_id();
 
-    let state = Arc::new(SubscriptionState::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
+    let state = Arc::new(SubscriptionState::<TickDataEvent, DataMarketManager>::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
     let latest_values = Arc::new(Mutex::new(LatestTickValues::default()));
 
     let observer = TickDataInternalObserver { state: Arc::clone(&state), latest_values: Arc::clone(&latest_values) };
@@ -281,11 +301,11 @@ impl MarketDataSubscription for TickDataSubscription {
     } else { return Err(IBKRError::InternalError("Manager unavailable for cancel".to_string())); }
     Ok(())
   }
-  fn events(&self) -> Self::Iterator { TickDataIterator { inner: BaseIterator { state: Arc::clone(&self.state), default_timeout: None } } }
+  fn events(&self) -> Self::Iterator { TickDataIterator { inner: BaseIterator::<TickDataEvent, DataMarketManager>::new(Arc::clone(&self.state), None) } }
 }
 impl Drop for TickDataSubscription { fn drop(&mut self) { if self.state.active.load(Ordering::SeqCst) { if let Err(e) = self.cancel() { error!("Drop: Error cancelling TickDataSubscription {}: {:?}", self.state.req_id, e); } } } }
 
-pub struct TickDataIterator { inner: BaseIterator<TickDataEvent> }
+pub struct TickDataIterator { inner: BaseIterator<TickDataEvent, DataMarketManager> }
 impl TickDataIterator {
   pub fn with_timeout(mut self, timeout: Duration) -> Self {
     self.inner.default_timeout = Some(timeout);
@@ -299,7 +319,14 @@ impl MarketDataIterator<TickDataEvent> for TickDataIterator {
   fn collect_available(&mut self) -> Vec<TickDataEvent> { self.inner.collect_available() }
 }
 
-struct TickDataInternalObserver { state: Arc<SubscriptionState<TickDataEvent>>, latest_values: Arc<Mutex<LatestTickValues>> }
+// Helper for BaseIterator construction, not strictly necessary but can be convenient
+impl<E: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> BaseIterator<E, M> {
+  pub(crate) fn new(state: Arc<SubscriptionState<E, M>>, default_timeout: Option<Duration>) -> Self {
+    Self { state, default_timeout }
+  }
+}
+
+struct TickDataInternalObserver { state: Arc<SubscriptionState<TickDataEvent, DataMarketManager>>, latest_values: Arc<Mutex<LatestTickValues>> }
 impl MarketDataObserver for TickDataInternalObserver {
   fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib) { if req_id != self.state.req_id { return; } { let mut latest = self.latest_values.lock(); match tick_type { TickType::BidPrice | TickType::DelayedBid => latest.bid_price = Some(price), TickType::AskPrice | TickType::DelayedAsk => latest.ask_price = Some(price), TickType::LastPrice | TickType::DelayedLast => latest.last_price = Some(price), _ => {} } } self.state.push_event(TickDataEvent::Price(tick_type, price, attrib)); }
   fn on_tick_size(&self, req_id: i32, tick_type: TickType, size: f64) { if req_id != self.state.req_id { return; } self.state.push_event(TickDataEvent::Size(tick_type, size)); }
@@ -316,7 +343,7 @@ impl MarketDataObserver for TickDataInternalObserver {
 pub struct RealTimeBarParams { pub what_to_show: WhatToShow, pub use_rth: bool, pub rt_bar_options: Vec<(String, String)> }
 pub type RealTimeBarEvent = Bar;
 #[derive(Debug)]
-pub struct RealTimeBarSubscription { state: Arc<SubscriptionState<RealTimeBarEvent>> }
+pub struct RealTimeBarSubscription { state: Arc<SubscriptionState<RealTimeBarEvent, DataMarketManager>> }
 pub struct RealTimeBarSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: RealTimeBarParams }
 impl RealTimeBarSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, what_to_show: WhatToShow) -> Self { Self { manager_weak, contract, params: RealTimeBarParams { what_to_show, use_rth: true, ..Default::default() } } }
@@ -325,7 +352,7 @@ impl RealTimeBarSubscriptionBuilder {
   pub fn submit(self) -> Result<RealTimeBarSubscription, IBKRError> {
     let manager = self.manager_weak.upgrade().ok_or(IBKRError::NotConnected)?;
     let req_id = manager.next_request_id();
-    let state = Arc::new(SubscriptionState::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
+    let state = Arc::new(SubscriptionState::<RealTimeBarEvent, DataMarketManager>::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
     let observer = RealTimeBarInternalObserver { state: Arc::clone(&state) };
     let observer_id = manager.observe_realtime_bars(observer);
     state.set_observer_id(observer_id);
@@ -349,10 +376,10 @@ impl MarketDataSubscription for RealTimeBarSubscription {
     } else { return Err(IBKRError::InternalError("Manager unavailable".to_string())); }
     Ok(())
   }
-  fn events(&self) -> Self::Iterator { RealTimeBarIterator { inner: BaseIterator { state: Arc::clone(&self.state), default_timeout: None } } }
+  fn events(&self) -> Self::Iterator { RealTimeBarIterator { inner: BaseIterator::<RealTimeBarEvent, DataMarketManager>::new(Arc::clone(&self.state), None) } }
 }
 impl Drop for RealTimeBarSubscription { fn drop(&mut self) { if self.state.active.load(Ordering::SeqCst) { if let Err(e) = self.cancel() { error!("Drop: Error cancelling RealTimeBarSubscription {}: {:?}", self.state.req_id, e); } } } }
-pub struct RealTimeBarIterator { inner: BaseIterator<RealTimeBarEvent> }
+pub struct RealTimeBarIterator { inner: BaseIterator<RealTimeBarEvent, DataMarketManager> }
 impl RealTimeBarIterator {
   pub fn with_timeout(mut self, timeout: Duration) -> Self {
     self.inner.default_timeout = Some(timeout);
@@ -365,7 +392,7 @@ impl MarketDataIterator<RealTimeBarEvent> for RealTimeBarIterator {
   fn try_next(&mut self, timeout: Duration) -> Option<RealTimeBarEvent> { self.inner.try_next(timeout) }
   fn collect_available(&mut self) -> Vec<RealTimeBarEvent> { self.inner.collect_available() }
 }
-struct RealTimeBarInternalObserver { state: Arc<SubscriptionState<RealTimeBarEvent>> }
+struct RealTimeBarInternalObserver { state: Arc<SubscriptionState<RealTimeBarEvent, DataMarketManager>> }
 impl RealTimeBarsObserver for RealTimeBarInternalObserver {
   fn on_bar_update(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(bar.clone()); }
   fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } self.state.set_error(IBKRError::ApiError(error_code, error_message.to_string())); }
@@ -375,9 +402,9 @@ impl RealTimeBarsObserver for RealTimeBarInternalObserver {
 #[derive(Debug, Clone)]
 pub struct TickByTickParams { pub tick_type: TickByTickRequestType, pub number_of_ticks: i32, pub ignore_size: bool }
 #[derive(Debug, Clone)]
-pub enum TickByTickEvent { Last { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, AllLast { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, BidAsk { time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk }, MidPoint { time: i64, mid_point: f64 }, Error(IBKRError) }
+pub enum TickByTickEvent { Last { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, AllLast { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, BidAsk { time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk }, MidPoint { time: i64, mid_point: f64 }, Error(IBKRError), }
 #[derive(Debug)]
-pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent>> }
+pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>> }
 pub struct TickByTickSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: TickByTickParams }
 impl TickByTickSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, tick_type: TickByTickRequestType) -> Self { Self { manager_weak, contract, params: TickByTickParams { tick_type, number_of_ticks: 0, ignore_size: false } } }
@@ -386,7 +413,7 @@ impl TickByTickSubscriptionBuilder {
   pub fn submit(self) -> Result<TickByTickSubscription, IBKRError> {
     let manager = self.manager_weak.upgrade().ok_or(IBKRError::NotConnected)?;
     let req_id = manager.next_request_id();
-    let state = Arc::new(SubscriptionState::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
+    let state = Arc::new(SubscriptionState::<TickByTickEvent, DataMarketManager>::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
     let observer = TickByTickInternalObserver { state: Arc::clone(&state) };
     let observer_id = manager.observe_tick_by_tick(observer);
     state.set_observer_id(observer_id);
@@ -410,10 +437,10 @@ impl MarketDataSubscription for TickByTickSubscription {
     } else { return Err(IBKRError::InternalError("Manager unavailable".to_string())); }
     Ok(())
   }
-  fn events(&self) -> Self::Iterator { TickByTickIterator { inner: BaseIterator { state: Arc::clone(&self.state), default_timeout: None } } }
+  fn events(&self) -> Self::Iterator { TickByTickIterator { inner: BaseIterator::<TickByTickEvent, DataMarketManager>::new(Arc::clone(&self.state), None) } }
 }
 impl Drop for TickByTickSubscription { fn drop(&mut self) { if self.state.active.load(Ordering::SeqCst) { if let Err(e) = self.cancel() { error!("Drop: Error cancelling TickByTickSubscription {}: {:?}", self.state.req_id, e); } } } }
-pub struct TickByTickIterator { inner: BaseIterator<TickByTickEvent> }
+pub struct TickByTickIterator { inner: BaseIterator<TickByTickEvent, DataMarketManager> }
 impl TickByTickIterator {
   pub fn with_timeout(mut self, timeout: Duration) -> Self {
     self.inner.default_timeout = Some(timeout);
@@ -426,7 +453,7 @@ impl MarketDataIterator<TickByTickEvent> for TickByTickIterator {
   fn try_next(&mut self, timeout: Duration) -> Option<TickByTickEvent> { self.inner.try_next(timeout) }
   fn collect_available(&mut self) -> Vec<TickByTickEvent> { self.inner.collect_available() }
 }
-struct TickByTickInternalObserver { state: Arc<SubscriptionState<TickByTickEvent>> }
+struct TickByTickInternalObserver { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>> }
 impl TickByTickObserver for TickByTickInternalObserver {
   fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type_val: i32, time: i64, price: f64, size: f64, tick_attrib_last: &TickAttribLast, exchange: &str, special_conditions: &str) { if req_id != self.state.req_id { return; } let event = if tick_type_val == 1 { TickByTickEvent::Last { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } } else { TickByTickEvent::AllLast { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } }; self.state.push_event(event); }
   fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: &TickAttribBidAsk) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask: tick_attrib_bid_ask.clone() }); }
@@ -438,9 +465,9 @@ impl TickByTickObserver for TickByTickInternalObserver {
 #[derive(Debug, Clone)]
 pub struct MarketDepthParams { pub num_rows: i32, pub is_smart_depth: bool, pub mkt_depth_options: Vec<(String, String)> }
 #[derive(Debug, Clone)]
-pub enum MarketDepthEvent { UpdateL1 { position: i32, operation: i32, side: i32, price: f64, size: f64 }, UpdateL2 { position: i32, market_maker: String, operation: i32, side: i32, price: f64, size: f64, is_smart_depth: bool }, Error(IBKRError) }
+pub enum MarketDepthEvent { UpdateL1 { position: i32, operation: i32, side: i32, price: f64, size: f64 }, UpdateL2 { position: i32, market_maker: String, operation: i32, side: i32, price: f64, size: f64, is_smart_depth: bool }, Error(IBKRError), }
 #[derive(Debug)]
-pub struct MarketDepthSubscription { state: Arc<SubscriptionState<MarketDepthEvent>>, params: MarketDepthParams }
+pub struct MarketDepthSubscription { state: Arc<SubscriptionState<MarketDepthEvent, DataMarketManager>>, params: MarketDepthParams }
 pub struct MarketDepthSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: MarketDepthParams }
 impl MarketDepthSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, num_rows: i32) -> Self { Self { manager_weak, contract, params: MarketDepthParams { num_rows, is_smart_depth: false, mkt_depth_options: Vec::new() } } }
@@ -449,7 +476,7 @@ impl MarketDepthSubscriptionBuilder {
   pub fn submit(self) -> Result<MarketDepthSubscription, IBKRError> {
     let manager = self.manager_weak.upgrade().ok_or(IBKRError::NotConnected)?;
     let req_id = manager.next_request_id();
-    let state = Arc::new(SubscriptionState::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
+    let state = Arc::new(SubscriptionState::<MarketDepthEvent, DataMarketManager>::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
     let observer = MarketDepthInternalObserver { state: Arc::clone(&state) };
     let observer_id = manager.observe_market_depth(observer);
     state.set_observer_id(observer_id);
@@ -473,10 +500,10 @@ impl MarketDataSubscription for MarketDepthSubscription {
     } else { return Err(IBKRError::InternalError("Manager unavailable".to_string())); }
     Ok(())
   }
-  fn events(&self) -> Self::Iterator { MarketDepthIterator { inner: BaseIterator { state: Arc::clone(&self.state), default_timeout: None } } }
+  fn events(&self) -> Self::Iterator { MarketDepthIterator { inner: BaseIterator::<MarketDepthEvent, DataMarketManager>::new(Arc::clone(&self.state), None) } }
 }
 impl Drop for MarketDepthSubscription { fn drop(&mut self) { if self.state.active.load(Ordering::SeqCst) { if let Err(e) = self.cancel() { error!("Drop: Error cancelling MarketDepthSubscription {}: {:?}", self.state.req_id, e); } } } }
-pub struct MarketDepthIterator { inner: BaseIterator<MarketDepthEvent> }
+pub struct MarketDepthIterator { inner: BaseIterator<MarketDepthEvent, DataMarketManager> }
 impl MarketDepthIterator {
   pub fn with_timeout(mut self, timeout: Duration) -> Self {
     self.inner.default_timeout = Some(timeout);
@@ -489,7 +516,7 @@ impl MarketDataIterator<MarketDepthEvent> for MarketDepthIterator {
   fn try_next(&mut self, timeout: Duration) -> Option<MarketDepthEvent> { self.inner.try_next(timeout) }
   fn collect_available(&mut self) -> Vec<MarketDepthEvent> { self.inner.collect_available() }
 }
-struct MarketDepthInternalObserver { state: Arc<SubscriptionState<MarketDepthEvent>> }
+struct MarketDepthInternalObserver { state: Arc<SubscriptionState<MarketDepthEvent, DataMarketManager>> }
 impl MarketDepthObserver for MarketDepthInternalObserver {
   fn on_update_mkt_depth(&self, req_id: i32, position: i32, operation: i32, side: i32, price: f64, size: f64) { if req_id != self.state.req_id { return; } self.state.push_event(MarketDepthEvent::UpdateL1 { position, operation, side, price, size }); }
   fn on_update_mkt_depth_l2(&self, req_id: i32, position: i32, market_maker: &str, operation: i32, side: i32, price: f64, size: f64, is_smart_depth: bool) { if req_id != self.state.req_id { return; } self.state.push_event(MarketDepthEvent::UpdateL2 { position, market_maker: market_maker.to_string(), operation, side, price, size, is_smart_depth }); }
@@ -500,9 +527,9 @@ impl MarketDepthObserver for MarketDepthInternalObserver {
 #[derive(Debug, Clone)]
 pub struct HistoricalDataParams { pub end_date_time: Option<DateTime<Utc>>, pub duration: DurationUnit, pub bar_size_setting: BarSize, pub what_to_show: WhatToShow, pub use_rth: bool, pub format_date: i32, pub keep_up_to_date: bool, pub market_data_type: Option<MarketDataType>, pub chart_options: Vec<(String, String)> }
 #[derive(Debug, Clone)]
-pub enum HistoricalDataEvent { Bar(Bar), UpdateBar(Bar), Complete { start_date: String, end_date: String }, Error(IBKRError) }
+pub enum HistoricalDataEvent { Bar(Bar), UpdateBar(Bar), Complete { start_date: String, end_date: String }, Error(IBKRError), }
 #[derive(Debug)]
-pub struct HistoricalDataSubscription { state: Arc<SubscriptionState<HistoricalDataEvent>> }
+pub struct HistoricalDataSubscription { state: Arc<SubscriptionState<HistoricalDataEvent, DataMarketManager>> }
 pub struct HistoricalDataSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: HistoricalDataParams }
 impl HistoricalDataSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, duration: DurationUnit, bar_size: BarSize, what_to_show: WhatToShow) -> Self { Self { manager_weak, contract, params: HistoricalDataParams { duration, bar_size_setting: bar_size, what_to_show, use_rth: true, format_date: 1, keep_up_to_date: false, market_data_type: None, chart_options: Vec::new(), end_date_time: None } } }
@@ -515,7 +542,7 @@ impl HistoricalDataSubscriptionBuilder {
   pub fn submit(self) -> Result<HistoricalDataSubscription, IBKRError> {
     let manager = self.manager_weak.upgrade().ok_or(IBKRError::NotConnected)?;
     let req_id = manager.next_request_id();
-    let state = Arc::new(SubscriptionState::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
+    let state = Arc::new(SubscriptionState::<HistoricalDataEvent, DataMarketManager>::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
     let observer = HistoricalDataInternalObserver { state: Arc::clone(&state) };
     let observer_id = manager.observe_historical_data(observer);
     state.set_observer_id(observer_id);
@@ -543,10 +570,10 @@ impl MarketDataSubscription for HistoricalDataSubscription {
     } else { return Err(IBKRError::InternalError("Manager unavailable".to_string())); }
     Ok(())
   }
-  fn events(&self) -> Self::Iterator { HistoricalDataIterator { inner: BaseIterator { state: Arc::clone(&self.state), default_timeout: None } } }
+  fn events(&self) -> Self::Iterator { HistoricalDataIterator { inner: BaseIterator::<HistoricalDataEvent, DataMarketManager>::new(Arc::clone(&self.state), None) } }
 }
 impl Drop for HistoricalDataSubscription { fn drop(&mut self) { if self.state.active.load(Ordering::SeqCst) { if let Err(e) = self.cancel() { error!("Drop: Error cancelling HistoricalDataSubscription {}: {:?}", self.state.req_id, e); } } } }
-pub struct HistoricalDataIterator { inner: BaseIterator<HistoricalDataEvent> }
+pub struct HistoricalDataIterator { inner: BaseIterator<HistoricalDataEvent, DataMarketManager> }
 impl HistoricalDataIterator {
   pub fn with_timeout(mut self, timeout: Duration) -> Self {
     self.inner.default_timeout = Some(timeout);
@@ -559,7 +586,7 @@ impl MarketDataIterator<HistoricalDataEvent> for HistoricalDataIterator {
   fn try_next(&mut self, timeout: Duration) -> Option<HistoricalDataEvent> { self.inner.try_next(timeout) }
   fn collect_available(&mut self) -> Vec<HistoricalDataEvent> { self.inner.collect_available() }
 }
-struct HistoricalDataInternalObserver { state: Arc<SubscriptionState<HistoricalDataEvent>> }
+struct HistoricalDataInternalObserver { state: Arc<SubscriptionState<HistoricalDataEvent, DataMarketManager>> }
 impl HistoricalDataObserver for HistoricalDataInternalObserver {
   fn on_historical_data(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::Bar(bar.clone())); }
   fn on_historical_data_update(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::UpdateBar(bar.clone())); }
@@ -576,34 +603,40 @@ pub struct TaggedEvent<T: Clone + Send + Sync + 'static> {
   pub event: T,
 }
 
-pub struct MultiSubscriptionBuilder<T: Clone + Send + Sync + 'static> {
+pub struct MultiSubscriptionBuilder<T: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> {
   iterators: Vec<(i32, Contract, Box<dyn MarketDataIterator<T>>)>,
+  // M is phantom here, but needed to match the iterator type if it were generic over M too.
+  // However, MarketDataIterator<T> is not generic over M.
+  _phantom_manager: std::marker::PhantomData<M>,
 }
 
-impl<T: Clone + Send + Sync + 'static> Default for MultiSubscriptionBuilder<T> {
+impl<T: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> Default for MultiSubscriptionBuilder<T, M> {
   fn default() -> Self { Self::new() }
 }
 
-impl<T: Clone + Send + Sync + 'static> MultiSubscriptionBuilder<T> {
-  pub(crate) fn new() -> Self { Self { iterators: Vec::new() } }
+impl<T: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> MultiSubscriptionBuilder<T, M> {
+  pub(crate) fn new() -> Self { Self { iterators: Vec::new(), _phantom_manager: std::marker::PhantomData } }
+
+  // S::Iterator is MarketDataIterator<T>, which is fine.
   pub fn add<S>(mut self, subscription: &S, iterator: S::Iterator) -> Self
-  where S: MarketDataSubscription<Event = T>,
+  where S: MarketDataSubscription<Event = T>, // S::Iterator is MarketDataIterator<S::Event>
   {
     self.iterators.push((subscription.request_id(), subscription.contract().clone(), Box::new(iterator)));
     self
   }
-  pub fn build(self) -> MultiSubscriptionIterator<T> {
-    MultiSubscriptionIterator { iterators: self.iterators, current_timeout_per_iterator: None, last_polled_idx: 0 }
+  pub fn build(self) -> MultiSubscriptionIterator<T, M> {
+    MultiSubscriptionIterator { iterators: self.iterators, current_timeout_per_iterator: None, last_polled_idx: 0, _phantom_manager: std::marker::PhantomData }
   }
 }
 
-pub struct MultiSubscriptionIterator<T: Clone + Send + Sync + 'static> {
+pub struct MultiSubscriptionIterator<T: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> {
   iterators: Vec<(i32, Contract, Box<dyn MarketDataIterator<T>>)>,
   current_timeout_per_iterator: Option<Duration>,
   last_polled_idx: usize,
+  _phantom_manager: std::marker::PhantomData<M>,
 }
 
-impl<T: Clone + Send + Sync + 'static> MultiSubscriptionIterator<T> {
+impl<T: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> MultiSubscriptionIterator<T, M> {
   pub fn with_timeout(mut self, timeout_per_iterator: Duration) -> Self {
     self.current_timeout_per_iterator = Some(timeout_per_iterator);
     self
@@ -631,7 +664,7 @@ impl<T: Clone + Send + Sync + 'static> MultiSubscriptionIterator<T> {
   }
 }
 
-impl<T: Clone + Send + Sync + 'static> Iterator for MultiSubscriptionIterator<T> {
+impl<T: Clone + Send + Sync + 'static, M: ?Sized + Send + Sync + 'static> Iterator for MultiSubscriptionIterator<T, M> {
   type Item = TaggedEvent<T>;
   fn next(&mut self) -> Option<Self::Item> {
     let timeout_per_iterator = self.current_timeout_per_iterator.unwrap_or_else(|| Duration::from_millis(100));
@@ -640,14 +673,10 @@ impl<T: Clone + Send + Sync + 'static> Iterator for MultiSubscriptionIterator<T>
       if let Some(event) = self.try_next(timeout_per_iterator) {
         return Some(event);
       }
-      // If a timeout was set for the MultiSubscriptionIterator itself, and one round of try_next yielded nothing,
-      // then the "overall" try_next for the multi-iterator has timed out.
       if self.current_timeout_per_iterator.is_some() {
         return None;
       }
-      // If no timeout on MultiSubscriptionIterator, continue polling.
-      // This is a simple polling `next()`. A truly blocking `next()` on multiple sources is more complex.
-      std::thread::yield_now(); // Be nice if polling indefinitely
+      std::thread::yield_now();
     }
   }
 }
