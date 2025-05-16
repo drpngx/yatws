@@ -17,7 +17,11 @@ This document provides an overview of the public API for YATWS (Yet Another TWS 
   - [SecDefOptParamsResult Struct](#secdefoptparamsresult-struct)
 - [DataMarketManager](#datamarketmanager)
   - [Quote Type Alias](#quote-type-alias)
+  - [Observer Traits](#market-data-observer-traits)
+  - [Subscription Types](#market-data-subscription-types)
 - [DataNewsManager](#datanewsmanager)
+  - [NewsObserver Trait](#newsobserver-trait)
+  - [Subscription Types](#news-subscription-types)
 - [FinancialAdvisorManager](#financialadvisormanager)
 - [DataFundamentalsManager](#datafundamentalsmanager)
 - [Financial Report Parser](#financial-report-parser)
@@ -979,6 +983,59 @@ Requests historical tick data and blocks until received or timeout.
 Cancels an ongoing historical ticks request (uses `cancelHistoricalData` message).
 -   **Errors**: If cancellation message fails.
 
+### Market Data Observer Traits
+
+**File:** `yatws/src/data_observer.rs`
+
+Various observer traits for different types of market data updates:
+
+- `MarketDataObserver`: For tick price, size, string, etc. updates
+- `RealTimeBarsObserver`: For real-time 5-second bar updates
+- `TickByTickObserver`: For detailed tick-by-tick data
+- `MarketDepthObserver`: For market depth (Level II book) updates
+- `HistoricalDataObserver`: For historical bar data and updates
+- `HistoricalTicksObserver`: For historical tick data
+
+### Observer Registration Methods
+
+- `observe_market_data<T: MarketDataObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId`
+- `observe_realtime_bars<T: RealTimeBarsObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId`
+- `observe_tick_by_tick<T: TickByTickObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId`
+- `observe_market_depth<T: MarketDepthObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId`
+- `observe_historical_data<T: HistoricalDataObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId`
+- `observe_historical_ticks<T: HistoricalTicksObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId`
+
+### Observer Removal Methods
+
+- `remove_market_data_observer(&self, observer_id: ObserverId) -> bool`
+- `remove_realtime_bars_observer(&self, observer_id: ObserverId) -> bool`
+- `remove_tick_by_tick_observer(&self, observer_id: ObserverId) -> bool`
+- `remove_market_depth_observer(&self, observer_id: ObserverId) -> bool`
+- `remove_historical_data_observer(&self, observer_id: ObserverId) -> bool`
+- `remove_historical_ticks_observer(&self, observer_id: ObserverId) -> bool`
+
+### Market Data Subscription Types
+
+**File:** `yatws/src/data_subscription.rs`
+
+Various subscription builders for different types of market data:
+
+- `subscribe_market_data(&self, contract: &Contract) -> TickDataSubscriptionBuilder`
+- `subscribe_real_time_bars(&self, contract: &Contract, what_to_show: WhatToShow) -> RealTimeBarSubscriptionBuilder`
+- `subscribe_tick_by_tick(&self, contract: &Contract, tick_type: TickByTickRequestType) -> TickByTickSubscriptionBuilder`
+- `subscribe_market_depth(&self, contract: &Contract, num_rows: i32) -> MarketDepthSubscriptionBuilder`
+- `subscribe_historical_data(&self, contract: &Contract, duration: DurationUnit, bar_size: BarSize, what_to_show: WhatToShow) -> HistoricalDataSubscriptionBuilder`
+- `combine_subscriptions<T: Clone + Send + Sync + 'static>(&self) -> MultiSubscriptionBuilder<T, DataMarketManager>`
+
+Each subscription builder provides a fluent interface for configuring the subscription and a `submit()` method to create the actual subscription. Subscription objects implement the `MarketDataSubscription` trait, providing methods like:
+- `request_id()`
+- `contract()`
+- `is_completed()`
+- `has_error()`
+- `get_error()`
+- `cancel()`
+- `events()`
+
 ### Quote Type Alias
 
 **File:** `yatws/src/data_market_manager.rs`
@@ -995,13 +1052,19 @@ Manages requests for news providers, articles, and historical news. Accessed via
 
 **File:** `yatws/src/data_news_manager.rs`
 
-### `DataNewsManager::add_observer(&self, observer: Arc<dyn NewsObserver>)`
+### `DataNewsManager::add_observer(&self, observer: Arc<dyn NewsObserver>) -> ObserverId`
 
-Registers an observer to receive streaming news updates (bulletins, news ticks). Observer held by `Weak` pointer.
+Registers an observer to receive streaming news updates (bulletins and news ticks). Observer held by `Weak` pointer to allow for automatic cleanup when observer is dropped.
+- **Returns**: Unique `ObserverId` for the registered observer.
+
+### `DataNewsManager::remove_observer(&self, observer_id: ObserverId) -> bool`
+
+Removes a previously registered news observer.
+- **Returns**: `true` if an observer with the given ID was found and removed, `false` otherwise.
 
 ### `DataNewsManager::clear_observers(&self)`
 
-Clears all registered news observers.
+Clears all registered news observers. After this call, no observers will receive further news updates from this manager.
 
 ### `DataNewsManager::get_news_providers(&self) -> Result<Vec<NewsProvider>, IBKRError>`
 
@@ -1040,6 +1103,74 @@ Subscribes to live news bulletins. Non-blocking.
 Cancels subscription to live news bulletins.
 -   **Errors**: If cancellation message fails.
 
+### `DataNewsManager::subscribe_news_bulletins_stream(&self, all_msgs: bool) -> NewsSubscriptionBuilder`
+
+Creates a builder for a news bulletin subscription. News bulletins are general news items from TWS, not tied to a specific contract.
+- `all_msgs`: If `true`, requests all available historical bulletins upon subscription followed by new ones. If `false`, requests only new bulletins.
+- **Returns**: `NewsSubscriptionBuilder` for configuring and creating the subscription.
+
+### `DataNewsManager::subscribe_historical_news_stream(&self, con_id: i32, provider_codes: &str, total_results: i32) -> HistoricalNewsSubscriptionBuilder`
+
+Creates a builder for a historical news subscription.
+- `con_id`: The TWS contract ID of the instrument.
+- `provider_codes`: Comma-separated string of news provider codes to include.
+- `total_results`: The maximum number of headlines to return.
+- **Returns**: `HistoricalNewsSubscriptionBuilder` for configuring and creating the subscription.
+
+### NewsObserver Trait
+
+**File:** `yatws/src/news.rs`
+
+```rust
+pub trait NewsObserver: Send + Sync {
+    fn on_news_article(&self, article: &NewsArticle);
+    fn on_error(&self, error_code: i32, error_message: &str);
+}
+```
+- `on_news_article`: Called when a news bulletin or a news tick is received.
+- `on_error`: Called when an error occurs related to news data.
+
+### News Subscription Types
+
+**File:** `yatws/src/news_subscription.rs`
+
+#### NewsSubscription
+
+Represents an active subscription to news bulletins. Provides a stream of `NewsEvent`s, which must be kept alive to receive updates.
+
+- `request_id(&self) -> i32`: Returns a unique ID for this subscription.
+- `events(&self) -> NewsIterator`: Returns an iterator over `NewsEvent`s from this subscription.
+- `cancel(&self) -> Result<(), IBKRError>`: Cancels the subscription. Automatically called on drop if the subscription is still active.
+
+#### NewsEvent Enum
+
+```rust
+pub enum NewsEvent {
+    Bulletin { article: NewsArticle, timestamp: DateTime<Utc> },
+    Error(IBKRError),
+    Closed { timestamp: DateTime<Utc> },
+}
+```
+
+#### HistoricalNewsSubscription
+
+Represents an active subscription to historical news for a specific contract.
+
+- `request_id(&self) -> i32`: Returns a unique ID for this subscription.
+- `events(&self) -> HistoricalNewsIterator`: Returns an iterator over `HistoricalNewsEvent`s from this subscription.
+- `cancel(&self) -> Result<(), IBKRError>`: Cancels the subscription. Automatically called on drop if the subscription is still active.
+
+#### HistoricalNewsEvent Enum
+
+```rust
+pub enum HistoricalNewsEvent {
+    Article(HistoricalNews),
+    Complete,
+    Error(IBKRError),
+    Closed,
+}
+```
+
 ---
 
 ## FinancialAdvisorManager
@@ -1071,40 +1202,6 @@ Retrieves a clone of the current Financial Advisor configuration. This configura
 Key related enums and structs:
 -   `FADataType`: Enum for `Groups`, `Profiles`, `Aliases` (defined in `yatws::financial_advisor`).
 -   `FinancialAdvisorConfig`, `FAGroup`, `FAProfile`, `FAAlias`: Structs representing the FA configuration data (defined in `yatws::financial_advisor`).
-
----
-
-## IBKRAlgo Enum
-
-**File:** `yatws/src/order.rs`
-
-Enum representing supported IBKR Algos and their parameters. Used with `OrderBuilder::with_ibkr_algo`.
-
-```rust
-pub enum IBKRAlgo {
-  Adaptive { priority: AdaptivePriority },
-  ArrivalPrice { max_pct_vol: f64, risk_aversion: RiskAversion, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool, force_completion: bool },
-  ClosePrice { max_pct_vol: f64, risk_aversion: RiskAversion, start_time: Option<DateTime<Utc>>, force_completion: bool },
-  DarkIce { display_size: i32, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool },
-  AccumulateDistribute { component_size: i32, time_between_orders: i32, randomize_time_20pct: bool, randomize_size_55pct: bool, give_up: Option<i32>, catch_up_in_time: bool, wait_for_fill: bool, active_time_start: Option<DateTime<Utc>>, active_time_end: Option<DateTime<Utc>> },
-  PercentageOfVolume { pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
-  TWAP { strategy_type: TwapStrategyType, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool },
-  PriceVariantPctVol { pct_vol: f64, delta_pct_vol: f64, min_pct_vol_for_price: f64, max_pct_vol_for_price: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
-  SizeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
-  TimeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
-  VWAP { max_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool, no_take_liq: bool, speed_up: bool },
-  BalanceImpactRisk { max_pct_vol: f64, risk_aversion: RiskAversion, force_completion: bool },
-  MinimiseImpact { max_pct_vol: f64 },
-  Custom { strategy: String, params: Vec<(String, String)> }, // Escape hatch
-}
-
-// Helper Enums:
-pub enum AdaptivePriority { Urgent, Normal, Patient }
-pub enum RiskAversion { GetDone, Aggressive, Neutral, Passive }
-pub enum TwapStrategyType { Marketable, MatchingMidpoint, MatchingSameSide, MatchingLast }
-pub enum ConditionConjunction { And, Or }
-```
-(See `order.rs` and `order_builder.rs` for full details and validation ranges).
 
 ---
 
@@ -1174,3 +1271,37 @@ Parses fundamental data XML string into corresponding Rust structs.
 -   `report_type`: The type of report the `xml_data` represents (e.g., `FundamentalReportType::ReportsFinSummary`,
 `FundamentalReportType::ReportSnapshot`).
 -   **Returns**: A `Result` containing the parsed data in a `ParsedFundamentalData` enum variant, or an `IBKRError` if parsing fails.
+
+---
+
+## IBKRAlgo Enum
+
+**File:** `yatws/src/order.rs`
+
+Enum representing supported IBKR Algos and their parameters. Used with `OrderBuilder::with_ibkr_algo`.
+
+```rust
+pub enum IBKRAlgo {
+  Adaptive { priority: AdaptivePriority },
+  ArrivalPrice { max_pct_vol: f64, risk_aversion: RiskAversion, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool, force_completion: bool },
+  ClosePrice { max_pct_vol: f64, risk_aversion: RiskAversion, start_time: Option<DateTime<Utc>>, force_completion: bool },
+  DarkIce { display_size: i32, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool },
+  AccumulateDistribute { component_size: i32, time_between_orders: i32, randomize_time_20pct: bool, randomize_size_55pct: bool, give_up: Option<i32>, catch_up_in_time: bool, wait_for_fill: bool, active_time_start: Option<DateTime<Utc>>, active_time_end: Option<DateTime<Utc>> },
+  PercentageOfVolume { pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
+  TWAP { strategy_type: TwapStrategyType, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool },
+  PriceVariantPctVol { pct_vol: f64, delta_pct_vol: f64, min_pct_vol_for_price: f64, max_pct_vol_for_price: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
+  SizeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
+  TimeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
+  VWAP { max_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool, no_take_liq: bool, speed_up: bool },
+  BalanceImpactRisk { max_pct_vol: f64, risk_aversion: RiskAversion, force_completion: bool },
+  MinimiseImpact { max_pct_vol: f64 },
+  Custom { strategy: String, params: Vec<(String, String)> }, // Escape hatch
+}
+
+// Helper Enums:
+pub enum AdaptivePriority { Urgent, Normal, Patient }
+pub enum RiskAversion { GetDone, Aggressive, Neutral, Passive }
+pub enum TwapStrategyType { Marketable, MatchingMidpoint, MatchingSameSide, MatchingLast }
+pub enum ConditionConjunction { And, Or }
+```
+(See `order.rs` and `order_builder.rs` for full details and validation ranges).
