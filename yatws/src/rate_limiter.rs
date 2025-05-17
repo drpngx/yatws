@@ -299,11 +299,6 @@ impl CounterRateLimiter {
     }
   }
 
-  /// Mark a request as completed (for end messages).
-  pub fn mark_completed(&self, req_id: i32) {
-    self.release(req_id); // Same implementation as release
-  }
-
   /// Get current status of this rate limiter.
   /// Returns (active_count, max_count, requests_rejected, enabled)
   pub fn status(&self) -> (u32, u32, u64, bool) {
@@ -528,6 +523,7 @@ impl RateLimitGuard {
   ///
   /// Call this method when the operation has completed successfully
   /// and you want to prevent automatic resource release.
+  #[allow(dead_code)]
   pub(crate) fn disarm(&mut self) {
     self.armed = false;
   }
@@ -536,6 +532,7 @@ impl RateLimitGuard {
   ///
   /// This can be useful if you need to release the resource before
   /// the guard goes out of scope, but still want to prevent a double-release.
+  #[allow(dead_code)]
   pub(crate) fn release_now(&mut self) {
     if self.armed {
       self.limiter.release(self.req_id);
@@ -544,11 +541,13 @@ impl RateLimitGuard {
   }
 
   /// Check if the guard is currently armed.
+  #[allow(dead_code)]
   pub(crate) fn is_armed(&self) -> bool {
     self.armed
   }
 
   /// Get the request ID associated with this guard.
+  #[allow(dead_code)]
   pub(crate) fn req_id(&self) -> i32 {
     self.req_id
   }

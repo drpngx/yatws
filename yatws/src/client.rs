@@ -132,7 +132,11 @@ impl IBKRClient {
     let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
     let data_ref_mgr = DataRefManager::new(message_broker.clone());
-    let data_market_mgr = DataMarketManager::new(message_broker.clone());
+    let data_market_mgr = DataMarketManager::new(
+      message_broker.clone(),
+      rate_limiter_mgr.get_market_data_limiter(),
+      rate_limiter_mgr.get_historical_limiter()
+    );
     let data_news_mgr = DataNewsManager::new(message_broker.clone(),
                                              rate_limiter_mgr.get_historical_limiter());
     let data_fin_mgr = DataFundamentalsManager::new(message_broker.clone());
@@ -193,7 +197,11 @@ impl IBKRClient {
     let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
     let data_ref_mgr = DataRefManager::new(message_broker.clone());
-    let data_market_mgr = DataMarketManager::new(message_broker.clone());
+    let data_market_mgr = DataMarketManager::new(
+      message_broker.clone(),
+      rate_limiter_mgr.get_market_data_limiter(),
+      rate_limiter_mgr.get_historical_limiter()
+    );
     let data_news_mgr = DataNewsManager::new(message_broker.clone(),
                                              rate_limiter_mgr.get_historical_limiter());
     let data_fin_mgr = DataFundamentalsManager::new(message_broker.clone());

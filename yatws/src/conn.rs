@@ -103,13 +103,6 @@ impl MessageBroker {
       (*me).rate_limit_timeout = timeout;
     }
   }
-
-  /// Get the current rate limiter status.
-  /// Returns (current_rate, token_count, messages_delayed, enabled) if a limiter
-  /// is configured, or None otherwise.
-  pub fn get_rate_limiter_status(&self) -> Option<(f64, u32, u64, bool)> {
-    self.rate_limiter.as_ref().map(|limiter| limiter.status())
-  }
 }
 
 // --- Connection Trait ---

@@ -100,6 +100,7 @@ use crate::data_observer::{ // Added for observers
   ObserverId, MarketDataObserver, RealTimeBarsObserver, TickByTickObserver, MarketDepthObserver,
   HistoricalDataObserver, HistoricalTicksObserver,
 };
+use crate::rate_limiter::CounterRateLimiter;
 use log::{debug, info, trace, warn};
 
 
@@ -351,6 +352,9 @@ pub struct DataMarketManager {
 
   next_observer_id: AtomicUsize,
   self_weak: Weak<Self>, // For creating Weak<DataMarketManager> for subscriptions
+
+  market_data_limiter: Arc<CounterRateLimiter>,
+  historical_limiter: Arc<CounterRateLimiter>,
 }
 
 /// Represents a market quote, typically containing Bid, Ask, and Last prices.
@@ -362,7 +366,11 @@ impl DataMarketManager {
   /// Creates a new `DataMarketManager`.
   ///
   /// This is typically called internally when an `IBKRClient` is created.
-  pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
+  pub(crate) fn new(
+    message_broker: Arc<MessageBroker>,
+    market_data_limiter: Arc<CounterRateLimiter>,
+    historical_limiter: Arc<CounterRateLimiter>
+  ) -> Arc<Self> {
     Arc::new_cyclic(|weak_self_ref| DataMarketManager {
       message_broker,
       subscriptions: Mutex::new(HashMap::new()),
@@ -379,6 +387,8 @@ impl DataMarketManager {
       historical_ticks_observers: RwLock::new(HashMap::new()),
       next_observer_id: AtomicUsize::new(0),
       self_weak: weak_self_ref.clone(),
+      market_data_limiter,
+      historical_limiter,
     })
   }
 
@@ -962,6 +972,7 @@ impl DataMarketManager {
       mkt_data_options,
       desired_mkt_data_type,
     )?;
+
     Ok(req_id)
   }
 
@@ -993,6 +1004,9 @@ impl DataMarketManager {
       req_id, contract, &generic_tick_list_str, snapshot, regulatory_snapshot, mkt_data_options,
     )?;
 
+    if !self.market_data_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Market data line limit exceeded".to_string()));
+    }
     // Initialize and store state
     {
       let mut subs = self.subscriptions.lock();
@@ -1013,8 +1027,10 @@ impl DataMarketManager {
       debug!("Market data subscription added for ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
     }
 
-    self.message_broker.send_message(&request_msg)?;
-    Ok(())
+    match self.message_broker.send_message(&request_msg) {
+      Ok(()) => { self.market_data_limiter.register_request(req_id); Ok(()) }
+      Err(e) => Err(e)
+    }
   }
 
   /// Requests streaming market data (ticks) and blocks until a user-defined completion condition is met.
@@ -1129,6 +1145,8 @@ impl DataMarketManager {
 
     // Remove state *before* sending cancel, or after? Let's remove after success.
     self.message_broker.send_message(&request_msg)?;
+
+    self.market_data_limiter.release(req_id);
 
     // Remove state
     {
@@ -1364,6 +1382,9 @@ impl DataMarketManager {
       req_id, contract, bar_size, &what_to_show.to_string(), use_rth, real_time_bars_options,
     )?;
 
+    if !self.market_data_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Market data line limit exceeded".to_string()));
+    }
     {
       let mut subs = self.subscriptions.lock();
       if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
@@ -1383,7 +1404,10 @@ impl DataMarketManager {
       };
       subs.insert(req_id, MarketStream::RealTimeBars(state));
     }
-    self.message_broker.send_message(&request_msg)
+    match self.message_broker.send_message(&request_msg) {
+      Ok(()) => { self.market_data_limiter.register_request(req_id); Ok(()) }
+      Err(e) => Err(e)
+    }
   }
 
 
@@ -1401,6 +1425,7 @@ impl DataMarketManager {
     let request_msg = encoder.encode_cancel_real_time_bars(req_id)?;
 
     self.message_broker.send_message(&request_msg)?;
+    self.market_data_limiter.release(req_id);
 
     {
       let mut subs = self.subscriptions.lock();
@@ -1465,7 +1490,9 @@ impl DataMarketManager {
     info!("Requesting tick-by-tick data: Contract={}, Type={}, NumTicks={}, IgnoreSize={}",
           contract.symbol, tick_type, number_of_ticks, ignore_size); // tick_type will use Display
     let req_id = self.next_request_id(); // Use the new helper method
+
     self.internal_request_tick_by_tick_data(req_id, contract, tick_type, number_of_ticks, ignore_size)?;
+
     Ok(req_id)
   }
 
@@ -1484,6 +1511,9 @@ impl DataMarketManager {
       req_id, contract, &tick_type.to_string(), number_of_ticks, ignore_size,
     )?;
 
+    if !self.market_data_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Market data line limit exceeded".to_string()));
+    }
     {
       let mut subs = self.subscriptions.lock();
       if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
@@ -1503,7 +1533,10 @@ impl DataMarketManager {
       debug!("Tick-by-tick subscription added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)
+    match self.message_broker.send_message(&request_msg) {
+      Ok(()) => { self.market_data_limiter.register_request(req_id); Ok(()) }
+      Err(e) => Err(e)
+    }
   }
 
   /// Requests streaming tick-by-tick data and blocks until a user-defined completion condition is met.
@@ -1565,7 +1598,6 @@ impl DataMarketManager {
     }
     info!("Requesting blocking tick-by-tick data: Contract={}, Type={}, Timeout={:?}",
           contract.symbol, tick_type, timeout); // tick_type will use Display
-
     // 1. Initiate the non-blocking request
     let req_id = self.request_tick_by_tick_data(
       contract,
@@ -1606,7 +1638,7 @@ impl DataMarketManager {
     let request_msg = encoder.encode_cancel_tick_by_tick_data(req_id)?;
 
     self.message_broker.send_message(&request_msg)?;
-
+    self.market_data_limiter.release(req_id);
     {
       let mut subs = self.subscriptions.lock();
       if subs.remove(&req_id).is_some() {
@@ -1677,6 +1709,9 @@ impl DataMarketManager {
       req_id, contract, num_rows, is_smart_depth, mkt_depth_options,
     )?;
 
+    if !self.market_data_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Market data line limit exceeded".to_string()));
+    }
     {
       let mut subs = self.subscriptions.lock();
       if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
@@ -1695,7 +1730,10 @@ impl DataMarketManager {
       debug!("Market depth subscription added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)
+    match self.message_broker.send_message(&request_msg) {
+      Ok(()) => { self.market_data_limiter.register_request(req_id); Ok(()) }
+      Err(e) => Err(e)
+    }
   }
 
   /// Requests streaming market depth data and blocks until a user-defined completion condition is met.
@@ -1806,23 +1844,6 @@ impl DataMarketManager {
         false
       }
     };
-
-    info!("Cancelling market depth request: ReqID={}, Smart={}", req_id, is_smart_depth);
-    let server_version = self.message_broker.get_server_version()?;
-    let encoder = Encoder::new(server_version);
-    let request_msg = encoder.encode_cancel_market_depth(req_id, is_smart_depth)?;
-
-    self.message_broker.send_message(&request_msg)?;
-
-    {
-      let mut subs = self.subscriptions.lock();
-      if subs.remove(&req_id).is_some() {
-        debug!("Removed market depth subscription state for ReqID: {}", req_id);
-      } else {
-        warn!("Attempted to cancel market depth for unknown or already removed ReqID: {}", req_id);
-      }
-    }
-    // Internal helper to avoid code duplication, as cancel needs is_smart_depth
     self._cancel_market_depth_internal(req_id, is_smart_depth)
   }
 
@@ -1833,6 +1854,7 @@ impl DataMarketManager {
     let request_msg = encoder.encode_cancel_market_depth(req_id, is_smart_depth)?;
 
     self.message_broker.send_message(&request_msg)?;
+    self.market_data_limiter.release(req_id);
 
     {
       let mut subs = self.subscriptions.lock();
@@ -1947,6 +1969,9 @@ impl DataMarketManager {
       what_to_show_str, use_rth, format_date, keep_up_to_date, chart_options,
     )?;
 
+    if !self.historical_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Historical data rate limit exceeded".to_string()));
+    }
     {
       let mut subs = self.subscriptions.lock();
       if subs.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
@@ -1961,7 +1986,10 @@ impl DataMarketManager {
       debug!("Historical data request added for ReqID: {}, Type: {:?}", req_id, desired_mkt_data_type);
     }
 
-    self.message_broker.send_message(&request_msg)
+    match self.message_broker.send_message(&request_msg) {
+      Ok(()) => { self.historical_limiter.register_request(req_id); Ok(()) }
+      Err(e) => Err(e)
+    }
   }
 
   /// Cancels an ongoing historical data request.
@@ -1979,6 +2007,7 @@ impl DataMarketManager {
     let request_msg = encoder.encode_cancel_historical_data(req_id)?;
 
     self.message_broker.send_message(&request_msg)?;
+    self.historical_limiter.release(req_id);
 
     // Signal the waiting thread (if any) that it was cancelled?
     // The wait loop will eventually time out or see an error.
@@ -2049,6 +2078,9 @@ impl DataMarketManager {
         MarketStream::HistogramData(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
         MarketStream::HistoricalTicks(s) => (&mut s.error_code, &mut s.error_message, &mut s.completed),
       };
+      // We could list the types and figure out which to cancel instead.
+      self.market_data_limiter.release(req_id);
+      self.historical_limiter.release(req_id);
 
       *err_code_field = Some(error_code_int); // Store the integer code
       *err_msg_field = Some(msg.to_string()); // Store the cloned message string
@@ -2207,6 +2239,7 @@ impl DataMarketManager {
     self.internal_request_scanner_info(req_id, info)?;
     Ok(req_id)
   }
+
   fn internal_request_scanner_info(&self, req_id: i32, info: &ScannerInfo) -> Result<(), IBKRError> {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
@@ -2494,6 +2527,9 @@ impl DataMarketManager {
     )?;
 
     // Initialize and store state
+    if !self.historical_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Historical rate limit exceeded".to_string()));
+    }
     {
       let mut subs = self.subscriptions.lock();
       if subs.contains_key(&req_id) {
@@ -2513,7 +2549,10 @@ impl DataMarketManager {
       debug!("Histogram data request added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)
+    match self.message_broker.send_message(&request_msg) {
+      Ok(()) => { self.historical_limiter.register_request(req_id); Ok(()) }
+      Err(e) => Err(e)
+    }
   }
 
   /// Requests histogram data for a contract and blocks until the data is received,
@@ -2573,6 +2612,7 @@ impl DataMarketManager {
     let request_msg = encoder.encode_cancel_histogram_data(req_id)?;
 
     self.message_broker.send_message(&request_msg)?;
+    self.historical_limiter.release(req_id);
 
     {
       let mut subs = self.subscriptions.lock();
@@ -2641,6 +2681,9 @@ impl DataMarketManager {
       &what_to_show.to_string(), use_rth, ignore_size, misc_options
     )?;
 
+    if !self.historical_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Historical rate limit exceeded".to_string()));
+    }
     // Initialize and store state
     {
       let mut subs = self.subscriptions.lock();
@@ -2655,7 +2698,10 @@ impl DataMarketManager {
       debug!("Historical ticks request added for ReqID: {}", req_id);
     }
 
-    self.message_broker.send_message(&request_msg)
+    match self.message_broker.send_message(&request_msg) {
+      Ok(()) => { self.historical_limiter.register_request(req_id); Ok(()) }
+      Err(e) => Err(e)
+    }
   }
 
   /// Requests historical tick data and blocks until the data is received,
@@ -3351,6 +3397,7 @@ impl MarketDataHandler for DataMarketManager {
       for observer in observers.values() {
         observer.on_tick_snapshot_end(req_id);
       }
+      self.market_data_limiter.release(req_id);
     } else {
       // warn!("Received tick_snapshot_end for unknown or non-tick subscription ID: {}", req_id);
     }
@@ -3500,6 +3547,7 @@ impl MarketDataHandler for DataMarketManager {
       for observer in observers.values() {
         observer.on_historical_data_end(req_id, start_date, end_date);
       }
+      self.historical_limiter.release(req_id);
       self.request_cond.notify_all(); // Signal waiting thread
     } else {
       // warn!("Received historical_data_end for unknown or non-historical subscription ID: {}", req_id);
@@ -3782,6 +3830,7 @@ impl MarketDataHandler for DataMarketManager {
       state.completed = true; // Mark as completed once data is received
       info!("Histogram data received for request {}. Notifying waiter.", req_id);
       self.request_cond.notify_all(); // Signal waiting thread (for get_histogram_data)
+      self.historical_limiter.release(req_id);
     } else {
       warn!("Received histogram_data for unknown or non-histogram subscription ID: {}", req_id);
     }

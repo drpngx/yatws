@@ -565,7 +565,7 @@ impl DataNewsManager {
     info!("Client-side cancelling historical news stream for ReqID: {}", req_id);
     let mut subs = self.historical_news_event_subscriptions.lock();
     if subs.remove(&req_id).is_some() {
-      self.historical_news_limiter.mark_completed(req_id);
+      self.historical_news_limiter.release(req_id);
       debug!("Removed historical news event subscription state for ReqID: {}", req_id);
     }
   }
@@ -589,7 +589,7 @@ impl DataNewsManager {
       // Check historical news event subscriptions
       let mut event_subs = self.historical_news_event_subscriptions.lock();
       if let Some(state_weak) = event_subs.get(&req_id) {
-        self.historical_news_limiter.mark_completed(req_id);
+        self.historical_news_limiter.release(req_id);
         if let Some(state_arc) = state_weak.upgrade() {
           warn!("API Error for historical news subscription {}: Code={:?}, Msg={}", req_id, code, msg);
           let err = IBKRError::ApiError(code as i32, msg.to_string());
@@ -703,7 +703,7 @@ impl NewsDataHandler for DataNewsManager {
     // Check event stream subscriptions
     let mut event_subs = self.historical_news_event_subscriptions.lock();
     if let Some(state_weak) = event_subs.remove(&req_id) { // Remove as it's complete
-      self.historical_news_limiter.mark_completed(req_id);
+      self.historical_news_limiter.release(req_id);
       if let Some(state_arc) = state_weak.upgrade() {
         state_arc.push_event(HistoricalNewsEvent::Complete);
         state_arc.mark_completed_and_inactive();
