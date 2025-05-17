@@ -100,6 +100,7 @@ use log::{debug, info, trace, warn};
 // Import new subscription types
 use crate::news_subscription::{HistoricalNewsEvent, HistoricalNewsSubscriptionBuilder};
 use crate::data_subscription::SubscriptionState;
+use crate::rate_limiter::{CounterRateLimiter, RateLimitGuard};
 
 
 // --- State for Pending News Requests ---
@@ -138,13 +139,14 @@ pub struct DataNewsManager {
   self_weak: Weak<DataNewsManager>, // Added for builder to get weak ref to self
   // Map for historical news event subscriptions
   historical_news_event_subscriptions: Mutex<HashMap<i32, Weak<SubscriptionState<HistoricalNewsEvent, DataNewsManager>>>>,
+  historical_news_limiter: Arc<CounterRateLimiter>,
 }
 
 impl DataNewsManager {
   /// Creates a new `DataNewsManager`.
   ///
   /// This is typically called internally when an `IBKRClient` is created.
-  pub(crate) fn new(message_broker: Arc<MessageBroker>) -> Arc<Self> {
+  pub(crate) fn new(message_broker: Arc<MessageBroker>, historical_news_limiter: Arc<CounterRateLimiter>) -> Arc<Self> {
     Arc::new_cyclic(|weak_self_ref| DataNewsManager {
       message_broker,
       request_states: Mutex::new(HashMap::new()),
@@ -153,6 +155,7 @@ impl DataNewsManager {
       next_observer_id: AtomicUsize::new(1),
       self_weak: weak_self_ref.clone(),
       historical_news_event_subscriptions: Mutex::new(HashMap::new()),
+      historical_news_limiter,
     })
   }
 
@@ -435,6 +438,10 @@ impl DataNewsManager {
     historical_news_options: &[(String, String)],
   ) -> Result<Vec<HistoricalNews>, IBKRError> {
     info!("Requesting historical news: ConID={}, Providers={}", con_id, provider_codes);
+    if !self.historical_news_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Historical news request limit exceeded".to_string()));
+    }
+
     let req_id = self.message_broker.next_request_id();
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
@@ -448,6 +455,8 @@ impl DataNewsManager {
       states.insert(req_id, NewsRequestState::default());
     }
 
+    self.historical_news_limiter.register_request(req_id);
+    let _rate_limit_guard = RateLimitGuard::new(self.historical_news_limiter.clone(), req_id);
     self.message_broker.send_message(&request_msg)?;
 
     let timeout = Duration::from_secs(30); // Can take time
@@ -473,6 +482,9 @@ impl DataNewsManager {
     state_weak: Weak<SubscriptionState<HistoricalNewsEvent, DataNewsManager>>,
   ) -> Result<(), IBKRError> {
     info!("Internal: Requesting historical news stream: ReqID={}, ConID={}", req_id, con_id);
+    if !self.historical_news_limiter.try_acquire() {
+      return Err(IBKRError::RateLimited("Historical news request limit exceeded".to_string()));
+    }
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
     let request_msg = encoder.encode_request_historical_news(
@@ -486,8 +498,10 @@ impl DataNewsManager {
       }
       subs.insert(req_id, state_weak);
     }
-
-    self.message_broker.send_message(&request_msg)
+    match self.message_broker.send_message(&request_msg) {
+      Ok(()) => { self.historical_news_limiter.register_request(req_id); Ok(()) }
+      Err(e) => Err(e)
+    }
   }
 
   /// Creates a builder for a historical news subscription.

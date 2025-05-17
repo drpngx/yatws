@@ -133,7 +133,8 @@ impl IBKRClient {
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
     let data_ref_mgr = DataRefManager::new(message_broker.clone());
     let data_market_mgr = DataMarketManager::new(message_broker.clone());
-    let data_news_mgr = DataNewsManager::new(message_broker.clone());
+    let data_news_mgr = DataNewsManager::new(message_broker.clone(),
+                                             rate_limiter_mgr.get_historical_limiter());
     let data_fin_mgr = DataFundamentalsManager::new(message_broker.clone());
     let financial_advisor_mgr = FinancialAdvisorManager::new(message_broker.clone());
     let msg_handler = MessageHandler::new(server_version, client_mgr.clone(),
@@ -193,7 +194,8 @@ impl IBKRClient {
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
     let data_ref_mgr = DataRefManager::new(message_broker.clone());
     let data_market_mgr = DataMarketManager::new(message_broker.clone());
-    let data_news_mgr = DataNewsManager::new(message_broker.clone());
+    let data_news_mgr = DataNewsManager::new(message_broker.clone(),
+                                             rate_limiter_mgr.get_historical_limiter());
     let data_fin_mgr = DataFundamentalsManager::new(message_broker.clone());
     let financial_advisor_mgr = FinancialAdvisorManager::new(message_broker.clone());
     let msg_handler = MessageHandler::new(server_version, client_mgr.clone(),

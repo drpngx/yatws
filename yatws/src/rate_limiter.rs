@@ -483,3 +483,81 @@ impl RateLimiterManager {
     (hist_cleaned, mkt_cleaned)
   }
 }
+
+/// An RAII guard that automatically releases a rate-limited request when dropped,
+/// unless explicitly disarmed.
+///
+/// # Example
+///
+/// ```
+/// use yatws::rate_limiter::RateLimitGuard;
+///
+/// fn rate_limited_operation(limiter: &Arc<CounterRateLimiter>, req_id: i32) -> Result<(), Error> {
+///     // Create the guard immediately after acquiring the resource
+///     let mut guard = RateLimitGuard::new(limiter.clone(), req_id);
+///
+///     // If this returns an error, the guard will be dropped and the resource released
+///     some_operation_that_might_fail()?;
+///
+///     // Success - disarm the guard to prevent automatic release
+///     guard.disarm();
+///     Ok(())
+/// }
+/// ```
+pub(crate) struct RateLimitGuard {
+  limiter: Arc<CounterRateLimiter>,
+  req_id: i32,
+  armed: bool,
+}
+
+impl RateLimitGuard {
+  /// Creates a new guard for the given request.
+  ///
+  /// # Arguments
+  /// * `limiter` - The rate limiter that's tracking this request, or None if no rate limiting is active.
+  /// * `req_id` - The request ID to release when the guard is dropped.
+  pub(crate) fn new(limiter: Arc<CounterRateLimiter>, req_id: i32) -> Self {
+    Self {
+      limiter,
+      req_id,
+      armed: true,
+    }
+  }
+
+  /// Disarms the guard, preventing automatic release on drop.
+  ///
+  /// Call this method when the operation has completed successfully
+  /// and you want to prevent automatic resource release.
+  pub(crate) fn disarm(&mut self) {
+    self.armed = false;
+  }
+
+  /// Manually release the resource and disarm the guard.
+  ///
+  /// This can be useful if you need to release the resource before
+  /// the guard goes out of scope, but still want to prevent a double-release.
+  pub(crate) fn release_now(&mut self) {
+    if self.armed {
+      self.limiter.release(self.req_id);
+      self.armed = false;
+    }
+  }
+
+  /// Check if the guard is currently armed.
+  pub(crate) fn is_armed(&self) -> bool {
+    self.armed
+  }
+
+  /// Get the request ID associated with this guard.
+  pub(crate) fn req_id(&self) -> i32 {
+    self.req_id
+  }
+}
+
+impl Drop for RateLimitGuard {
+  fn drop(&mut self) {
+    if self.armed {
+      self.limiter.release(self.req_id);
+    }
+  }
+}
