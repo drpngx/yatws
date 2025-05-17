@@ -6,6 +6,8 @@ pub use socket::SocketConnection;
 use parking_lot::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
+use crate::rate_limiter::TokenBucketRateLimiter;
 
 use crate::conn_log::{ConnectionLogger, LogDirection, bytes_to_center_dot_string};
 
@@ -16,6 +18,8 @@ pub struct MessageBroker {
   next_req_id: Arc<AtomicUsize>,
   // Add optional logger
   logger: Option<ConnectionLogger>, // Use the concrete type from conn_log
+  rate_limiter: Option<Arc<TokenBucketRateLimiter>>,
+  rate_limit_timeout: Duration,
 }
 
 const START_REQUEST_ID: usize = 1;
@@ -28,6 +32,8 @@ impl MessageBroker {
       connection: Arc::new(Mutex::new(connection)),
       next_req_id: Arc::new(AtomicUsize::new(START_REQUEST_ID)),
       logger, // Store the logger
+      rate_limiter: None, // No rate limiter by default
+      rate_limit_timeout: Duration::from_secs(5), // Default timeout
     }
   }
 
@@ -38,6 +44,12 @@ impl MessageBroker {
 
   // Instrument send_message
   pub fn send_message(&self, message_body: &[u8]) -> Result<(), IBKRError> {
+    // Apply rate limiting if enabled
+    if let Some(limiter) = &self.rate_limiter {
+      if !limiter.acquire(self.rate_limit_timeout) {
+        return Err(IBKRError::RateLimited("Message rate limit exceeded".to_string()));
+      }
+    }
     // Log before sending
     if let Some(logger) = &self.logger {
       // Note: Cloning the Arc is cheap
@@ -65,10 +77,42 @@ impl MessageBroker {
     let conn_guard = self.connection.lock();
     Ok(conn_guard.is_connected())
   }
+
+  /// Set the rate limiter for this message broker.
+  pub fn set_rate_limiter(&self, rate_limiter: Option<Arc<TokenBucketRateLimiter>>) {
+    if let Some(limiter) = &rate_limiter {
+      log::info!("Setting message rate limiter (enabled: {})", limiter.enabled());
+    } else {
+      log::info!("Removing message rate limiter");
+    }
+
+    // Use interior mutability to assign the new rate limiter
+    unsafe {
+      let me = self as *const Self as *mut Self;
+      (*me).rate_limiter = rate_limiter;
+    }
+  }
+
+  /// Set the timeout duration for rate limiting.
+  pub fn set_rate_limit_timeout(&self, timeout: Duration) {
+    log::debug!("Setting rate limit timeout to {:?}", timeout);
+
+    // Use interior mutability to assign the new timeout
+    unsafe {
+      let me = self as *const Self as *mut Self;
+      (*me).rate_limit_timeout = timeout;
+    }
+  }
+
+  /// Get the current rate limiter status.
+  /// Returns (current_rate, token_count, messages_delayed, enabled) if a limiter
+  /// is configured, or None otherwise.
+  pub fn get_rate_limiter_status(&self) -> Option<(f64, u32, u64, bool)> {
+    self.rate_limiter.as_ref().map(|limiter| limiter.status())
+  }
 }
 
 // --- Connection Trait ---
-// (No changes needed in the trait itself)
 pub trait Connection: Send + Sync + 'static {
   fn is_connected(&self) -> bool;
   fn disconnect(&mut self) -> Result<(), IBKRError>;
@@ -390,7 +434,6 @@ mod socket {
       *self.reader_thread.lock() = Some(handle);
       Ok(())
     }
-
   } // end impl SocketConnection
 
   // --- Implement the Connection Trait ---

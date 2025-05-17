@@ -4,7 +4,6 @@
 use crate::base::IBKRError;
 use crate::contract::Contract;
 use crate::data_news_manager::DataNewsManager;
-use crate::data_observer::ObserverId;
 use crate::data_subscription::{BaseIterator, MarketDataIterator, MarketDataSubscription, SubscriptionState};
 use crate::news::{NewsArticle, NewsObserver, HistoricalNews};
 

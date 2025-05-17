@@ -37,6 +37,7 @@ rust_library(
         "src/conn.rs",
         "src/conn_log.rs",
         "src/conn_mock.rs",
+        "src/rate_limiter.rs",
         "src/client.rs",
         "src/order_manager.rs",
         "src/account_manager.rs",

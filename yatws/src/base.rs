@@ -66,6 +66,9 @@ pub enum IBKRError {
   #[error("Invalid account: {0}")]
   InvalidAccount(String),
 
+  #[error("Rate Limit exceeded: {0}")]
+  RateLimited(String),
+
   #[error("Unsupported: {0}")]
   Unsupported(String),
 

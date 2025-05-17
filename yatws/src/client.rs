@@ -67,8 +67,10 @@ use crate::conn_log::ConnectionLogger;
 use crate::conn_mock::MockConnection;
 use crate::base::IBKRError;
 use std::sync::Arc;
+use std::time::Duration;
 use client_manager::ClientManager;
 use crate::handler::MessageHandler;
+use crate::rate_limiter::{RateLimiterConfig, RateLimiterStatus, RateLimiterManager};
 
 /// The primary client for interacting with the Interactive Brokers TWS API.
 ///
@@ -76,6 +78,8 @@ use crate::handler::MessageHandler;
 /// See the [module-level documentation](index.html) for more details on interaction patterns.
 pub struct IBKRClient {
   client_id: i32,
+  rate_limiter_mgr: Arc<RateLimiterManager>,
+  message_broker: Arc<MessageBroker>,
   client_mgr: Arc<ClientManager>,
   order_mgr: Arc<OrderManager>,
   account_mgr: Arc<AccountManager>,
@@ -83,7 +87,7 @@ pub struct IBKRClient {
   data_market_mgr: Arc<DataMarketManager>,
   data_news_mgr: Arc<DataNewsManager>,
   data_fin_mgr: Arc<DataFundamentalsManager>,
-  financial_advisor_mgr: Arc<FinancialAdvisorManager>, // Added field
+  financial_advisor_mgr: Arc<FinancialAdvisorManager>,
 }
 
 impl IBKRClient {
@@ -120,6 +124,10 @@ impl IBKRClient {
     let conn = Box::new(SocketConnection::new(host, port, client_id, logger.clone())?);
     let server_version = conn.get_server_version();
     let message_broker = Arc::new(MessageBroker::new(conn, logger));
+    let rate_config = RateLimiterConfig::default();
+    let rate_limiter_mgr = Arc::new(RateLimiterManager::new(rate_config.clone()));
+    message_broker.set_rate_limiter(Some(rate_limiter_mgr.get_message_limiter()));
+    message_broker.set_rate_limit_timeout(rate_config.rate_limit_wait_timeout);
     let client_mgr = ClientManager::new(message_broker.clone());
     let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
@@ -137,6 +145,8 @@ impl IBKRClient {
     order_init()?;
     Ok(IBKRClient {
       client_id,
+      rate_limiter_mgr,
+      message_broker,
       client_mgr,
       order_mgr,
       account_mgr,
@@ -175,6 +185,10 @@ impl IBKRClient {
     let server_version = conn.get_server_version();
     let message_broker = Arc::new(MessageBroker::new(conn, None));
     let client_mgr = ClientManager::new(message_broker.clone());
+    let rate_config = RateLimiterConfig::default();
+    let rate_limiter_mgr = Arc::new(RateLimiterManager::new(rate_config.clone()));
+    message_broker.set_rate_limiter(Some(rate_limiter_mgr.get_message_limiter()));
+    message_broker.set_rate_limit_timeout(rate_config.rate_limit_wait_timeout);
     let (order_mgr, order_init) = OrderManager::create(message_broker.clone());
     let account_mgr = AccountManager::new(message_broker.clone(), /* account */None);
     let data_ref_mgr = DataRefManager::new(message_broker.clone());
@@ -191,6 +205,8 @@ impl IBKRClient {
     order_init()?;
     Ok(IBKRClient {
       client_id: 0,
+      rate_limiter_mgr,
+      message_broker,
       client_mgr,
       order_mgr,
       account_mgr,
@@ -267,6 +283,169 @@ impl IBKRClient {
   /// profiles, and aliases.
   pub fn financial_advisor(&self) -> Arc<FinancialAdvisorManager> {
     self.financial_advisor_mgr.clone()
+  }
+
+  /// Configure rate limiting for API requests.
+  ///
+  /// This method configures the rate limiters to enforce Interactive Brokers' rate limits.
+  /// By default, rate limiting is disabled. Use this method to enable it with
+  /// custom settings, or `enable_rate_limiting()` to enable with default settings.
+  ///
+  /// # Arguments
+  /// * `config` - The rate limiter configuration to apply.
+  ///
+  ///
+  /// # Example
+  /// ```no_run
+  /// use yatws::{IBKRClient, RateLimiterConfig};
+  /// use std::time::Duration;
+  ///
+  /// # fn main() -> Result<(), yatws::IBKRError> {
+  /// let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  ///
+  /// // Enable rate limiting with custom settings
+  /// let mut config = RateLimiterConfig::default();
+  /// config.enabled = true;
+  /// config.max_messages_per_second = 40; // Be more conservative than default 50
+  /// config.max_historical_requests = 30; // Be more conservative than default 50
+  /// client.configure_rate_limiter(config)?;
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn configure_rate_limiter(&self, config: RateLimiterConfig) -> Result<(), IBKRError> {
+    let mgr = &self.rate_limiter_mgr;
+    mgr.configure(config.clone());
+
+    // Update message broker's rate limiter settings
+    if config.enabled {
+      self.message_broker.set_rate_limiter(Some(mgr.get_message_limiter()));
+    } else {
+      self.message_broker.set_rate_limiter(None);
+    }
+
+    self.message_broker.set_rate_limit_timeout(config.rate_limit_wait_timeout);
+
+    Ok(())
+  }
+
+  /// Get the current rate limiter status.
+  ///
+  /// Returns a struct with information about the current usage of each rate limiter.
+  ///
+  /// # Returns
+  /// * `Option<RateLimiterStatus>` - The current status, or `None` if rate limiting
+  ///   is not configured.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::IBKRClient;
+  /// # fn main() -> Result<(), yatws::IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// if let Some(status) = client.get_rate_limiter_status() {
+  ///     println!("Rate limiting enabled: {}", status.enabled);
+  ///     println!("Current message rate: {:.2} msgs/sec", status.current_message_rate);
+  ///     println!("Active historical requests: {}/{}",
+  ///             status.active_historical_requests, 50);
+  /// } else {
+  ///     println!("Rate limiting not configured");
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn get_rate_limiter_status(&self) -> Option<RateLimiterStatus> {
+    Some(self.rate_limiter_mgr.get_status())
+  }
+
+  /// Enable rate limiting with default configuration.
+  ///
+  /// This is a convenience method that enables rate limiting with the
+  /// following default settings:
+  /// * 50 messages per second
+  /// * 50 simultaneous historical data requests
+  /// * 100 simultaneous market data lines
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::IBKRClient;
+  /// # fn main() -> Result<(), yatws::IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// // Enable rate limiting with default settings
+  /// client.enable_rate_limiting()?;
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn enable_rate_limiting(&self) -> Result<(), IBKRError> {
+    let mgr = &self.rate_limiter_mgr;
+    let mut config = RateLimiterConfig::default();
+    config.enabled = true;
+    mgr.configure(config.clone());
+
+    // Update message broker settings
+    self.message_broker.set_rate_limiter(Some(mgr.get_message_limiter()));
+    self.message_broker.set_rate_limit_timeout(config.rate_limit_wait_timeout);
+
+    Ok(())
+  }
+
+  /// Disable rate limiting.
+  ///
+  /// This method disables all rate limiting, allowing messages and requests
+  /// to be sent without limitation. Use with caution, as this may cause IBKR
+  /// to throttle or disconnect your application if API usage is excessive.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::IBKRClient;
+  /// # fn main() -> Result<(), yatws::IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// // Disable rate limiting
+  /// client.disable_rate_limiting()?;
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn disable_rate_limiting(&self) -> Result<(), IBKRError> {
+    let mgr = &self.rate_limiter_mgr;
+    let mut config = RateLimiterConfig::default();
+    config.enabled = false;
+    mgr.configure(config);
+
+    // Remove rate limiter from message broker
+    self.message_broker.set_rate_limiter(None);
+
+    Ok(())
+  }
+
+  /// Clean up stale rate limiter requests.
+  ///
+  /// This method is used to clean up any stale requests that never received
+  /// a completion message. This can happen if a request fails unexpectedly
+  /// or if there's a bug in the handler implementation.
+  ///
+  /// # Arguments
+  /// * `older_than` - The minimum age for a request to be considered stale.
+  ///
+  /// # Returns
+  /// * `Result<(u32, u32), IBKRError>` - The number of historical and market data
+  ///   requests that were cleaned up, or an error if the rate limiter manager
+  ///   is not initialized.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::IBKRClient;
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), yatws::IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// // Clean up requests older than 5 minutes
+  /// let (hist_cleaned, mkt_cleaned) = client.cleanup_stale_rate_limiter_requests(
+  ///     Duration::from_secs(5 * 60)
+  /// )?;
+  /// println!("Cleaned up {} historical and {} market data requests", hist_cleaned, mkt_cleaned);
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn cleanup_stale_rate_limiter_requests(&self, older_than: Duration) -> Result<(u32, u32), IBKRError> {
+    let mgr = &self.rate_limiter_mgr;
+    Ok(mgr.cleanup_stale_requests(older_than))
   }
 }
 

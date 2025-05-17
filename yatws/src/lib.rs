@@ -474,11 +474,9 @@ pub mod data_wsh;
 pub mod news;
 pub mod financial_advisor;
 
-// Subscriptions:
-pub mod data_subscription;
-
 // API:
 pub mod account_subscription;
+pub mod data_subscription;
 pub mod news_subscription;
 pub mod data_observer;
 
@@ -491,6 +489,8 @@ pub mod data_ref_manager;
 pub mod order_manager;
 pub mod scan_parameters;
 pub mod financial_advisor_manager;
+
+pub mod rate_limiter;
 
 pub use order_builder::OrderBuilder;
 pub use options_strategy_builder::OptionsStrategyBuilder;
