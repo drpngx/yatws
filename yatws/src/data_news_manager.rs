@@ -556,7 +556,7 @@ impl DataNewsManager {
   /// * `all_msgs` - If `true`, requests all available historical bulletins upon subscription
   ///   followed by new ones. If `false`, requests only new bulletins.
   pub fn subscribe_news_bulletins_stream(&self, all_msgs: bool) -> news_subscription::NewsSubscriptionBuilder {
-      news_subscription::NewsSubscriptionBuilder::new(self.self_weak.clone(), all_msgs)
+    news_subscription::NewsSubscriptionBuilder::new(self.self_weak.clone(), all_msgs)
   }
 
   /// Client-side cancellation of a historical news stream.
@@ -565,7 +565,8 @@ impl DataNewsManager {
     info!("Client-side cancelling historical news stream for ReqID: {}", req_id);
     let mut subs = self.historical_news_event_subscriptions.lock();
     if subs.remove(&req_id).is_some() {
-        debug!("Removed historical news event subscription state for ReqID: {}", req_id);
+      self.historical_news_limiter.mark_completed(req_id);
+      debug!("Removed historical news event subscription state for ReqID: {}", req_id);
     }
   }
 
@@ -576,29 +577,30 @@ impl DataNewsManager {
 
     let mut states = self.request_states.lock();
     if req_id > 0 {
-        // Check blocking request states first
-        if let Some(state) = states.get_mut(&req_id) {
-          warn!("API Error received for specific blocking news request {}: Code={:?}, Msg={}", req_id, code, msg);
-          state.error_code = Some(code as i32);
-          state.error_message = Some(msg.to_string());
-          self.request_cond.notify_all(); // Signal waiting thread for this specific request
-          return; // Handled
-        }
+      // Check blocking request states first
+      if let Some(state) = states.get_mut(&req_id) {
+        warn!("API Error received for specific blocking news request {}: Code={:?}, Msg={}", req_id, code, msg);
+        state.error_code = Some(code as i32);
+        state.error_message = Some(msg.to_string());
+        self.request_cond.notify_all(); // Signal waiting thread for this specific request
+        return; // Handled
+      }
 
-        // Check historical news event subscriptions
-        let mut event_subs = self.historical_news_event_subscriptions.lock();
-        if let Some(state_weak) = event_subs.get(&req_id) {
-            if let Some(state_arc) = state_weak.upgrade() {
-                warn!("API Error for historical news subscription {}: Code={:?}, Msg={}", req_id, code, msg);
-                let err = IBKRError::ApiError(code as i32, msg.to_string());
-                state_arc.push_event(HistoricalNewsEvent::Error(err.clone()));
-                state_arc.set_error(err);
-            } // Weak ref might be dead if subscription was dropped
-            event_subs.remove(&req_id); // Remove on error
-            return; // Handled
-        }
+      // Check historical news event subscriptions
+      let mut event_subs = self.historical_news_event_subscriptions.lock();
+      if let Some(state_weak) = event_subs.get(&req_id) {
+        self.historical_news_limiter.mark_completed(req_id);
+        if let Some(state_arc) = state_weak.upgrade() {
+          warn!("API Error for historical news subscription {}: Code={:?}, Msg={}", req_id, code, msg);
+          let err = IBKRError::ApiError(code as i32, msg.to_string());
+          state_arc.push_event(HistoricalNewsEvent::Error(err.clone()));
+          state_arc.set_error(err);
+        } // Weak ref might be dead if subscription was dropped
+        event_subs.remove(&req_id); // Remove on error
+        return; // Handled
+      }
     } else {
-    // If not handled by specific req_id maps, treat as general or bulletin error
+      // If not handled by specific req_id maps, treat as general or bulletin error
       // This error is not for a specific req_id-based request (e.g., get_historical_news).
       // It could be a general news system error, or an error related to news bulletins.
       // Notify all active observers.
@@ -660,28 +662,28 @@ impl NewsDataHandler for DataNewsManager {
     // Check blocking request states
     let mut blocking_states = self.request_states.lock();
     if let Some(state) = blocking_states.get_mut(&req_id) {
-        state.historical_news_list.push(HistoricalNews {
-            time: time.to_string(),
-            provider_code: provider_code.to_string(),
-            article_id: article_id.to_string(),
-            headline: headline.to_string(),
-        });
-        return; // Handled by blocking call state
+      state.historical_news_list.push(HistoricalNews {
+        time: time.to_string(),
+        provider_code: provider_code.to_string(),
+        article_id: article_id.to_string(),
+        headline: headline.to_string(),
+      });
+      return; // Handled by blocking call state
     }
     drop(blocking_states); // Release lock
 
     // Check event stream subscriptions
     let event_subs = self.historical_news_event_subscriptions.lock();
     if let Some(state_weak) = event_subs.get(&req_id) {
-        if let Some(state_arc) = state_weak.upgrade() {
-            let item = HistoricalNews {
-                time: time.to_string(),
-                provider_code: provider_code.to_string(),
-                article_id: article_id.to_string(),
-                headline: headline.to_string(),
-            };
-            state_arc.push_event(HistoricalNewsEvent::Article(item));
-        }
+      if let Some(state_arc) = state_weak.upgrade() {
+        let item = HistoricalNews {
+          time: time.to_string(),
+          provider_code: provider_code.to_string(),
+          article_id: article_id.to_string(),
+          headline: headline.to_string(),
+        };
+        state_arc.push_event(HistoricalNewsEvent::Article(item));
+      }
     }
   }
 
@@ -690,21 +692,22 @@ impl NewsDataHandler for DataNewsManager {
     // Check blocking request states
     let mut blocking_states = self.request_states.lock();
     if let Some(state) = blocking_states.get_mut(&req_id) {
-        state.historical_news_end_received = true;
-        info!("Historical news end received for blocking request {}. Notifying waiter.", req_id);
-        self.request_cond.notify_all();
-        // Note: blocking_states.remove(&req_id) happens in wait_for_completion
-        return; // Handled by blocking call state
+      state.historical_news_end_received = true;
+      info!("Historical news end received for blocking request {}. Notifying waiter.", req_id);
+      self.request_cond.notify_all();
+      // Note: blocking_states.remove(&req_id) happens in wait_for_completion
+      return; // Handled by blocking call state
     }
     drop(blocking_states); // Release lock
 
     // Check event stream subscriptions
     let mut event_subs = self.historical_news_event_subscriptions.lock();
     if let Some(state_weak) = event_subs.remove(&req_id) { // Remove as it's complete
-        if let Some(state_arc) = state_weak.upgrade() {
-            state_arc.push_event(HistoricalNewsEvent::Complete);
-            state_arc.mark_completed_and_inactive();
-        }
+      self.historical_news_limiter.mark_completed(req_id);
+      if let Some(state_arc) = state_weak.upgrade() {
+        state_arc.push_event(HistoricalNewsEvent::Complete);
+        state_arc.mark_completed_and_inactive();
+      }
     }
   }
 
