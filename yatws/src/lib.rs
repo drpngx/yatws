@@ -14,14 +14,16 @@
 //! ## Features
 //!
 //! - **Comprehensive API Coverage**: Access to orders, accounts, market data, fundamentals, news, and reference data
+//! - **Book-keeping**: Keeps the portfolio with PNL and order book up-to-date
 //! - **Multiple Programming Patterns**:
 //!   - Synchronous blocking calls with timeouts
 //!   - Asynchronous observer pattern
 //!   - Subscription model
 //! - **Options Strategy Builder**: Simplified creation of common options strategies
 //! - **Strong Type Safety**: Leverages Rust's type system for safer API interactions
-//! - **Session Recording/Replay**: Record TWS interactions for testing and debugging
 //! - **Domain-Specific Managers**: Organized access to different API functionalities
+//! - **Rate limits**: pace the requests in accordance with IBKR rules
+//! - **Session Recording/Replay**: Record TWS interactions for testing and debugging
 //!
 //! ## Comparison with Alternative Libraries
 //!
