@@ -430,40 +430,40 @@
 //!     .build()?;
 //! ```
 //!
-/// ### 3. Rate Limiting
-///
-/// YATWS includes a configurable rate limiter to ensure compliance with Interactive Brokers' API limits:
-///
-/// ```rust
-/// // Enable rate limiting with default settings
-/// client.enable_rate_limiting()?;
-///
-/// // Configure custom rate limiting
-/// let mut config = RateLimiterConfig::default();
-/// config.enabled = true;
-/// config.max_messages_per_second = 40; // More conservative than default
-/// config.max_historical_requests = 30; // Fewer simultaneous historical requests
-/// client.configure_rate_limiter(config)?;
-///
-/// // Monitor rate limiter status
-/// if let Some(status) = client.get_rate_limiter_status() {
-///     println!("Active historical requests: {}/{}",
-///              status.active_historical_requests,
-///              config.max_historical_requests);
-/// }
-///
-/// // Clean up stale requests (for long-running applications)
-/// let (hist_cleaned, mkt_cleaned) = client.cleanup_stale_rate_limiter_requests(
-///     Duration::from_secs(300)  // Clean up requests older than 5 minutes
-/// )?;
-/// ```
-///
-/// The rate limiter enforces:
-/// - Maximum messages per second (default: 50)
-/// - Maximum simultaneous historical data requests (default: 50)
-/// - Maximum market data lines (default: 100)
-///
-/// Rate limiting is disabled by default but can be enabled with a single method call.
+//! ### 3. Rate Limiting
+//!
+//! YATWS includes a configurable rate limiter to ensure compliance with Interactive Brokers' API limits:
+//!
+//! ```rust
+//! // Enable rate limiting with default settings
+//! client.enable_rate_limiting()?;
+//!
+//! // Configure custom rate limiting
+//! let mut config = RateLimiterConfig::default();
+//! config.enabled = true;
+//! config.max_messages_per_second = 40; // More conservative than default
+//! config.max_historical_requests = 30; // Fewer simultaneous historical requests
+//! client.configure_rate_limiter(config)?;
+//!
+//! // Monitor rate limiter status
+//! if let Some(status) = client.get_rate_limiter_status() {
+//!     println!("Active historical requests: {}/{}",
+//!              status.active_historical_requests,
+//!              config.max_historical_requests);
+//! }
+//!
+//! // Clean up stale requests (for long-running applications)
+//! let (hist_cleaned, mkt_cleaned) = client.cleanup_stale_rate_limiter_requests(
+//!     Duration::from_secs(300)  // Clean up requests older than 5 minutes
+//! )?;
+//! ```
+//!
+//! The rate limiter enforces:
+//! - Maximum messages per second (default: 50)
+//! - Maximum simultaneous historical data requests (default: 50)
+//! - Maximum market data lines (default: 100)
+//!
+//! Rate limiting is disabled by default but can be enabled with a single method call.
 //!
 //! ## Error Handling
 //!
