@@ -287,6 +287,41 @@ let (contract, order) = OrderBuilder::new(OrderSide::Buy, 100.0)
     .build()?;
 ```
 
+### Rate Limiting
+
+YATWS provides built-in rate limiting to ensure compliance with Interactive Brokers' API limits:
+
+```rust
+// Enable rate limiting with default settings (50 msgs/sec, 50 historical requests, 100 market data lines)
+client.enable_rate_limiting()?;
+
+// Configure custom rate limiting settings
+let mut config = RateLimiterConfig::default();
+config.enabled = true;
+config.max_messages_per_second = 40;  // Be more conservative
+config.max_historical_requests = 30;  // Lower than default 50
+config.rate_limit_wait_timeout = Duration::from_secs(10);  // Longer timeout
+client.configure_rate_limiter(config)?;
+
+// Check current rate limiter status
+if let Some(status) = client.get_rate_limiter_status() {
+    println!("Rate limiting enabled: {}", status.enabled);
+    println!("Current message rate: {:.2} msgs/sec", status.current_message_rate);
+    println!("Active historical requests: {}/{}",
+             status.active_historical_requests,
+             config.max_historical_requests);
+}
+
+// Disable rate limiting when needed
+client.disable_rate_limiting()?;
+
+// Clean up stale requests (useful for long-running applications)
+let (hist_cleaned, mkt_cleaned) = client.cleanup_stale_rate_limiter_requests(
+    Duration::from_secs(300)  // Clean up requests older than 5 minutes
+)?;
+println!("Cleaned up {} historical and {} market data requests", hist_cleaned, mkt_cleaned);
+```
+
 ## Error Handling
 
 YATWS uses Rust's Result pattern consistently, with a custom `IBKRError` type:

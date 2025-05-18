@@ -26,6 +26,9 @@ This document provides an overview of the public API for YATWS (Yet Another TWS 
 - [DataFundamentalsManager](#datafundamentalsmanager)
 - [Financial Report Parser](#financial-report-parser)
 - [IBKRAlgo Enum](#ibkralgo-enum)
+- [Rate Limiter](#rate-limiter)
+  - [RateLimiterConfig Struct](#ratelimiterconfig-struct)
+  - [RateLimiterStatus Struct](#ratelimiterstatus-struct)
 
 ---
 
@@ -90,6 +93,34 @@ Provides access to the `DataFundamentalsManager` for financial data (company fun
 
 ### `IBKRClient::financial_advisor(&self) -> Arc<FinancialAdvisorManager>`
 Provides access to the `FinancialAdvisorManager` for Financial Advisor configurations (groups, profiles, aliases).
+
+### `IBKRClient::configure_rate_limiter(&self, config: RateLimiterConfig) -> Result<(), IBKRError>`
+
+Configures rate limiting for API requests with custom settings.
+- `config`: The rate limiter configuration to apply.
+- **Errors**: Returns `IBKRError` if configuration cannot be applied.
+
+### `IBKRClient::get_rate_limiter_status(&self) -> Option<RateLimiterStatus>`
+
+Returns the current rate limiter status, including usage statistics for each limiter.
+- **Returns**: `Option<RateLimiterStatus>`, or `None` if rate limiting is not configured.
+
+### `IBKRClient::enable_rate_limiting(&self) -> Result<(), IBKRError>`
+
+Enables rate limiting with default configuration (50 msg/sec, 50 historical requests, 100 market data lines).
+- **Errors**: Returns `IBKRError` if rate limiting cannot be enabled.
+
+### `IBKRClient::disable_rate_limiting(&self) -> Result<(), IBKRError>`
+
+Disables all rate limiting. Use with caution, as excessive API usage may cause IBKR to throttle or disconnect.
+- **Errors**: Returns `IBKRError` if rate limiting cannot be disabled.
+
+### `IBKRClient::cleanup_stale_rate_limiter_requests(&self, older_than: Duration) -> Result<(u32, u32), IBKRError>`
+
+Cleans up stale rate limiter requests that never received completion messages.
+- `older_than`: Duration threshold for considering a request stale.
+- **Returns**: Tuple of (historical_cleaned, market_data_cleaned) counts.
+- **Errors**: Returns `IBKRError` if cleanup fails.
 
 ---
 
@@ -1305,3 +1336,95 @@ pub enum TwapStrategyType { Marketable, MatchingMidpoint, MatchingSameSide, Matc
 pub enum ConditionConjunction { And, Or }
 ```
 (See `order.rs` and `order_builder.rs` for full details and validation ranges).
+
+---
+
+## Rate Limiter
+
+Provides rate limiting capabilities to respect Interactive Brokers' API limitations. Helps prevent your application from being disconnected due to excessive API usage. Accessed via methods on `IBKRClient`.
+
+**File:** `yatws/src/rate_limiter.rs`
+
+### RateLimiterConfig Struct
+
+Configuration for rate limiting features. Controls limits for different types of API requests.
+
+```rust
+pub struct RateLimiterConfig {
+    // When enabled=false, rate limiting is bypassed
+    pub enabled: bool,
+    // Messages per second limit (default: 50)
+    pub max_messages_per_second: u32,
+    // Maximum burst size for message rate limiter (default: 100)
+    pub max_message_burst: u32,
+    // Maximum simultaneous historical data requests (default: 50)
+    pub max_historical_requests: u32,
+    // Maximum simultaneous market data lines (default: 100)
+    pub max_market_data_lines: u32,
+    // Maximum time to wait when rate limited before returning an error (default: 5s)
+    pub rate_limit_wait_timeout: Duration,
+}
+```
+
+The rate limiter enforces three primary limits:
+1. **Messages per Second**: Maximum 50 messages per second (token bucket algorithm)
+2. **Historical Data**: Maximum 50 simultaneous open historical data requests (counter)
+3. **Market Data Lines**: Default limit of 100 market data lines (counter)
+
+### RateLimiterStatus Struct
+
+Reports current usage statistics for the rate limiters.
+
+```rust
+pub struct RateLimiterStatus {
+    pub enabled: bool,
+    // Current message rate in messages per second
+    pub current_message_rate: f64,
+    // Current number of tokens in the bucket
+    pub current_message_tokens: u32,
+    // Number of active historical data requests
+    pub active_historical_requests: u32,
+    // Number of active market data lines
+    pub active_market_data_lines: u32,
+    // Counts of messages delayed due to rate limiting
+    pub messages_delayed: u64,
+    // Counts of requests rejected due to rate limiting
+    pub requests_rejected: u64,
+}
+```
+
+### Example Usage
+
+```rust
+// Create a client
+let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+
+// Enable rate limiting with default settings
+client.enable_rate_limiting()?;
+
+// Or enable with custom settings
+let mut config = RateLimiterConfig::default();
+config.enabled = true;
+config.max_messages_per_second = 40; // Be more conservative than default 50
+config.max_historical_requests = 30; // Be more conservative than default 50
+client.configure_rate_limiter(config)?;
+
+// Check current status
+if let Some(status) = client.get_rate_limiter_status() {
+    println!("Current message rate: {:.2} msgs/sec", status.current_message_rate);
+    println!("Active historical requests: {}/{}",
+             status.active_historical_requests, 50);
+    println!("Active market data lines: {}/{}",
+             status.active_market_data_lines, 100);
+}
+
+// Clean up any stale request tracking (after 5 minutes)
+let (hist_cleaned, mkt_cleaned) = client.cleanup_stale_rate_limiter_requests(
+    Duration::from_secs(5 * 60)
+)?;
+println!("Cleaned up {} historical and {} market data requests",
+         hist_cleaned, mkt_cleaned);
+
+// Disable rate limiting if needed (use with caution)
+client.disable_rate_limiting()?;
+```
