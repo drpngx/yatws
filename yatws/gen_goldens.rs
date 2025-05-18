@@ -137,6 +137,15 @@ inventory::submit! { TestDefinition { name: "subscribe-market-data", func: test_
 inventory::submit! { TestDefinition { name: "subscribe-historical-combined", func: test_cases::subscribe_historical_combined_impl } }
 inventory::submit! { TestDefinition { name: "subscribe-news-bulletins", func: test_cases::subscribe_news_bulletins_impl } }
 inventory::submit! { TestDefinition { name: "subscribe-historical-news", func: test_cases::subscribe_historical_news_impl } }
+inventory::submit! { TestDefinition { name: "subscribe-real-time-bars", func: test_cases::subscribe_real_time_bars_impl } }
+inventory::submit! { TestDefinition { name: "subscribe-tick-by-tick", func: test_cases::subscribe_tick_by_tick_impl } }
+inventory::submit! { TestDefinition { name: "subscribe-market-depth", func: test_cases::subscribe_market_depth_impl } }
+inventory::submit! { TestDefinition { name: "observe-realtime-bars", func: test_cases::observe_realtime_bars_impl } }
+inventory::submit! { TestDefinition { name: "observe-tick-by-tick", func: test_cases::observe_tick_by_tick_impl } }
+inventory::submit! { TestDefinition { name: "observe-market-depth", func: test_cases::observe_market_depth_impl } }
+inventory::submit! { TestDefinition { name: "observe-historical-data", func: test_cases::observe_historical_data_impl } }
+inventory::submit! { TestDefinition { name: "observe-historical-ticks", func: test_cases::observe_historical_ticks_impl } }
+inventory::submit! { TestDefinition { name: "multi-subscription-mixed", func: test_cases::multi_subscription_mixed_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 
