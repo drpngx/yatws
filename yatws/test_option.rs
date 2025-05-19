@@ -455,10 +455,8 @@ fn test_single_strategy(
       }
     },
     Err(e) => {
-      // This might be legitimate for some strategies in some market conditions
-      warn!("  Unable to create {} strategy: {:?}", strategy_name, e);
-      // Not setting overall_success to false here, as some failures may be legitimate
-      // market constraints that the builder correctly handles
+      error!("  Unable to create {} strategy: {:?}", strategy_name, e);
+      *overall_success = false;
     }
   }
 }
