@@ -146,6 +146,7 @@ inventory::submit! { TestDefinition { name: "observe-market-depth", func: test_c
 inventory::submit! { TestDefinition { name: "observe-historical-data", func: test_cases::observe_historical_data_impl } }
 inventory::submit! { TestDefinition { name: "observe-historical-ticks", func: test_cases::observe_historical_ticks_impl } }
 inventory::submit! { TestDefinition { name: "multi-subscription-mixed", func: test_cases::multi_subscription_mixed_impl } }
+inventory::submit! { TestDefinition { name: "options-strategy-builder", func: test_cases::options_strategy_builder_test_impl } }
 // Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
 // inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
 
