@@ -5,7 +5,7 @@ use std::time::Duration;
 use yatws::{
   IBKRError,
   IBKRClient,
-  contract::{Contract, WhatToShow, BarSize},
+  contract::{Contract, WhatToShow, BarSize, SecType},
   data::{MarketDataType, DurationUnit, TickType, TickAttrib, TickByTickRequestType, RealTimeBarInfo,
          GenericTickType},
   data_subscription::{
@@ -315,7 +315,14 @@ pub(super) fn subscribe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) ->
 pub(super) fn subscribe_market_depth_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
   info!("--- Testing Subscribe Market Depth ---");
   let data_mgr = client.data_market();
-  let contract = Contract::stock("IBM");
+  // FX market depth is free.
+  let mut contract = Contract {
+    symbol: "EUR".to_string(),
+    exchange: "IDEALPRO".to_string(),
+    sec_type: SecType::Forex,
+    currency: "GBP".to_string(),
+    ..Default::default()
+  };
   let num_rows = 5;
 
   info!("Building MarketDepthSubscription for {}...", contract.symbol);

@@ -5,7 +5,7 @@ use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use yatws::{
   IBKRClient,
-  contract::{Contract, WhatToShow, BarSize},
+  contract::{Contract, WhatToShow, BarSize, SecType},
   data::{MarketDataType, TickType, GenericTickType, TickByTickRequestType},
   data_observer::{MarketDataObserver, RealTimeBarsObserver, TickByTickObserver, MarketDepthObserver,
                   HistoricalDataObserver, HistoricalTicksObserver, ObserverId},
@@ -268,7 +268,14 @@ pub(super) fn observe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) -> R
 pub(super) fn observe_market_depth_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
   info!("--- Testing Observe Market Depth ---");
   let data_mgr = client.data_market();
-  let contract = Contract::stock("IBM");
+  // FX market depth is free.
+  let mut contract = Contract {
+    symbol: "EUR".to_string(),
+    exchange: "IDEALPRO".to_string(),
+    sec_type: SecType::Forex,
+    currency: "GBP".to_string(),
+    ..Default::default()
+  };
 
   #[derive(Debug)]
   struct TestMarketDepthObserver {
