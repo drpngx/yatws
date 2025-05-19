@@ -400,16 +400,17 @@ impl RealTimeBarsObserver for RealTimeBarInternalObserver {
 
 // --- TickByTickSubscription ---
 #[derive(Debug, Clone)]
-pub struct TickByTickParams { pub tick_type: TickByTickRequestType, pub number_of_ticks: i32, pub ignore_size: bool }
+pub struct TickByTickParams { pub tick_type: TickByTickRequestType, pub number_of_ticks: i32, pub ignore_size: bool, pub market_data_type: Option<MarketDataType> }
 #[derive(Debug, Clone)]
 pub enum TickByTickEvent { Last { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, AllLast { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, BidAsk { time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk }, MidPoint { time: i64, mid_point: f64 }, Error(IBKRError), }
 #[derive(Debug)]
 pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>> }
 pub struct TickByTickSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: TickByTickParams }
 impl TickByTickSubscriptionBuilder {
-  pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, tick_type: TickByTickRequestType) -> Self { Self { manager_weak, contract, params: TickByTickParams { tick_type, number_of_ticks: 0, ignore_size: false } } }
+  pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, tick_type: TickByTickRequestType) -> Self { Self { manager_weak, contract, params: TickByTickParams { tick_type, number_of_ticks: 0, ignore_size: false, market_data_type: None } } }
   pub fn with_number_of_ticks(mut self, num_ticks: i32) -> Self { self.params.number_of_ticks = num_ticks; self }
   pub fn with_ignore_size(mut self, ignore: bool) -> Self { self.params.ignore_size = ignore; self }
+  pub fn with_market_data_type(mut self, mdt: MarketDataType) -> Self { self.params.market_data_type = Some(mdt); self }
   pub fn submit(self) -> Result<TickByTickSubscription, IBKRError> {
     let manager = self.manager_weak.upgrade().ok_or(IBKRError::NotConnected)?;
     let req_id = manager.next_request_id();
@@ -417,6 +418,11 @@ impl TickByTickSubscriptionBuilder {
     let observer = TickByTickInternalObserver { state: Arc::clone(&state) };
     let observer_id = manager.observe_tick_by_tick(observer);
     state.set_observer_id(observer_id);
+    let mdt_to_set = self.params.market_data_type.unwrap_or(MarketDataType::RealTime);
+    // Attempt to set MDT, log warning on failure but proceed.
+    if manager.set_market_data_type_if_needed(mdt_to_set).is_err() {
+      warn!("Failed to set market data type to {:?} for req_id {}, proceeding with request.", mdt_to_set, req_id);
+    }
     manager.internal_request_tick_by_tick_data(req_id, &self.contract, self.params.tick_type, self.params.number_of_ticks, self.params.ignore_size)?;
     Ok(TickByTickSubscription { state })
   }

@@ -254,12 +254,13 @@ pub(super) fn subscribe_real_time_bars_impl(client: &IBKRClient, is_live: bool) 
 pub(super) fn subscribe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
   info!("--- Testing Subscribe Tick By Tick ---");
   let data_mgr = client.data_market();
-  let contract = Contract::stock("MSFT");
+  let contract = Contract::stock_with_exchange("MSFT", "SMART", "USD");
   let tick_type = TickByTickRequestType::BidAsk;
 
   info!("Building TickByTickSubscription for {}...", contract.symbol);
   let subscription = data_mgr.subscribe_tick_by_tick(&contract, tick_type)
     .with_number_of_ticks(0) // Streaming
+    .with_market_data_type(MarketDataType::Delayed)
     .submit()
     .context("Failed to submit TickByTickSubscription")?;
 

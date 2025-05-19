@@ -235,6 +235,7 @@ pub(super) fn observe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) -> R
     TickByTickRequestType::Last,
     0, // number_of_ticks (0 for streaming)
     false, // ignore_size
+    Some(MarketDataType::Delayed),
     observer,
   ).context("Failed to request observed tick-by-tick data")?;
 

@@ -3007,6 +3007,7 @@ impl DataMarketManager {
     tick_type: TickByTickRequestType,
     number_of_ticks: i32,
     ignore_size: bool,
+    market_data_type: Option<MarketDataType>,
     observer: T,
   ) -> Result<(i32, ObserverId), IBKRError> {
     struct FilteredObserver<Obs: TickByTickObserver + Send + Sync> { inner: Obs, req_id: i32, }
@@ -3025,6 +3026,8 @@ impl DataMarketManager {
       }
     }
 
+    let desired_mkt_data_type = market_data_type.unwrap_or(MarketDataType::RealTime);
+    self.set_market_data_type_if_needed(desired_mkt_data_type)?;
     let req_id = self.next_request_id(); // Use the new helper method
     let observer_id = self.observe_tick_by_tick(FilteredObserver { inner: observer, req_id });
 
