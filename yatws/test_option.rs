@@ -298,7 +298,7 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
 
   // Define underlyings to test with - focusing on liquid instruments
   let underlyings = [
-    ("SPY", SecType::Stock, "SMART", "USD"), // S&P 500 ETF
+    ("AAPL", SecType::Stock, "SMART", "USD"), // S&P 500 ETF
   ];
 
   // Track overall success
