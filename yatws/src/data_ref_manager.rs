@@ -23,8 +23,8 @@ struct DataRefRequestState {
   contract_details_list: Vec<ContractDetails>,
   contract_details_end_received: bool,
 
-  // Fields for SecDefOptParams
-  sec_def_params: Option<SecDefOptParamsResult>,
+  // Fields for SecDefOptParams - stores all results received for a request
+  sec_def_params_list: Vec<SecDefOptParamsResult>,
   sec_def_params_end_received: bool,
 
   // Fields for SoftDollarTiers
@@ -367,14 +367,9 @@ impl DataRefManager {
     // --- Adjust RequestState and wait logic ---
     // Add `sec_def_params_list: Vec<SecDefOptParamsResult>` to RequestState
     // Modify the wait closure:
-    self.wait_for_completion(req_id, timeout, |state| {
+    self.wait_for_completion(req_id, timeout, |state| { // Ensure this closure returns Option<Result<Vec<SecDefOptParamsResult>, IBKRError>>
       if state.sec_def_params_end_received {
-        // For now, return the single stored Option. A real implementation
-        // might aggregate multiple results if the handler stores them in a Vec.
-        match &state.sec_def_params {
-          Some(params) => Some(Ok(vec![params.clone()])), // Wrap single result in Vec
-          None => Some(Ok(Vec::new())), // End received, but no params data
-        }
+        Some(Ok(state.sec_def_params_list.clone()))
       } else {
         None // Not complete yet
       }
@@ -594,9 +589,7 @@ impl ReferenceDataHandler for DataRefManager {
 
     let mut states = self.request_states.lock();
     if let Some(state) = states.get_mut(&req_id) {
-      // Store the result. If multiple come, this overwrites.
-      // A real implementation might store a Vec<SecDefOptParamsResult>.
-      state.sec_def_params = Some(result);
+      state.sec_def_params_list.push(result);
       // Don't notify yet, wait for end message
     } else {
       warn!("Received SecDefOptParams for unknown or completed request ID: {}", req_id);
