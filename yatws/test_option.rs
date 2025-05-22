@@ -1,5 +1,4 @@
 // yatws/test_option.rs
-
 use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
 use log::{error, info, warn};
@@ -328,20 +327,68 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
 
     info!("Using underlying price: {:.2} for {}", underlying_price, symbol);
 
-    // Calculate test strike prices (ensure proper ordering for different strategies)
-    let atm_strike = (underlying_price / 5.0).round() * 5.0; // Round to nearest $5
-    let strike1 = atm_strike - 15.0; // Well below
-    let strike2 = atm_strike - 5.0;  // Slightly below
-    let strike3 = atm_strike + 5.0;  // Slightly above
-    let strike4 = atm_strike + 15.0; // Well above
+    // Get real option chain data to use actual strikes and expiries
+    let underlying_details = match data_ref.get_contract_details(&contract) {
+      Ok(details) if !details.is_empty() => details[0].contract.con_id,
+      _ => {
+        error!("Failed to get underlying contract details for {}", symbol);
+        overall_success = false;
+        continue;
+      }
+    };
+
+    let option_params = match data_ref.get_option_chain_params(
+      symbol, "", sec_type.clone(), underlying_details
+    ) {
+      Ok(params) if !params.is_empty() => params,
+      Ok(_) => {
+        warn!("Empty option chain parameters for {}", symbol);
+        continue;
+      },
+      Err(e) => {
+        error!("Failed to get option chain for {}: {}", symbol, e);
+        overall_success = false;
+        continue;
+      }
+    };
+
+    let primary_params = &option_params[0];
+    if primary_params.strikes.len() < 4 || primary_params.expirations.len() < 2 {
+      warn!("Insufficient option data for {} (need at least 4 strikes and 2 expiries)", symbol);
+      continue;
+    }
+
+    // Use real strikes from option chain, find ones relative to underlying price
+    let available_strikes = &primary_params.strikes;
+    let atm_strike = available_strikes
+      .iter()
+      .min_by(|a, b| (*a - underlying_price).abs().partial_cmp(&(*b - underlying_price).abs()).unwrap())
+      .cloned()
+      .unwrap();
+
+    let strike1 = available_strikes.iter().filter(|&&s| s < atm_strike).max_by(|a, b| a.partial_cmp(b).unwrap()).cloned()
+      .or_else(|| available_strikes.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).cloned()).unwrap();
+    let strike2 = available_strikes.iter().filter(|&&s| s < atm_strike && s > strike1).max_by(|a, b| a.partial_cmp(b).unwrap()).cloned()
+      .unwrap_or(strike1);
+    let strike3 = available_strikes.iter().filter(|&&s| s > atm_strike).min_by(|a, b| a.partial_cmp(b).unwrap()).cloned()
+      .or_else(|| available_strikes.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).cloned()).unwrap();
+    let strike4 = available_strikes.iter().filter(|&&s| s > strike3).min_by(|a, b| a.partial_cmp(b).unwrap()).cloned()
+      .unwrap_or(strike3);
 
     // For algorithms requiring strict ordering: strike1 < strike2 < strike3 < strike4
-    info!("Test strikes: {:.2}, {:.2}, {:.2}, {:.2}", strike1, strike2, strike3, strike4);
+    info!("Real strikes: {:.2}, {:.2}, {:.2}, {:.2}", strike1, strike2, strike3, strike4);
 
-    // Get expiration dates
-    let today = Utc::now().date_naive();
-    let expiry1 = today + ChronoDuration::days(30); // ~1 month out
-    let expiry2 = today + ChronoDuration::days(90); // ~3 months out
+    // Use real expiration dates from option chain
+    let available_expiries = &primary_params.expirations;
+    let expiry1_str = &available_expiries[0];
+    let expiry2_str = available_expiries.get(1).unwrap_or(&available_expiries[0]);
+
+    let expiry1 = NaiveDate::parse_from_str(expiry1_str, "%Y%m%d")
+      .context(format!("Failed to parse expiry: {}", expiry1_str))?;
+    let expiry2 = NaiveDate::parse_from_str(expiry2_str, "%Y%m%d")
+      .context(format!("Failed to parse expiry: {}", expiry2_str))?;
+
+    info!("Real expiries: {} ({}), {} ({})", expiry1_str, expiry1.format("%Y-%m-%d"), expiry2_str, expiry2.format("%Y-%m-%d"));
 
     // Test each strategy type
     // 1. Single leg options
