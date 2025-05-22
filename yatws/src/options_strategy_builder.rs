@@ -120,9 +120,9 @@ impl OptionsStrategyBuilder {
     );
     // Use SMART for Stocks, but leave empty for Futures to let TWS resolve exchange
     let initial_exchange = match self.underlying_sec_type {
-        SecType::Stock => "SMART".to_string(),
-        SecType::Future => String::new(), // Let TWS find the exchange for Futures
-        _ => return Err(IBKRError::InvalidContract("Unsupported underlying type for fetching details".to_string())),
+      SecType::Stock => "SMART".to_string(),
+      SecType::Future => String::new(), // Let TWS find the exchange for Futures
+      _ => return Err(IBKRError::InvalidContract("Unsupported underlying type for fetching details".to_string())),
     };
     let underlying_contract_spec = Contract {
       symbol: self.underlying_symbol.clone(),
@@ -256,9 +256,9 @@ impl OptionsStrategyBuilder {
 
       // Determine option secType and exchange based on underlying
       let (option_sec_type, option_exchange) = match self.underlying_sec_type {
-          SecType::Stock => (SecType::Option, "SMART".to_string()), // Use SMART for stock options
-          SecType::Future => (SecType::FutureOption, self.underlying_exchange.clone()), // Use underlying's exchange for FOP
-          _ => return Err(IBKRError::InvalidContract("Unsupported underlying type for options".to_string())),
+        SecType::Stock => (SecType::Option, "SMART".to_string()), // Use SMART for stock options
+        SecType::Future => (SecType::FutureOption, self.underlying_exchange.clone()), // Use underlying's exchange for FOP
+        _ => return Err(IBKRError::InvalidContract("Unsupported underlying type for options".to_string())),
       };
 
       let option_contract_spec = Contract {
@@ -292,19 +292,19 @@ impl OptionsStrategyBuilder {
 
       // Ensure the multiplier is set correctly from the details
       if contract.multiplier.is_none() || contract.multiplier.as_deref() == Some("") {
-          let detail_multiplier = details_list[0].contract.multiplier.clone(); // Multiplier from details
-          if detail_multiplier.is_some() && detail_multiplier.as_deref() != Some("") {
-              debug!("Updating contract multiplier from details: {:?}", detail_multiplier);
-              contract.multiplier = detail_multiplier;
-          } else {
-              // Fallback or error if multiplier still missing
-              let default_mult = match contract.sec_type {
-                  SecType::FutureOption => "50", // Common default for ES, but might be wrong
-                  _ => "100", // Default for STK options
-              };
-              warn!("Multiplier not found in contract details for ConID {}. Using default: {}", contract.con_id, default_mult);
-              contract.multiplier = Some(default_mult.to_string());
-          }
+        let detail_multiplier = details_list[0].contract.multiplier.clone(); // Multiplier from details
+        if detail_multiplier.is_some() && detail_multiplier.as_deref() != Some("") {
+          debug!("Updating contract multiplier from details: {:?}", detail_multiplier);
+          contract.multiplier = detail_multiplier;
+        } else {
+          // Fallback or error if multiplier still missing
+          let default_mult = match contract.sec_type {
+            SecType::FutureOption => "50", // Common default for ES, but might be wrong
+            _ => "100", // Default for STK options
+          };
+          warn!("Multiplier not found in contract details for ConID {}. Using default: {}", contract.con_id, default_mult);
+          contract.multiplier = Some(default_mult.to_string());
+        }
       }
 
 
@@ -386,8 +386,8 @@ impl OptionsStrategyBuilder {
     self.fetch_underlying_details()?;
     let exch = self.underlying_exchange.clone();
     let available_strikes = {
-        let params = self.fetch_option_params(&exch)?;
-        params.strikes.clone()
+      let params = self.fetch_option_params(&exch)?;
+      params.strikes.clone()
     };
 
     // Find nearest actual strikes
@@ -396,10 +396,10 @@ impl OptionsStrategyBuilder {
 
     // Ensure actual strikes maintain order after snapping (could become equal)
     if actual_strike1 >= actual_strike2 {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for vertical spread (target: {}/{})",
-            actual_strike1, actual_strike2, target_strike1, target_strike2
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for vertical spread (target: {}/{})",
+        actual_strike1, actual_strike2, target_strike1, target_strike2
+      )));
     }
 
 
@@ -467,10 +467,10 @@ impl OptionsStrategyBuilder {
     let actual_put_strike = self.find_nearest_strike(target_put_strike, &available_strikes)?;
 
     if actual_put_strike >= actual_call_strike {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for strangle (target: {}/{})",
-            actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for strangle (target: {}/{})",
+        actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
+      )));
     }
 
     // Optional: Add validation using self.underlying_price if available
@@ -504,10 +504,10 @@ impl OptionsStrategyBuilder {
     let actual_put_strike = self.find_nearest_strike(target_put_strike, &available_strikes)?;
 
     if actual_put_strike >= actual_call_strike {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for strangle (target: {}/{})",
-            actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for strangle (target: {}/{})",
+        actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
+      )));
     }
 
     self.strategy_name = Some(format!(
@@ -541,8 +541,8 @@ impl OptionsStrategyBuilder {
     // 2. Fetch option params for the primary exchange
     let exch = self.underlying_exchange.clone();
     let (expirations, available_strikes) = { // Fetch params and clone data
-        let params = self.fetch_option_params(&exch)?;
-        (params.expirations.clone(), params.strikes.clone())
+      let params = self.fetch_option_params(&exch)?;
+      (params.expirations.clone(), params.strikes.clone())
     };
     // 3. Find nearest expiry string using the cloned list
     let expiry_str = self.find_nearest_expiration(target_expiry, &expirations)?;
@@ -554,10 +554,10 @@ impl OptionsStrategyBuilder {
     let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
 
     if actual_strike1 >= actual_strike2 {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for box spread (target: {}/{})",
-            actual_strike1, actual_strike2, target_strike1, target_strike2
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for box spread (target: {}/{})",
+        actual_strike1, actual_strike2, target_strike1, target_strike2
+      )));
     }
 
     self.strategy_name = Some(format!("Box Spread {}/{} (Exp: {})", actual_strike1, actual_strike2, expiry_str));
@@ -646,10 +646,10 @@ impl OptionsStrategyBuilder {
     let actual_call_strike = self.find_nearest_strike(target_call_strike, &available_strikes)?;
 
     if actual_put_strike >= actual_call_strike {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for collar (target: {}/{})",
-            actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for collar (target: {}/{})",
+        actual_put_strike, actual_call_strike, target_put_strike, target_call_strike
+      )));
     }
 
     self.strategy_name = Some(format!("Collar Options {}/{}", actual_put_strike, actual_call_strike));
@@ -718,10 +718,10 @@ impl OptionsStrategyBuilder {
     let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
 
     if actual_strike1 >= actual_strike2 {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for stock repair (target: {}/{})",
-            actual_strike1, actual_strike2, target_strike1, target_strike2
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for stock repair (target: {}/{})",
+        actual_strike1, actual_strike2, target_strike1, target_strike2
+      )));
     }
 
     self.strategy_name = Some(format!("Stock Repair Options {}/{}", actual_strike1, actual_strike2));
@@ -745,10 +745,10 @@ impl OptionsStrategyBuilder {
     let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
 
     if actual_strike1 >= actual_strike2 {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
-            actual_strike1, actual_strike2, target_strike1, target_strike2
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
+        actual_strike1, actual_strike2, target_strike1, target_strike2
+      )));
     }
 
     self.strategy_name = Some(format!("Long Ratio Call Spread {}/{} ({}:{})", actual_strike1, actual_strike2, buy_ratio, sell_ratio));
@@ -770,10 +770,10 @@ impl OptionsStrategyBuilder {
     let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
 
     if actual_strike1 >= actual_strike2 {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
-            actual_strike1, actual_strike2, target_strike1, target_strike2
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
+        actual_strike1, actual_strike2, target_strike1, target_strike2
+      )));
     }
 
     self.strategy_name = Some(format!("Long Ratio Put Spread {}/{} ({}:{})", actual_strike1, actual_strike2, buy_ratio, sell_ratio));
@@ -795,10 +795,10 @@ impl OptionsStrategyBuilder {
     let actual_strike2 = self.find_nearest_strike(target_strike2, &available_strikes)?;
 
     if actual_strike1 >= actual_strike2 {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
-            actual_strike1, actual_strike2, target_strike1, target_strike2
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}) are not ordered correctly for ratio spread (target: {}/{})",
+        actual_strike1, actual_strike2, target_strike1, target_strike2
+      )));
     }
 
     self.strategy_name = Some(format!("Short Ratio Put Spread {}/{} ({}:{})", actual_strike1, actual_strike2, sell_ratio, buy_ratio));
@@ -823,10 +823,10 @@ impl OptionsStrategyBuilder {
     let actual_strike3 = self.find_nearest_strike(target_strike3, &available_strikes)?;
 
     if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3) {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}, {}) are not ordered correctly for butterfly (target: {}/{}/{})",
-            actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}, {}) are not ordered correctly for butterfly (target: {}/{}/{})",
+        actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
+      )));
     }
     // Optional: Check for equal distance: strike2-strike1 == strike3-strike2
     self.strategy_name = Some(format!("Long Put Butterfly {}/{}/{}", actual_strike1, actual_strike2, actual_strike3));
@@ -849,10 +849,10 @@ impl OptionsStrategyBuilder {
     let actual_strike3 = self.find_nearest_strike(target_strike3, &available_strikes)?;
 
     if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3) {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}, {}) are not ordered correctly for butterfly (target: {}/{}/{})",
-            actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}, {}) are not ordered correctly for butterfly (target: {}/{}/{})",
+        actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
+      )));
     }
     self.strategy_name = Some(format!("Short Call Butterfly {}/{}/{}", actual_strike1, actual_strike2, actual_strike3));
     self.legs.clear();
@@ -875,10 +875,10 @@ impl OptionsStrategyBuilder {
     let actual_strike3 = self.find_nearest_strike(target_strike3, &available_strikes)?;
 
     if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3) {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}, {}) are not ordered correctly for iron butterfly (target: {}/{}/{})",
-            actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}, {}) are not ordered correctly for iron butterfly (target: {}/{}/{})",
+        actual_strike1, actual_strike2, actual_strike3, target_strike1, target_strike2, target_strike3
+      )));
     }
     self.strategy_name = Some(format!("Long Iron Butterfly {}/{}/{}", actual_strike1, actual_strike2, actual_strike3));
     self.legs.clear();
@@ -905,10 +905,10 @@ impl OptionsStrategyBuilder {
     let actual_strike4 = self.find_nearest_strike(target_strike4, &available_strikes)?;
 
     if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3 && actual_strike3 < actual_strike4) {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}, {}, {}) are not ordered correctly for condor (target: {}/{}/{}/{})",
-            actual_strike1, actual_strike2, actual_strike3, actual_strike4, target_strike1, target_strike2, target_strike3, target_strike4
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}, {}, {}) are not ordered correctly for condor (target: {}/{}/{}/{})",
+        actual_strike1, actual_strike2, actual_strike3, actual_strike4, target_strike1, target_strike2, target_strike3, target_strike4
+      )));
     }
     // Optional: Check for equal wing widths
     self.strategy_name = Some(format!("Long Put Condor {}/{}/{}/{}", actual_strike1, actual_strike2, actual_strike3, actual_strike4));
@@ -934,10 +934,10 @@ impl OptionsStrategyBuilder {
     let actual_strike4 = self.find_nearest_strike(target_strike4, &available_strikes)?;
 
     if !(actual_strike1 < actual_strike2 && actual_strike2 < actual_strike3 && actual_strike3 < actual_strike4) {
-        return Err(IBKRError::InvalidParameter(format!(
-            "Nearest strikes found ({}, {}, {}, {}) are not ordered correctly for condor (target: {}/{}/{}/{})",
-            actual_strike1, actual_strike2, actual_strike3, actual_strike4, target_strike1, target_strike2, target_strike3, target_strike4
-        )));
+      return Err(IBKRError::InvalidParameter(format!(
+        "Nearest strikes found ({}, {}, {}, {}) are not ordered correctly for condor (target: {}/{}/{}/{})",
+        actual_strike1, actual_strike2, actual_strike3, actual_strike4, target_strike1, target_strike2, target_strike3, target_strike4
+      )));
     }
     self.strategy_name = Some(format!("Short Condor (Iron) {}/{}/{}/{}", actual_strike1, actual_strike2, actual_strike3, actual_strike4));
     self.legs.clear();
