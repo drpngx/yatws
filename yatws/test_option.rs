@@ -301,8 +301,9 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
     ("AAPL", SecType::Stock, "SMART", "USD"), // S&P 500 ETF
   ];
 
-  // Track overall success
-  let mut overall_success = true;
+  // Track which strategies failed
+  let mut failed_strategies: Vec<String> = Vec::new();
+  let mut total_strategies = 0;
 
   for (symbol, sec_type, exchange, currency) in underlyings {
     info!("--- Testing strategies for: {} ({}) ---", symbol, sec_type);
@@ -332,7 +333,7 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
       Ok(details) if !details.is_empty() => details[0].contract.con_id,
       _ => {
         error!("Failed to get underlying contract details for {}", symbol);
-        overall_success = false;
+        failed_strategies.push("INIT".to_string());
         continue;
       }
     };
@@ -347,7 +348,7 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
       },
       Err(e) => {
         error!("Failed to get option chain for {}: {}", symbol, e);
-        overall_success = false;
+        failed_strategies.push("INIT".to_string());
         continue;
       }
     };
@@ -393,74 +394,89 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
     // Test each strategy type
     // 1. Single leg options
     info!("Testing single leg options...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.buy_call(expiry1, strike3), "Buy Call", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.sell_call(expiry1, strike3), "Sell Call", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.buy_put(expiry1, strike2), "Buy Put", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.sell_put(expiry1, strike2), "Sell Put", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.buy_call(expiry1, strike3), "Buy Call", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.sell_call(expiry1, strike3), "Sell Call", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.buy_put(expiry1, strike2), "Buy Put", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.sell_put(expiry1, strike2), "Sell Put", &mut failed_strategies, &mut total_strategies);
 
     // 2. Vertical spreads
     info!("Testing vertical spreads...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.bull_call_spread(expiry1, strike2, strike3), "Bull Call Spread", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.bear_call_spread(expiry1, strike2, strike3), "Bear Call Spread", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.bull_put_spread(expiry1, strike2, strike3), "Bull Put Spread", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.bear_put_spread(expiry1, strike2, strike3), "Bear Put Spread", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.bull_call_spread(expiry1, strike2, strike3), "Bull Call Spread", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.bear_call_spread(expiry1, strike2, strike3), "Bear Call Spread", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.bull_put_spread(expiry1, strike2, strike3), "Bull Put Spread", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.bear_put_spread(expiry1, strike2, strike3), "Bear Put Spread", &mut failed_strategies, &mut total_strategies);
 
     // 3. Straddles/Strangles
     info!("Testing straddles and strangles...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_straddle(expiry1, atm_strike), "Long Straddle", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_straddle(expiry1, atm_strike), "Short Straddle", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_strangle(expiry1, strike3, strike2), "Long Strangle", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_strangle(expiry1, strike3, strike2), "Short Strangle", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_straddle(expiry1, atm_strike), "Long Straddle", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_straddle(expiry1, atm_strike), "Short Straddle", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_strangle(expiry1, strike3, strike2), "Long Strangle", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_strangle(expiry1, strike3, strike2), "Short Strangle", &mut failed_strategies, &mut total_strategies);
 
     // 4. Box spread
     info!("Testing box spread...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.box_spread_nearest_expiry(expiry1, strike2, strike3), "Box Spread", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.box_spread_nearest_expiry(expiry1, strike2, strike3), "Box Spread", &mut failed_strategies, &mut total_strategies);
 
     // 5. Stock-related strategies (option legs only)
     info!("Testing stock-related strategies (option legs only)...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.collar_options(expiry1, strike2, strike3), "Collar Options", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.covered_call_option(expiry1, strike3), "Covered Call Option", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.covered_put_option(expiry1, strike2), "Covered Put Option", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.protective_put_option(expiry1, strike2), "Protective Put Option", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.stock_repair_options(expiry1, strike2, strike3), "Stock Repair Options", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.collar_options(expiry1, strike2, strike3), "Collar Options", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.covered_call_option(expiry1, strike3), "Covered Call Option", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.covered_put_option(expiry1, strike2), "Covered Put Option", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.protective_put_option(expiry1, strike2), "Protective Put Option", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.stock_repair_options(expiry1, strike2, strike3), "Stock Repair Options", &mut failed_strategies, &mut total_strategies);
 
     // 6. Ratio spreads
     info!("Testing ratio spreads...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_ratio_call_spread(expiry1, strike2, strike3, 1, 2), "Long Ratio Call Spread", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_ratio_put_spread(expiry1, strike2, strike3, 2, 1), "Long Ratio Put Spread", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_ratio_put_spread(expiry1, strike2, strike3, 2, 1), "Short Ratio Put Spread", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_ratio_call_spread(expiry1, strike2, strike3, 1, 2), "Long Ratio Call Spread", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_ratio_put_spread(expiry1, strike2, strike3, 2, 1), "Long Ratio Put Spread", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_ratio_put_spread(expiry1, strike2, strike3, 2, 1), "Short Ratio Put Spread", &mut failed_strategies, &mut total_strategies);
 
     // 7. Butterflies
     info!("Testing butterflies...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_put_butterfly(expiry1, strike1, strike2, strike3), "Long Put Butterfly", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_call_butterfly(expiry1, strike1, strike2, strike3), "Short Call Butterfly", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_iron_butterfly(expiry1, strike1, strike2, strike3), "Long Iron Butterfly", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_put_butterfly(expiry1, strike1, strike2, strike3), "Long Put Butterfly", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_call_butterfly(expiry1, strike1, strike2, strike3), "Short Call Butterfly", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_iron_butterfly(expiry1, strike1, strike2, strike3), "Long Iron Butterfly", &mut failed_strategies, &mut total_strategies);
 
     // 8. Condors
     info!("Testing condors...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_put_condor(expiry1, strike1, strike2, strike3, strike4), "Long Put Condor", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_condor(expiry1, strike1, strike2, strike3, strike4), "Short Condor", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_put_condor(expiry1, strike1, strike2, strike3, strike4), "Long Put Condor", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_condor(expiry1, strike1, strike2, strike3, strike4), "Short Condor", &mut failed_strategies, &mut total_strategies);
 
     // 9. Calendar spreads
     info!("Testing calendar spreads...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_put_calendar_spread(atm_strike, expiry1, expiry2), "Long Put Calendar Spread", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_call_calendar_spread(atm_strike, expiry1, expiry2), "Short Call Calendar Spread", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_put_calendar_spread(atm_strike, expiry1, expiry2), "Long Put Calendar Spread", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_call_calendar_spread(atm_strike, expiry1, expiry2), "Short Call Calendar Spread", &mut failed_strategies, &mut total_strategies);
 
     // 10. Synthetics
     info!("Testing synthetics...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.synthetic_long_put_option(expiry1, atm_strike), "Synthetic Long Put Option", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.synthetic_long_stock(expiry1, atm_strike), "Synthetic Long Stock", &mut overall_success);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.synthetic_short_stock(expiry1, atm_strike), "Synthetic Short Stock", &mut overall_success);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.synthetic_long_put_option(expiry1, atm_strike), "Synthetic Long Put Option", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.synthetic_long_stock(expiry1, atm_strike), "Synthetic Long Stock", &mut failed_strategies, &mut total_strategies);
+    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.synthetic_short_stock(expiry1, atm_strike), "Synthetic Short Stock", &mut failed_strategies, &mut total_strategies);
 
     // Add a small delay to avoid hammering the API
     std::thread::sleep(Duration::from_secs(1));
   }
 
-  if overall_success {
-    info!("OptionsStrategyBuilder test completed successfully.");
+  let successful_strategies = total_strategies - failed_strategies.len();
+
+  info!("=== OptionsStrategyBuilder Test Results ===");
+  info!("Total strategies tested: {}", total_strategies);
+  info!("Successful strategies: {}", successful_strategies);
+  info!("Failed strategies: {}", failed_strategies.len());
+
+  if !failed_strategies.is_empty() {
+    error!("Failed strategies:");
+    for strategy in &failed_strategies {
+      error!("  - {}", strategy);
+    }
+  }
+
+  if failed_strategies.is_empty() {
+    info!("OptionsStrategyBuilder test completed successfully - all strategies passed!");
     Ok(())
   } else {
-    Err(anyhow!("One or more errors occurred during OptionsStrategyBuilder test."))
+    Err(anyhow!("OptionsStrategyBuilder test failed: {}/{} strategies failed: {:?}",
+                failed_strategies.len(), total_strategies, failed_strategies))
   }
 }
 
@@ -484,8 +500,11 @@ fn create_builder(
 fn test_single_strategy(
   result: Result<OptionsStrategyBuilder, IBKRError>,
   strategy_name: &str,
-  overall_success: &mut bool
+  failed_strategies: &mut Vec<String>,
+  total_strategies: &mut usize,
 ) {
+  *total_strategies += 1;
+
   match result {
     Ok(builder) => {
       info!("  Successfully created {} strategy", strategy_name);
@@ -493,18 +512,18 @@ fn test_single_strategy(
       // Try to build the contract and order request
       match builder.build() {
         Ok((contract, _order_request)) => {
-          info!("  Successfully built contract for {} with {} legs",
+          info!("  ✓ Successfully built contract for {} with {} legs",
                 strategy_name, contract.combo_legs.len());
         },
         Err(e) => {
-          error!("  Failed to build {} strategy: {:?}", strategy_name, e);
-          *overall_success = false;
+          error!("  ✗ Failed to build {} strategy: {:?}", strategy_name, e);
+          failed_strategies.push(format!("{} (build failed)", strategy_name));
         }
       }
     },
     Err(e) => {
-      error!("  Unable to create {} strategy: {:?}", strategy_name, e);
-      *overall_success = false;
+      error!("  ✗ Unable to create {} strategy: {:?}", strategy_name, e);
+      failed_strategies.push(format!("{} (creation failed)", strategy_name));
     }
   }
 }
