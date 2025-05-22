@@ -5,7 +5,7 @@ use crate::contract::{Contract, SecType, OptionRight, ComboLeg};
 use crate::data_ref_manager::{DataRefManager, SecDefOptParamsResult};
 use crate::order::{OrderRequest, OrderSide, OrderType, TimeInForce};
 use chrono::NaiveDate;
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
@@ -442,7 +442,7 @@ impl OptionsStrategyBuilder {
       "EDGX" => 0.12,      // CBOE EDGX
       "BATS" => 0.08,      // CBOE BZX
       "MIAX" => 0.05,      // Miami International Securities Exchange
-      _ => 0.01,           // Other/unknown exchanges
+      _ => 0.01,           // Other/unknown exchanges: e.g. GEMINI
     }
   }
 
@@ -507,18 +507,50 @@ impl OptionsStrategyBuilder {
     target_expiry_date: NaiveDate,
     available_expirations: &'a [String],
   ) -> Result<&'a str, IBKRError> {
+    if available_expirations.is_empty() {
+      return Err(IBKRError::InvalidParameter("No expiration dates available".to_string()));
+    }
+
     let target_expiry_str = target_expiry_date.format("%Y%m%d").to_string();
-    available_expirations
+
+    // First try to find an exact match
+    if let Some(exact_match) = available_expirations.iter().find(|&exp| exp == &target_expiry_str) {
+      return Ok(exact_match);
+    }
+
+    // Find the nearest expiration on or after the target date
+    let result = available_expirations
       .iter()
       .filter(|exp_str| exp_str.as_str() >= target_expiry_str.as_str())
       .min()
-      .map(|s| s.as_str())
-      .ok_or_else(|| {
-        IBKRError::InvalidParameter(format!(
-          "No valid expiration found on or after {}",
-          target_expiry_str
-        ))
-      })
+      .map(|s| s.as_str());
+
+    match result {
+      Some(expiry) => {
+        info!(
+          "Target expiry {} not found, using nearest: {}",
+          target_expiry_str, expiry
+        );
+        Ok(expiry)
+      },
+      None => {
+        // If no expiry on or after target, use the latest available
+        let latest = available_expirations.iter().max().map(|s| s.as_str());
+        match latest {
+          Some(expiry) => {
+            warn!(
+              "No expiry on or after {} found, using latest available: {}",
+              target_expiry_str, expiry
+            );
+            Ok(expiry)
+          },
+          None => Err(IBKRError::InvalidParameter(format!(
+            "No valid expiration found. Target: {}, Available: {:?}",
+            target_expiry_str, available_expirations
+          )))
+        }
+      }
+    }
   }
 
   /// Finds the nearest valid strike price
@@ -527,11 +559,30 @@ impl OptionsStrategyBuilder {
     target_strike: f64,
     available_strikes: &[f64],
   ) -> Result<f64, IBKRError> {
-    available_strikes
+    if available_strikes.is_empty() {
+      return Err(IBKRError::InvalidParameter("No strikes available".to_string()));
+    }
+
+    let result = available_strikes
       .iter()
       .min_by(|a, b| (*a - target_strike).abs().partial_cmp(&(*b - target_strike).abs()).unwrap())
-      .cloned()
-      .ok_or_else(|| IBKRError::InvalidParameter("No available strikes found".to_string()))
+      .cloned();
+
+    match result {
+      Some(strike) => {
+        if (strike - target_strike).abs() > 0.01 {
+          info!(
+            "Target strike {} not found, using nearest: {}",
+            target_strike, strike
+          );
+        }
+        Ok(strike)
+      },
+      None => Err(IBKRError::InvalidParameter(format!(
+        "No valid strike found. Target: {}, Available: {:?}",
+        target_strike, available_strikes
+      )))
+    }
   }
 
   /// Fetches and caches the specific option contract details
@@ -541,70 +592,124 @@ impl OptionsStrategyBuilder {
     strike: f64,
     right: OptionRight,
   ) -> Result<&Contract, IBKRError> {
-    // Resolve the exchange to use
-    let option_exchange = self.resolve_option_exchange()?;
-
     let expiry_str = expiry_date.format("%Y%m%d").to_string();
     let strike_bits = strike.to_bits();
-    let cache_key = (expiry_str.clone(), strike_bits, right, option_exchange.clone());
 
-    if !self.option_contract_cache.contains_key(&cache_key) {
-      info!(
-        "Fetching option contract: Exp={}, Strike={}, Right={}, Exchange={}",
-        expiry_str, strike, right, option_exchange
-      );
+    // First try with the selected exchange
+    let primary_exchange = self.resolve_option_exchange()?;
+    let primary_cache_key = (expiry_str.clone(), strike_bits, right, primary_exchange.clone());
 
-      let option_sec_type = match self.underlying_sec_type {
-        SecType::Stock => SecType::Option,
-        SecType::Future => SecType::FutureOption,
-        _ => return Err(IBKRError::InvalidContract("Unsupported underlying type for options".to_string())),
-      };
+    if !self.option_contract_cache.contains_key(&primary_cache_key) {
+      // Validate that the strike and expiry are available on the selected exchange
+      if let Err(validation_error) = self.validate_strike_and_expiry(&primary_exchange, strike, &expiry_str) {
+        warn!(
+          "Strike/expiry validation failed for exchange {}: {}. Will try fallback.",
+          primary_exchange, validation_error
+        );
+      } else {
+        // Try to fetch with the primary exchange
+        match self.try_fetch_option_contract_for_exchange(
+          &expiry_str, strike, right, &primary_exchange
+        ) {
+          Ok(contract) => {
+            self.option_contract_cache.insert(primary_cache_key.clone(), contract);
+            return Ok(self.option_contract_cache.get(&primary_cache_key).unwrap());
+          },
+          Err(e) => {
+            warn!(
+              "Failed to fetch option contract from {}: {}. Trying fallback to SMART.",
+              primary_exchange, e
+            );
+          }
+        }
+      }
 
-      let option_contract_spec = Contract {
-        symbol: self.underlying_symbol.clone(),
-        sec_type: option_sec_type,
-        last_trade_date_or_contract_month: Some(expiry_str.clone()),
-        strike: Some(strike),
-        right: Some(right),
-        exchange: option_exchange.clone(), // Use resolved exchange
-        currency: self.underlying_currency.clone(),
-        ..Default::default()
-      };
+      // Fallback to SMART routing if primary exchange failed
+      if primary_exchange != "SMART" {
+        let smart_cache_key = (expiry_str.clone(), strike_bits, right, "SMART".to_string());
 
-      let details_list = self.data_ref_manager.get_contract_details(&option_contract_spec)?;
+        if !self.option_contract_cache.contains_key(&smart_cache_key) {
+          info!(
+            "Attempting fallback to SMART routing for option: Exp={}, Strike={}, Right={}",
+            expiry_str, strike, right
+          );
 
-      if details_list.is_empty() {
+          match self.try_fetch_option_contract_for_exchange(&expiry_str, strike, right, "SMART") {
+            Ok(contract) => {
+              self.option_contract_cache.insert(smart_cache_key.clone(), contract);
+              // Update the selected exchange to SMART for consistency
+              self.selected_option_exchange = Some("SMART".to_string());
+              return Ok(self.option_contract_cache.get(&smart_cache_key).unwrap());
+            },
+            Err(e) => {
+              error!(
+                "Failed to fetch option contract even with SMART routing: {}",
+                e
+              );
+              return Err(IBKRError::InvalidContract(format!(
+                "No contract found for option Exp={}, Strike={}, Right={} on any exchange. \
+                 Tried {} and SMART. Last error: {}",
+                expiry_str, strike, right, primary_exchange, e
+              )));
+            }
+          }
+        }
+
+        return Ok(self.option_contract_cache.get(&smart_cache_key).unwrap());
+      } else {
         return Err(IBKRError::InvalidContract(format!(
-          "No contract details found for option: Exp={}, Strike={}, Right={}, Exchange={}",
-          expiry_str, strike, right, option_exchange
+          "No contract found for option Exp={}, Strike={}, Right={} on SMART routing",
+          expiry_str, strike, right
         )));
       }
-
-      if details_list.len() > 1 {
-        warn!("Multiple contracts found for option spec. Using the first one (ConID={}).",
-              details_list[0].contract.con_id);
-      }
-
-      let mut contract = details_list[0].contract.clone();
-
-      // Ensure multiplier is set
-      if contract.multiplier.is_none() || contract.multiplier.as_deref() == Some("") {
-        let default_mult = match contract.sec_type {
-          SecType::FutureOption => "50", // Common default for ES, but might need adjustment
-          _ => "100", // Default for stock options
-        };
-        warn!("Multiplier not found for ConID {}. Using default: {}",
-              contract.con_id, default_mult);
-        contract.multiplier = Some(default_mult.to_string());
-      }
-
-      debug!("Found option contract: ConID={}, Exchange={}, Multiplier={:?}",
-             contract.con_id, contract.exchange, contract.multiplier);
-
-      self.option_contract_cache.insert(cache_key.clone(), contract);
     }
 
-    Ok(self.option_contract_cache.get(&cache_key).unwrap())
+    // Return cached contract
+    let cache_key = if self.option_contract_cache.contains_key(&primary_cache_key) {
+      &primary_cache_key
+    } else {
+      &(expiry_str, strike_bits, right, "SMART".to_string())
+    };
+
+    Ok(self.option_contract_cache.get(cache_key).unwrap())
+  }
+
+  /// Validates strategy consistency (exchange usage, etc.)
+  fn validate_strike_and_expiry(
+    &mut self,
+    exchange: &str,
+    strike: f64,
+    expiry_str: &str,
+  ) -> Result<(), IBKRError> {
+    if exchange == "SMART" {
+      // SMART routing should handle any valid strike/expiry, so skip validation
+      return Ok(());
+    }
+
+    let (available_strikes, available_expiries) = self.get_strikes_and_expirations_for_exchange(exchange)?;
+
+    // Check if the expiry is available
+    if !available_expiries.contains(&expiry_str.to_string()) {
+      return Err(IBKRError::InvalidParameter(format!(
+        "Expiry {} not available on exchange {}. Available: {:?}",
+        expiry_str, exchange,
+        available_expiries.iter().take(5).collect::<Vec<_>>() // Show first 5
+      )));
+    }
+
+    // Check if the strike is available (with some tolerance for floating point comparison)
+    const STRIKE_TOLERANCE: f64 = 0.01;
+    if !available_strikes.iter().any(|&s| (s - strike).abs() < STRIKE_TOLERANCE) {
+      return Err(IBKRError::InvalidParameter(format!(
+        "Strike {} not available on exchange {}. Nearest available: {:?}",
+        strike, exchange,
+        available_strikes
+          .iter()
+          .min_by(|&a, &b| (a - strike).abs().partial_cmp(&(b - strike).abs()).unwrap())
+      )));
+    }
+
+    Ok(())
   }
 
   /// Validates strategy consistency (exchange usage, etc.)
@@ -622,6 +727,68 @@ impl OptionsStrategyBuilder {
       }
     }
     Ok(())
+  }
+
+  fn try_fetch_option_contract_for_exchange(
+    &self,
+    expiry_str: &str,
+    strike: f64,
+    right: OptionRight,
+    exchange: &str,
+  ) -> Result<Contract, IBKRError> {
+    info!(
+      "Fetching option contract: Exp={}, Strike={}, Right={}, Exchange={}",
+      expiry_str, strike, right, exchange
+    );
+
+    let option_sec_type = match self.underlying_sec_type {
+      SecType::Stock => SecType::Option,
+      SecType::Future => SecType::FutureOption,
+      _ => return Err(IBKRError::InvalidContract("Unsupported underlying type for options".to_string())),
+    };
+
+    let option_contract_spec = Contract {
+      symbol: self.underlying_symbol.clone(),
+      sec_type: option_sec_type,
+      last_trade_date_or_contract_month: Some(expiry_str.to_string()),
+      strike: Some(strike),
+      right: Some(right),
+      exchange: exchange.to_string(),
+      currency: self.underlying_currency.clone(),
+      ..Default::default()
+    };
+
+    let details_list = self.data_ref_manager.get_contract_details(&option_contract_spec)?;
+
+    if details_list.is_empty() {
+      return Err(IBKRError::InvalidContract(format!(
+        "No contract details found for option: Exp={}, Strike={}, Right={}, Exchange={}",
+        expiry_str, strike, right, exchange
+      )));
+    }
+
+    if details_list.len() > 1 {
+      warn!("Multiple contracts found for option spec. Using the first one (ConID={}).",
+            details_list[0].contract.con_id);
+    }
+
+    let mut contract = details_list[0].contract.clone();
+
+    // Ensure multiplier is set
+    if contract.multiplier.is_none() || contract.multiplier.as_deref() == Some("") {
+      let default_mult = match contract.sec_type {
+        SecType::FutureOption => "50", // Common default for ES, but might need adjustment
+        _ => "100", // Default for stock options
+      };
+      warn!("Multiplier not found for ConID {}. Using default: {}",
+            contract.con_id, default_mult);
+      contract.multiplier = Some(default_mult.to_string());
+    }
+
+    debug!("Found option contract: ConID={}, Exchange={}, Multiplier={:?}",
+           contract.con_id, contract.exchange, contract.multiplier);
+
+    Ok(contract)
   }
 
   /// Adds a leg definition to the strategy
