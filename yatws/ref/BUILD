@@ -21,6 +21,12 @@ py_binary(
 )
 
 py_binary(
+    name = "box_spread_query",
+    srcs = ["box_spread_query.py"],
+    deps = ["//:ibapi"],
+)
+
+py_binary(
     name = "historical_data",
     srcs = ["historical_data.py"],
     deps = ["//:ibapi"],

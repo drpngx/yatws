@@ -95,7 +95,7 @@ impl OptionsStrategyBuilder {
       legs: Vec::new(),
       strategy_name: None,
       // Default order params for the combo
-      order_type: OrderType::Limit, // Default to LMT for combos (net price)
+      order_type: OrderType::Market,
       limit_price: None,            // User must set net price
       aux_price: None,
       tif: TimeInForce::Day,

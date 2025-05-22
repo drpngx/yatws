@@ -1291,8 +1291,10 @@ impl DataMarketManager {
 
     let req_id = self.message_broker.next_request_id();
 
+    let snapshot = false;
+    let regulatory_snapshot = false;
     self.internal_request_market_data(
-      req_id, contract, &[], true, false, &[], desired_mkt_data_type
+      req_id, contract, &[], snapshot, regulatory_snapshot, &[], desired_mkt_data_type
     )?;
 
     // Mark as blocking quote request
