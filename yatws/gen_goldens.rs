@@ -2,6 +2,7 @@
 // Use it like this:
 // bazel-bin/yatws/gen_goldens live current-quote --generate-report
 // bazel-bin/yatws/gen_goldens live all --generate-report
+// bazel-bin/yatws/gen_goldens live all --randomize-order --generate-report
 // Look for "Test registration" below for available test cases.
 
 use anyhow::{anyhow, Context, Result};
@@ -9,14 +10,12 @@ use clap::Parser;
 use inventory; // For test registration
 use log::{error, info, warn};
 use once_cell::sync::Lazy; // For static registry initialization
+use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
-use yatws::{
-  IBKRClient,
-  // data::{MarketDataType, TickType, FundamentalReportType, ParsedFundamentalData, TickOptionComputationData, GenericTickType, TickByTickRequestType, DurationUnit, TimePeriodUnit},
-};
+use yatws::IBKRClient;
 
 mod test_general;
 mod test_account;
@@ -38,6 +37,20 @@ type TestFn = fn(client: &IBKRClient, is_live: bool) -> Result<()>;
 pub struct TestDefinition {
   pub name: &'static str, // The canonical name used for sessions and CLI
   pub func: TestFn,
+  pub order: u32, // Submission order for deterministic execution
+}
+
+// Macro to help with ordered submission
+macro_rules! submit_test {
+  ($order:expr, $name:expr, $func:expr) => {
+    inventory::submit! {
+      TestDefinition {
+        name: $name,
+        func: $func,
+        order: $order,
+      }
+    }
+  };
 }
 
 // Structure to track individual test results for reporting
@@ -62,6 +75,7 @@ struct TestRunReport {
   host: String,
   port: u16,
   client_id: i32,
+  randomized_order: bool,
 }
 
 impl TestRunReport {
@@ -78,6 +92,7 @@ impl TestRunReport {
     md.push_str(&format!("## Test Run Summary {}\n\n", status_emoji));
     md.push_str(&format!("- **Overall Status**: {}\n", status_text));
     md.push_str(&format!("- **Mode**: {}\n", self.mode));
+    md.push_str(&format!("- **Test Order**: {}\n", if self.randomized_order { "Randomized" } else { "Sequential" }));
     md.push_str(&format!("- **Start Time**: {}\n", self.start_time.format("%Y-%m-%d %H:%M:%S UTC")));
     md.push_str(&format!("- **End Time**: {}\n", self.end_time.format("%Y-%m-%d %H:%M:%S UTC")));
     md.push_str(&format!("- **Total Duration**: {:.2}s\n", self.total_duration.as_secs_f64()));
@@ -159,10 +174,10 @@ impl TestRunReport {
 }
 
 // Declare the static collection using inventory
-// All 'inventory::submit!(TestDefinition { ... });' instances will populate this.
+// All 'submit_test!(order, name, func);' instances will populate this.
 inventory::collect!(TestDefinition);
 
-// Create a Lazy HashMap for quick name lookup (optional but convenient)
+// Create a Lazy HashMap for quick name lookup (used only for single test lookups)
 static TEST_REGISTRY: Lazy<HashMap<&'static str, &'static TestDefinition>> = Lazy::new(|| {
   inventory::iter::<TestDefinition>
     .into_iter()
@@ -217,6 +232,10 @@ struct ModeArgs {
   /// Custom path for the markdown report (overrides default yatws/doc/test_results.md)
   #[arg(long)]
   report_path: Option<PathBuf>,
+
+  /// Randomize the order of tests when running "all" (useful for detecting test dependencies)
+  #[arg(long)]
+  randomize_order: bool,
 }
 
 // --- Test Case Implementations ---
@@ -235,49 +254,49 @@ mod test_cases {
 
 // --- Test Registration ---
 // Associate canonical names with the implementation functions in the module.
-inventory::submit! { TestDefinition { name: "time", func: test_cases::time_impl } }
-inventory::submit! { TestDefinition { name: "account-details", func: test_cases::account_details_impl } }
-inventory::submit! { TestDefinition { name: "order-market", func: test_cases::order_market_impl } }
-inventory::submit! { TestDefinition { name: "order-limit", func: test_cases::order_limit_impl } }
-inventory::submit! { TestDefinition { name: "order-many", func: test_cases::order_many_impl } }
-inventory::submit! { TestDefinition { name: "current-quote", func: test_cases::current_quote_impl } }
-inventory::submit! { TestDefinition { name: "realtime-data", func: test_cases::realtime_data_impl } }
-inventory::submit! { TestDefinition { name: "realtime-bars-blocking", func: test_cases::realtime_bars_blocking_impl } }
-inventory::submit! { TestDefinition { name: "market-data-blocking", func: test_cases::market_data_blocking_impl } }
-inventory::submit! { TestDefinition { name: "tick-by-tick-blocking", func: test_cases::tick_by_tick_blocking_impl } }
-inventory::submit! { TestDefinition { name: "market-depth-blocking", func: test_cases::market_depth_blocking_impl } }
-inventory::submit! { TestDefinition { name: "historical-data", func: test_cases::historical_data_impl } }
-inventory::submit! { TestDefinition { name: "cleanup-orders", func: test_cases::cleanup_orders_impl } }
-inventory::submit! { TestDefinition { name: "order-global-cancel", func: test_cases::order_global_cancel_impl } }
-inventory::submit! { TestDefinition { name: "order-exercise-option", func: test_cases::order_exercise_option_impl } }
-inventory::submit! { TestDefinition { name: "order-what-if", func: test_cases::order_what_if_impl } }
-inventory::submit! { TestDefinition { name: "box-spread-yield", func: test_cases::box_spread_yield_impl } }
-inventory::submit! { TestDefinition { name: "financial-reports", func: test_cases::financial_reports_impl } }
-inventory::submit! { TestDefinition { name: "historical-news", func: test_cases::historical_news_impl } }
-inventory::submit! { TestDefinition { name: "scanner", func: test_cases::scanner_impl } }
-inventory::submit! { TestDefinition { name: "option-calculations", func: test_cases::option_calculations_impl } }
-inventory::submit! { TestDefinition { name: "histogram-data", func: test_cases::histogram_data_impl } }
-inventory::submit! { TestDefinition { name: "historical-ticks", func: test_cases::historical_ticks_impl } }
-inventory::submit! { TestDefinition { name: "historical-schedule", func: test_cases::historical_schedule_impl } }
-inventory::submit! { TestDefinition { name: "account-subscription", func: test_cases::account_subscription_impl } }
-// Add new test registrations here:
-inventory::submit! { TestDefinition { name: "observe-market-data", func: test_cases::observe_market_data_impl } }
-inventory::submit! { TestDefinition { name: "subscribe-market-data", func: test_cases::subscribe_market_data_impl } }
-inventory::submit! { TestDefinition { name: "subscribe-historical-combined", func: test_cases::subscribe_historical_combined_impl } }
-inventory::submit! { TestDefinition { name: "subscribe-news-bulletins", func: test_cases::subscribe_news_bulletins_impl } }
-inventory::submit! { TestDefinition { name: "subscribe-historical-news", func: test_cases::subscribe_historical_news_impl } }
-inventory::submit! { TestDefinition { name: "subscribe-real-time-bars", func: test_cases::subscribe_real_time_bars_impl } }
-inventory::submit! { TestDefinition { name: "subscribe-tick-by-tick", func: test_cases::subscribe_tick_by_tick_impl } }
-inventory::submit! { TestDefinition { name: "subscribe-market-depth", func: test_cases::subscribe_market_depth_impl } }
-inventory::submit! { TestDefinition { name: "observe-realtime-bars", func: test_cases::observe_realtime_bars_impl } }
-inventory::submit! { TestDefinition { name: "observe-tick-by-tick", func: test_cases::observe_tick_by_tick_impl } }
-inventory::submit! { TestDefinition { name: "observe-market-depth", func: test_cases::observe_market_depth_impl } }
-inventory::submit! { TestDefinition { name: "observe-historical-data", func: test_cases::observe_historical_data_impl } }
-inventory::submit! { TestDefinition { name: "observe-historical-ticks", func: test_cases::observe_historical_ticks_impl } }
-inventory::submit! { TestDefinition { name: "multi-subscription-mixed", func: test_cases::multi_subscription_mixed_impl } }
-inventory::submit! { TestDefinition { name: "options-strategy-builder", func: test_cases::options_strategy_builder_test_impl } }
-// Add more tests here: inventory::submit! { TestDefinition { name: "new-test-name", func: test_cases::new_test_impl } }
-// inventory::submit! { TestDefinition { name: "wsh-events", func: test_cases::wsh_events_impl } }
+// Tests will run in the order specified by the order number when using "all"
+submit_test!(1, "time", test_cases::time_impl);
+submit_test!(2, "account-details", test_cases::account_details_impl);
+submit_test!(3, "order-market", test_cases::order_market_impl);
+submit_test!(4, "order-limit", test_cases::order_limit_impl);
+submit_test!(5, "order-many", test_cases::order_many_impl);
+submit_test!(6, "current-quote", test_cases::current_quote_impl);
+submit_test!(7, "realtime-data", test_cases::realtime_data_impl);
+submit_test!(8, "realtime-bars-blocking", test_cases::realtime_bars_blocking_impl);
+submit_test!(9, "market-data-blocking", test_cases::market_data_blocking_impl);
+submit_test!(10, "tick-by-tick-blocking", test_cases::tick_by_tick_blocking_impl);
+submit_test!(11, "market-depth-blocking", test_cases::market_depth_blocking_impl);
+submit_test!(12, "historical-data", test_cases::historical_data_impl);
+submit_test!(13, "cleanup-orders", test_cases::cleanup_orders_impl);
+submit_test!(14, "order-global-cancel", test_cases::order_global_cancel_impl);
+submit_test!(15, "order-exercise-option", test_cases::order_exercise_option_impl);
+submit_test!(16, "order-what-if", test_cases::order_what_if_impl);
+submit_test!(17, "box-spread-yield", test_cases::box_spread_yield_impl);
+submit_test!(18, "financial-reports", test_cases::financial_reports_impl);
+submit_test!(19, "historical-news", test_cases::historical_news_impl);
+submit_test!(20, "scanner", test_cases::scanner_impl);
+submit_test!(21, "option-calculations", test_cases::option_calculations_impl);
+submit_test!(22, "histogram-data", test_cases::histogram_data_impl);
+submit_test!(23, "historical-ticks", test_cases::historical_ticks_impl);
+submit_test!(24, "historical-schedule", test_cases::historical_schedule_impl);
+submit_test!(25, "account-subscription", test_cases::account_subscription_impl);
+submit_test!(26, "observe-market-data", test_cases::observe_market_data_impl);
+submit_test!(27, "subscribe-market-data", test_cases::subscribe_market_data_impl);
+submit_test!(28, "subscribe-historical-combined", test_cases::subscribe_historical_combined_impl);
+submit_test!(29, "subscribe-news-bulletins", test_cases::subscribe_news_bulletins_impl);
+submit_test!(30, "subscribe-historical-news", test_cases::subscribe_historical_news_impl);
+submit_test!(31, "subscribe-real-time-bars", test_cases::subscribe_real_time_bars_impl);
+submit_test!(32, "subscribe-tick-by-tick", test_cases::subscribe_tick_by_tick_impl);
+submit_test!(33, "subscribe-market-depth", test_cases::subscribe_market_depth_impl);
+submit_test!(34, "observe-realtime-bars", test_cases::observe_realtime_bars_impl);
+submit_test!(35, "observe-tick-by-tick", test_cases::observe_tick_by_tick_impl);
+submit_test!(36, "observe-market-depth", test_cases::observe_market_depth_impl);
+submit_test!(37, "observe-historical-data", test_cases::observe_historical_data_impl);
+submit_test!(38, "observe-historical-ticks", test_cases::observe_historical_ticks_impl);
+submit_test!(39, "multi-subscription-mixed", test_cases::multi_subscription_mixed_impl);
+submit_test!(40, "options-strategy-builder", test_cases::options_strategy_builder_test_impl);
+// Add more tests here: submit_test!(41, "new-test-name", test_cases::new_test_impl);
+// submit_test!(42, "wsh-events", test_cases::wsh_events_impl);
 
 // --- Helper Functions ---
 
@@ -370,7 +389,22 @@ fn main() -> Result<()> {
   if mode_args.test_name_or_all.eq_ignore_ascii_case("all") {
     // --- Run ALL Tests Serially ---
     info!("Running ALL {} tests serially...", mode_str);
-    let all_test_defs: Vec<&'static TestDefinition> = TEST_REGISTRY.values().cloned().collect(); // Get all registered tests
+    // Collect all tests and sort by order field to ensure deterministic execution
+    let mut all_test_defs: Vec<&'static TestDefinition> = inventory::iter::<TestDefinition>().into_iter().collect();
+
+    if mode_args.randomize_order {
+      // Randomize the order
+      let mut rng = rand::rng();
+      all_test_defs.shuffle(&mut rng);
+      info!("Test order randomized. Execution order:");
+      for (i, test_def) in all_test_defs.iter().enumerate() {
+        info!("  {}: {} (original order: {})", i + 1, test_def.name, test_def.order);
+      }
+    } else {
+      // Sort by order field for deterministic execution
+      all_test_defs.sort_by_key(|test_def| test_def.order);
+      info!("Running tests in defined order (1-{}).", all_test_defs.len());
+    }
 
     if all_test_defs.is_empty() {
       warn!("No tests found in registry for 'all' run.");
@@ -471,6 +505,7 @@ fn main() -> Result<()> {
       host: mode_args.host.clone(),
       port: mode_args.port,
       client_id: mode_args.client_id,
+      randomized_order: mode_args.randomize_order && mode_args.test_name_or_all.eq_ignore_ascii_case("all"),
     };
 
     let report_path = mode_args.report_path.unwrap_or_else(|| {

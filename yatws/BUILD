@@ -134,7 +134,8 @@ rust_binary(
         "@crates//:env_logger",
         "@crates//:inventory",
         "@crates//:log",
-       "@crates//:once_cell",
+        "@crates//:once_cell",
+        "@crates//:rand",
     ],
     visibility = ["//visibility:public"],
 )
