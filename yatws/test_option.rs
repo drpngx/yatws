@@ -360,24 +360,65 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
     }
 
     // Use real strikes from option chain, find ones relative to underlying price
+    // Use real strikes from option chain, find ones relative to underlying price
     let available_strikes = &primary_params.strikes;
-    let atm_strike = available_strikes
+
+    // Sort strikes and ensure we have enough for complex strategies
+    let mut sorted_strikes = available_strikes.clone();
+    sorted_strikes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    sorted_strikes.dedup(); // Remove duplicates
+
+    if sorted_strikes.len() < 4 {
+      warn!("Insufficient distinct strikes for {} (need at least 4, have {})",
+            symbol, sorted_strikes.len());
+      continue;
+    }
+
+    let atm_strike = sorted_strikes
       .iter()
       .min_by(|a, b| (*a - underlying_price).abs().partial_cmp(&(*b - underlying_price).abs()).unwrap())
       .cloned()
       .unwrap();
 
-    let strike1 = available_strikes.iter().filter(|&&s| s < atm_strike).max_by(|a, b| a.partial_cmp(b).unwrap()).cloned()
-      .or_else(|| available_strikes.iter().min_by(|a, b| a.partial_cmp(b).unwrap()).cloned()).unwrap();
-    let strike2 = available_strikes.iter().filter(|&&s| s < atm_strike && s > strike1).max_by(|a, b| a.partial_cmp(b).unwrap()).cloned()
-      .unwrap_or(strike1);
-    let strike3 = available_strikes.iter().filter(|&&s| s > atm_strike).min_by(|a, b| a.partial_cmp(b).unwrap()).cloned()
-      .or_else(|| available_strikes.iter().max_by(|a, b| a.partial_cmp(b).unwrap()).cloned()).unwrap();
-    let strike4 = available_strikes.iter().filter(|&&s| s > strike3).min_by(|a, b| a.partial_cmp(b).unwrap()).cloned()
-      .unwrap_or(strike3);
+    // Select 4 distinct strikes from the sorted list, ensuring proper ordering
+    // Strategy: Pick evenly spaced strikes from the available range
+    let num_strikes = sorted_strikes.len();
 
-    // For algorithms requiring strict ordering: strike1 < strike2 < strike3 < strike4
-    info!("Real strikes: {:.2}, {:.2}, {:.2}, {:.2}", strike1, strike2, strike3, strike4);
+    let (strike1, strike2, strike3, strike4) = if num_strikes >= 7 {
+      // If we have plenty of strikes, pick every other one for good spacing
+      let start_idx = std::cmp::max(0, (num_strikes / 2).saturating_sub(3));
+      (
+        sorted_strikes[start_idx],
+        sorted_strikes[start_idx + 2],
+        sorted_strikes[start_idx + 4],
+        sorted_strikes[start_idx + 6]
+      )
+    } else if num_strikes >= 4 {
+      // Use consecutive strikes but ensure they span a reasonable range
+      let quarter = num_strikes / 4;
+      (
+        sorted_strikes[0],
+        sorted_strikes[quarter],
+        sorted_strikes[quarter * 2],
+        sorted_strikes[quarter * 3]
+      )
+    } else {
+      // Fallback - shouldn't reach here due to earlier check
+      (
+        sorted_strikes[0],
+        sorted_strikes[1],
+        sorted_strikes[2],
+        sorted_strikes[3]
+      )
+    };
+
+    // Double-check that our strikes are properly ordered (they should be by construction)
+    assert!(strike1 < strike2 && strike2 < strike3 && strike3 < strike4,
+            "Strike selection failed: {:.2} < {:.2} < {:.2} < {:.2}",
+            strike1, strike2, strike3, strike4);
+
+    info!("Selected strikes: {:.2}, {:.2}, {:.2}, {:.2} (ATM: {:.2}, Available: {})",
+          strike1, strike2, strike3, strike4, atm_strike, num_strikes);
 
     // Use real expiration dates from option chain
     let available_expiries = &primary_params.expirations;
@@ -391,7 +432,7 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
 
     info!("Real expiries: {} ({}), {} ({})", expiry1_str, expiry1.format("%Y-%m-%d"), expiry2_str, expiry2.format("%Y-%m-%d"));
 
-    // Test each strategy type
+    // Test each strategy type - we now guarantee distinct strikes
     // 1. Single leg options
     info!("Testing single leg options...");
     test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.buy_call(expiry1, strike3), "Buy Call", &mut failed_strategies, &mut total_strategies);
@@ -444,8 +485,12 @@ pub(super) fn options_strategy_builder_test_impl(client: &IBKRClient, _is_live: 
 
     // 9. Calendar spreads
     info!("Testing calendar spreads...");
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_put_calendar_spread(atm_strike, expiry1, expiry2), "Long Put Calendar Spread", &mut failed_strategies, &mut total_strategies);
-    test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_call_calendar_spread(atm_strike, expiry1, expiry2), "Short Call Calendar Spread", &mut failed_strategies, &mut total_strategies);
+    if expiry1 != expiry2 {
+      test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.long_put_calendar_spread(atm_strike, expiry1, expiry2), "Long Put Calendar Spread", &mut failed_strategies, &mut total_strategies);
+      test_single_strategy(create_builder(data_ref.clone(), symbol, underlying_price, sec_type.clone())?.short_call_calendar_spread(atm_strike, expiry1, expiry2), "Short Call Calendar Spread", &mut failed_strategies, &mut total_strategies);
+    } else {
+      warn!("Skipping calendar spreads - need different expiries, both are: {}", expiry1_str);
+    }
 
     // 10. Synthetics
     info!("Testing synthetics...");
