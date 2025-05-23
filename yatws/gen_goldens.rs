@@ -236,6 +236,10 @@ struct ModeArgs {
   /// Randomize the order of tests when running "all" (useful for detecting test dependencies)
   #[arg(long)]
   randomize_order: bool,
+
+  /// Minimum interval between client creations in seconds (default: 60)
+  #[arg(long, default_value_t = 60)]
+  client_throttle_seconds: u64,
 }
 
 // --- Test Case Implementations ---
@@ -366,6 +370,36 @@ fn execute_test(test_def: &TestDefinition, client: &IBKRClient, is_live: bool) -
   }
 }
 
+/// Handles client creation throttling for live connections
+fn throttle_client_creation(last_client_creation: &mut Option<Instant>, throttle_duration: Duration, is_live: bool) {
+  // Only throttle live connections, not replay
+  if !is_live {
+    return;
+  }
+
+  if let Some(last_time) = *last_client_creation {
+    let elapsed = last_time.elapsed();
+    if elapsed < throttle_duration {
+      let sleep_duration = throttle_duration - elapsed;
+      info!(
+        "Client throttling: waiting {:.1}s before creating next client (elapsed: {:.1}s, minimum interval: {:.0}s)",
+        sleep_duration.as_secs_f64(),
+        elapsed.as_secs_f64(),
+        throttle_duration.as_secs_f64()
+      );
+      std::thread::sleep(sleep_duration);
+    } else {
+      info!(
+        "Client throttling: sufficient time elapsed ({:.1}s >= {:.0}s), proceeding with client creation",
+        elapsed.as_secs_f64(),
+        throttle_duration.as_secs_f64()
+      );
+    }
+  } else {
+    info!("Client throttling: first client creation, no throttling needed");
+  }
+}
+
 // --- Main Execution Logic ---
 fn main() -> Result<()> {
   env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -385,6 +419,17 @@ fn main() -> Result<()> {
 
   let mut test_results = Vec::new();
   let mut overall_success = true;
+
+  // Client creation throttling state
+  let mut last_client_creation: Option<Instant> = None;
+  let throttle_duration = Duration::from_secs(mode_args.client_throttle_seconds);
+
+  if is_live && mode_args.client_throttle_seconds > 0 {
+    info!(
+      "Client throttling enabled: minimum {}s interval between client creations",
+      mode_args.client_throttle_seconds
+    );
+  }
 
   if mode_args.test_name_or_all.eq_ignore_ascii_case("all") {
     // --- Run ALL Tests Serially ---
@@ -409,9 +454,12 @@ fn main() -> Result<()> {
     if all_test_defs.is_empty() {
       warn!("No tests found in registry for 'all' run.");
     } else {
-      for test_def in all_test_defs {
+      for (i, test_def) in all_test_defs.iter().enumerate() {
         let session_name = test_def.name; // Use the name from the definition
-        info!("===== Preparing Test: {} ({}) =====", session_name, mode_str);
+        info!("===== Preparing Test {}/{}: {} ({}) =====", i + 1, all_test_defs.len(), session_name, mode_str);
+
+        // Apply client creation throttling
+        throttle_client_creation(&mut last_client_creation, throttle_duration, is_live);
 
         let client_result = if is_live {
           create_live_client(&mode_args, session_name)
@@ -421,6 +469,11 @@ fn main() -> Result<()> {
 
         match client_result {
           Ok(client) => {
+            // Update throttling timestamp after successful client creation
+            if is_live {
+              last_client_creation = Some(Instant::now());
+            }
+
             let result = execute_test(test_def, &client, is_live);
             if !result.success {
               overall_success = false;
@@ -452,6 +505,7 @@ fn main() -> Result<()> {
       let session_name = test_def.name; // Use the canonical name from definition
       info!("===== Preparing Test: {} ({}) =====", session_name, mode_str);
 
+      // For single tests, no throttling is needed since there's only one client
       let client_result = if is_live {
         create_live_client(&mode_args, session_name)
       } else {
