@@ -1,3 +1,8 @@
+# Test
+- finish happy paths
+- failure paths
+- same client_id failure path
+
 # Missing features from ibapi:
 1.  `account_updates_multi`: Request account updates for multiple accounts/models.
 2.  `auto_open_orders`: Request status updates about future orders placed from TWS, with optional auto-binding.
