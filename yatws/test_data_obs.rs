@@ -8,7 +8,7 @@ use yatws::{
   contract::{Contract, WhatToShow, BarSize, SecType},
   data::{MarketDataType, TickType, GenericTickType, TickByTickRequestType},
   data_observer::{MarketDataObserver, RealTimeBarsObserver, TickByTickObserver, MarketDepthObserver,
-                  HistoricalDataObserver, HistoricalTicksObserver, ObserverId},
+                  HistoricalDataObserver, HistoricalTicksObserver},
 };
 
 pub(super) fn observe_market_data_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
@@ -181,8 +181,8 @@ pub(super) fn observe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) -> R
 
   impl TickByTickObserver for TestTickByTickObserver {
     fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: i64, price: f64, size: f64,
-                                tick_attrib_last: &yatws::data::TickAttribLast,
-                                exchange: &str, special_conditions: &str) {
+                                _tick_attrib_last: &yatws::data::TickAttribLast,
+                                _exchange: &str, _special_conditions: &str) {
       info!("[{}] Tick Last: ReqID={}, Type={}, Time={}, Price={}, Size={}",
             self.name, req_id, tick_type, time, price, size);
       // Increment tick count
@@ -194,7 +194,7 @@ pub(super) fn observe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) -> R
 
     fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64,
                                bid_size: f64, ask_size: f64,
-                               tick_attrib_bid_ask: &yatws::data::TickAttribBidAsk) {
+                               _tick_attrib_bid_ask: &yatws::data::TickAttribBidAsk) {
       info!("[{}] Tick BidAsk: ReqID={}, Time={}, Bid={}x{}, Ask={}x{}",
             self.name, req_id, time, bid_price, bid_size, ask_price, ask_size);
       // Increment tick count
@@ -270,7 +270,7 @@ pub(super) fn observe_market_depth_impl(client: &IBKRClient, is_live: bool) -> R
   info!("--- Testing Observe Market Depth ---");
   let data_mgr = client.data_market();
   // FX market depth is free.
-  let mut contract = Contract {
+  let contract = Contract {
     symbol: "EUR".to_string(),
     exchange: "IDEALPRO".to_string(),
     sec_type: SecType::Forex,
@@ -360,7 +360,7 @@ pub(super) fn observe_market_depth_impl(client: &IBKRClient, is_live: bool) -> R
 }
 
 // 8. Test for request_observe_historical_data
-pub(super) fn observe_historical_data_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+pub(super) fn observe_historical_data_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
   info!("--- Testing Observe Historical Data ---");
   let data_mgr = client.data_market();
   let contract = Contract::stock("MSFT");
@@ -475,7 +475,7 @@ pub(super) fn observe_historical_data_impl(client: &IBKRClient, is_live: bool) -
 }
 
 // 10. Test for historical ticks observer
-pub(super) fn observe_historical_ticks_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+pub(super) fn observe_historical_ticks_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
   info!("--- Testing Observe Historical Ticks ---");
   let data_mgr = client.data_market();
   let contract = Contract::stock("AAPL");

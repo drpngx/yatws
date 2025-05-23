@@ -6,8 +6,7 @@ use yatws::{
   IBKRError,
   IBKRClient,
   contract::{Contract, WhatToShow, BarSize, SecType},
-  data::{MarketDataType, DurationUnit, TickType, TickAttrib, TickByTickRequestType, RealTimeBarInfo,
-         GenericTickType},
+  data::{MarketDataType, DurationUnit, TickByTickRequestType},
   data_subscription::{
     HistoricalDataEvent,
     MarketDataIterator,
@@ -317,7 +316,7 @@ pub(super) fn subscribe_market_depth_impl(client: &IBKRClient, is_live: bool) ->
   info!("--- Testing Subscribe Market Depth ---");
   let data_mgr = client.data_market();
   // FX market depth is free.
-  let mut contract = Contract {
+  let contract = Contract {
     symbol: "EUR".to_string(),
     exchange: "IDEALPRO".to_string(),
     sec_type: SecType::Forex,
