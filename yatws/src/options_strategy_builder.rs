@@ -1392,7 +1392,8 @@ impl OptionsStrategyBuilder {
   /// * `target_strike2` - The target strike price for the body (short puts)
   /// * `target_strike3` - The target strike price for the upper wing (long put)
   pub fn long_put_butterfly(mut self, expiry: NaiveDate, target_strike1: f64, target_strike2: f64, target_strike3: f64) -> Result<Self, IBKRError> {
-    if !(target_strike1 < target_strike2 && target_strike2 < target_strike3) { return Err(IBKRError::InvalidParameter("Target strikes must be ordered: strike1 < strike2 < strike3".into())); }
+    if !(target_strike1 < target_strike2 && target_strike2 < target_strike3) {
+      return Err(IBKRError::InvalidParameter(format!("Target strikes must be ordered: strike1={:.2} < strike2={:.2} < strike3={:.2}", target_strike1, target_strike2, target_strike3))); }
     self.fetch_underlying_details()?;
     let option_exchange = self.resolve_option_exchange()?;
     let (available_strikes, _) = self.get_strikes_and_expirations_for_exchange(&option_exchange)?;
