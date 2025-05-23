@@ -103,6 +103,14 @@ impl MessageBroker {
       (*me).rate_limit_timeout = timeout;
     }
   }
+
+  /// Disconnect the underlying connection.
+  /// This method can be called even when there are multiple Arc references to the MessageBroker.
+  pub fn disconnect(&self) -> Result<(), IBKRError> {
+    log::info!("MessageBroker disconnect requested");
+    let mut conn_guard = self.connection.lock();
+    conn_guard.disconnect()
+  }
 }
 
 // --- Connection Trait ---

@@ -66,6 +66,7 @@ use crate::conn::{Connection, SocketConnection, MessageBroker};
 use crate::conn_log::ConnectionLogger;
 use crate::conn_mock::MockConnection;
 use crate::base::IBKRError;
+use log::{info, error, debug};
 use std::sync::Arc;
 use std::time::Duration;
 use client_manager::ClientManager;
@@ -459,6 +460,26 @@ impl IBKRClient {
   }
 }
 
+impl Drop for IBKRClient {
+  fn drop(&mut self) {
+    info!("Dropping IBKRClient (client_id: {}), ensuring connection is closed...", self.client_id);
+
+    // Explicitly disconnect the connection to ensure cleanup happens immediately
+    // rather than waiting for all Arc references to be dropped
+    match self.message_broker.disconnect() {
+      Ok(()) => {
+        info!("IBKRClient connection closed successfully during drop");
+      },
+      Err(e) => {
+        // Log the error but don't panic during drop
+        error!("Error closing connection during IBKRClient drop: {:?}", e);
+      }
+    }
+
+    debug!("IBKRClient drop completed for client_id: {}", self.client_id);
+  }
+}
+
 /// Manages client-level interactions and state with TWS.
 ///
 /// This includes handling connection status, server time requests, API verification messages,
@@ -638,7 +659,7 @@ pub mod client_manager {
     }
   }
 
-use crate::protocol_decoder::ClientErrorCode; // Added import
+  use crate::protocol_decoder::ClientErrorCode; // Added import
 
   impl ClientHandler for ClientManager {
     /// Handles error messages from TWS or the client library.
@@ -672,16 +693,16 @@ use crate::protocol_decoder::ClientErrorCode; // Added import
         ClientErrorCode::FailSend |
         // Add TWS specific codes if needed, e.g., 1100, 1101, 1102, 1300, 2109, 2110
         // ClientErrorCode::ConnectivityBetweenTwsAndIb | ...
-         _ => {
-            // Check integer code for TWS specific disconnects not in enum yet
-            match error_code_int {
-                1100 | 1101 | 1102 | 1300 | 2109 | 2110 => {
-                    warn!("Error code {} ({:?}) indicates potential disconnection.", error_code_int, code);
-                    self.set_connected_status(false);
-                }
-                _ => {} // Other errors don't automatically set disconnected status
+        _ => {
+          // Check integer code for TWS specific disconnects not in enum yet
+          match error_code_int {
+            1100 | 1101 | 1102 | 1300 | 2109 | 2110 => {
+              warn!("Error code {} ({:?}) indicates potential disconnection.", error_code_int, code);
+              self.set_connected_status(false);
             }
-         }
+            _ => {} // Other errors don't automatically set disconnected status
+          }
+        }
       }
     }
 
