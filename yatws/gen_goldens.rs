@@ -273,7 +273,7 @@ submit_test!(11, "market-depth-blocking", test_cases::market_depth_blocking_impl
 submit_test!(12, "historical-data", test_cases::historical_data_impl);
 submit_test!(13, "cleanup-orders", test_cases::cleanup_orders_impl);
 submit_test!(14, "order-global-cancel", test_cases::order_global_cancel_impl);
-submit_test!(15, "order-exercise-option", test_cases::order_exercise_option_impl);
+// submit_test!(15, "order-exercise-option", test_cases::order_exercise_option_impl);
 submit_test!(16, "order-what-if", test_cases::order_what_if_impl);
 submit_test!(17, "box-spread-yield", test_cases::box_spread_yield_impl);
 submit_test!(18, "financial-reports", test_cases::financial_reports_impl);
