@@ -490,6 +490,221 @@ impl IBKRClient {
     // Then disconnect the underlying connection
     self.message_broker.disconnect()
   }
+
+  /// Reset client state (keep connection alive)
+  ///
+  /// This method cleans up any active state from the previous test while
+  /// maintaining the underlying TWS connection. It should be called to cleanup
+  /// at the end of the day.
+  ///
+  /// # What it does:
+  /// - Cancels all active orders globally
+  /// - Cleans up all market data subscriptions
+  /// - Stops account update subscriptions
+  /// - Cleans up news and financial data subscriptions
+  /// - Brief settling delay to ensure state is clean
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::IBKRClient;
+  /// # fn main() -> Result<(), yatws::IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// // Run first test
+  /// run_first_test(&client)?;
+  ///
+  /// // Reset state before next test
+  /// client.reset()?;
+  ///
+  /// // Run second test
+  /// run_second_test(&client)?;
+  /// # Ok(())
+  /// # }
+  /// # fn run_first_test(client: &IBKRClient) -> Result<(), yatws::IBKRError> { Ok(()) }
+  /// # fn run_second_test(client: &IBKRClient) -> Result<(), yatws::IBKRError> { Ok(()) }
+  /// ```
+  pub fn reset(&self) -> Result<(), IBKRError> {
+    log::info!("Resetting IBKRClient (client_id: {})", self.client_id);
+
+    // Cancel all active orders
+    if let Err(e) = self.orders().cancel_all_orders_globally() {
+      log::warn!("Failed to cancel all orders during reset: {}", e);
+      // Continue with other cleanup even if this fails
+    }
+
+    // Clean up all manager states
+    self.data_market().cleanup_requests()
+      .unwrap_or_else(|e| log::warn!("Failed to clean up data market manager during reset: {}", e));
+
+    self.account().cleanup_requests()
+      .unwrap_or_else(|e| log::warn!("Failed to clean up account manager during reset: {}", e));
+
+    self.data_news().cleanup_requests()
+      .unwrap_or_else(|e| log::warn!("Failed to clean up data news manager during reset: {}", e));
+
+    self.data_financials().cleanup_requests()
+      .unwrap_or_else(|e| log::warn!("Failed to clean up data financials manager during reset: {}", e));
+
+    self.data_ref().cleanup_requests()
+      .unwrap_or_else(|e| log::warn!("Failed to clean up data reference manager during reset: {}", e));
+
+    self.financial_advisor().cleanup_requests()
+      .unwrap_or_else(|e| log::warn!("Failed to clean up financial advisor manager during reset: {}", e));
+
+    // Brief settling delay to ensure cleanup completes
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    log::info!("IBKRClient state reset completed (client_id: {})", self.client_id);
+    Ok(())
+  }
+
+  /// Creates a new `IBKRClient` for replaying parent + child sessions from a database.
+  ///
+  /// This method replays a specific test from a recorded run by combining
+  /// the parent session (handshake/initialization) with the specific child session.
+  ///
+  /// # Arguments
+  /// * `db_path` - Path to the SQLite database file containing the logged sessions.
+  /// * `run_id` - The name of the parent run session.
+  /// * `test_name` - The name of the child test session to replay.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the database cannot be opened, sessions are not found,
+  /// or there's an issue initializing the replay.
+  #[doc(hidden)]
+  pub fn from_run_and_test<P: AsRef<std::path::Path>>(db_path: P, run_id: &str, test_name: &str) -> Result<IBKRClient, IBKRError> {
+    use crate::conn_mock::MockConnection;
+
+    let conn = Box::new(MockConnection::from_parent_and_child(db_path, run_id, test_name)?);
+    Self::from_mock_connection(conn)
+  }
+
+  /// Creates a new `IBKRClient` for replaying an entire run from a database.
+  ///
+  /// This method replays all completed tests from a recorded run by combining
+  /// the parent session with all completed child sessions.
+  ///
+  /// # Arguments
+  /// * `db_path` - Path to the SQLite database file containing the logged sessions.
+  /// * `run_id` - The name of the parent run session.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the database cannot be opened, the run is not found,
+  /// or there's an issue initializing the replay.
+  #[doc(hidden)]
+  pub fn from_full_run<P: AsRef<std::path::Path>>(db_path: P, run_id: &str) -> Result<IBKRClient, IBKRError> {
+    use crate::conn_mock::MockConnection;
+
+    let conn = Box::new(MockConnection::from_run_with_all_tests(db_path, run_id)?);
+    Self::from_mock_connection(conn)
+  }
+
+  /// Helper method to create IBKRClient from a mock connection
+  #[doc(hidden)]
+  fn from_mock_connection(conn: Box<dyn crate::conn::Connection>) -> Result<IBKRClient, IBKRError> {
+    let server_version = conn.get_server_version();
+    let message_broker = Arc::new(crate::conn::MessageBroker::new(conn, None));
+
+    // Create rate limiter manager (disabled for replay)
+    let mut rate_config = crate::rate_limiter::RateLimiterConfig::default();
+    rate_config.enabled = false;
+    let rate_limiter_mgr = Arc::new(crate::rate_limiter::RateLimiterManager::new(rate_config.clone()));
+
+    // Create managers
+    let client_mgr = client_manager::ClientManager::new(message_broker.clone());
+    let (order_mgr, order_init) = crate::order_manager::OrderManager::create(message_broker.clone());
+    let account_mgr = crate::account_manager::AccountManager::new(message_broker.clone(), None);
+    let data_ref_mgr = crate::data_ref_manager::DataRefManager::new(message_broker.clone());
+    let data_market_mgr = crate::data_market_manager::DataMarketManager::new(
+      message_broker.clone(),
+      rate_limiter_mgr.get_market_data_limiter(),
+      rate_limiter_mgr.get_historical_limiter()
+    );
+    let data_news_mgr = crate::data_news_manager::DataNewsManager::new(message_broker.clone(),
+                                                                       rate_limiter_mgr.get_historical_limiter());
+    let data_fin_mgr = crate::data_fin_manager::DataFundamentalsManager::new(message_broker.clone());
+    let financial_advisor_mgr = crate::financial_advisor_manager::FinancialAdvisorManager::new(message_broker.clone());
+
+    // Create message handler
+    let msg_handler = crate::handler::MessageHandler::new(server_version, client_mgr.clone(),
+                                                          account_mgr.clone(), order_mgr.clone(),
+                                                          data_ref_mgr.clone(), data_market_mgr.clone(),
+                                                          data_news_mgr.clone(), data_fin_mgr.clone(),
+                                                          financial_advisor_mgr.clone());
+
+    // Set handler
+    message_broker.set_message_handler(msg_handler);
+
+    // Initialize order manager
+    order_init()?;
+
+    // Create client struct
+    Ok(IBKRClient {
+      client_id: 0, // Replay mode doesn't need real client ID
+      rate_limiter_mgr,
+      message_broker,
+      client_mgr,
+      order_mgr,
+      account_mgr,
+      data_ref_mgr,
+      data_market_mgr,
+      data_news_mgr,
+      data_fin_mgr,
+      financial_advisor_mgr,
+    })
+  }
+
+  /// Internal method to get logger reference (used by TestSessionManager)
+  ///
+  /// This method provides access to the underlying ConnectionLogger for
+  /// session management. It's intended for use by test infrastructure
+  /// and is not part of the public API.
+  #[doc(hidden)]
+  pub fn get_logger(&self) -> Option<&crate::conn_log::ConnectionLogger> {
+    self.message_broker.get_logger()
+  }
+
+  /// Start a test session (creates child session)
+  ///
+  /// This is a convenience method that calls through to the underlying logger.
+  /// Used by test infrastructure for session management.
+  #[doc(hidden)]
+  pub fn start_test_session(&self, test_name: &str) -> Result<(), IBKRError> {
+    if let Some(logger) = self.get_logger() {
+      logger.start_session(test_name)
+    } else {
+      log::warn!("No logger available, test session '{}' not tracked", test_name);
+      Ok(())
+    }
+  }
+
+  /// End the current test session
+  ///
+  /// This is a convenience method that calls through to the underlying logger.
+  /// Used by test infrastructure for session management.
+  #[doc(hidden)]
+  pub fn end_test_session(&self, status: crate::conn_log::SessionStatus) -> Result<(), IBKRError> {
+    if let Some(logger) = self.get_logger() {
+      logger.end_session(status)
+    } else {
+      log::warn!("No logger available, test session end not tracked");
+      Ok(())
+    }
+  }
+
+  /// Complete the entire run
+  ///
+  /// This is a convenience method that calls through to the underlying logger.
+  /// Used by test infrastructure for session management.
+  #[doc(hidden)]
+  pub fn complete_run(&self, status: crate::conn_log::SessionStatus) -> Result<(), IBKRError> {
+    if let Some(logger) = self.get_logger() {
+      logger.complete_run(status)
+    } else {
+      log::warn!("No logger available, run completion not tracked");
+      Ok(())
+    }
+  }
+
 }
 
 impl Drop for IBKRClient {

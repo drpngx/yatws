@@ -2,8 +2,10 @@
 // Use it like this:
 // bazel-bin/yatws/gen_goldens live current-quote --generate-report
 // bazel-bin/yatws/gen_goldens live all --generate-report
-// bazel-bin/yatws/gen_goldens live all --randomize-order --generate-report
-// Look for "Test registration" below for available test cases.
+// bazel-bin/yatws/gen_goldens live all --randomize-order --generate-report --run-id integration_tests
+// bazel-bin/yatws/gen_goldens replay all --run-id integration_tests
+// bazel-bin/yatws/gen_goldens replay current-quote --run-id integration_tests
+// bazel-bin/yatws/gen_goldens replay current-quote  (auto-discover)
 
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
@@ -26,6 +28,10 @@ mod test_option;
 mod test_news;
 mod test_data_sub;
 mod test_data_obs;
+mod test_session_manager;
+
+use test_session_manager::{TestSessionManager};
+use yatws::{SessionStatus};
 
 // --- Test Definition Infrastructure ---
 
@@ -67,6 +73,7 @@ struct TestResult {
 #[derive(Debug)]
 struct TestRunReport {
   mode: String, // "Live" or "Replay"
+  run_id: String,
   start_time: DateTime<Utc>,
   end_time: DateTime<Utc>,
   total_duration: Duration,
@@ -76,6 +83,7 @@ struct TestRunReport {
   port: u16,
   client_id: i32,
   randomized_order: bool,
+  single_client_mode: bool,
 }
 
 impl TestRunReport {
@@ -92,6 +100,8 @@ impl TestRunReport {
     md.push_str(&format!("## Test Run Summary {}\n\n", status_emoji));
     md.push_str(&format!("- **Overall Status**: {}\n", status_text));
     md.push_str(&format!("- **Mode**: {}\n", self.mode));
+    md.push_str(&format!("- **Run ID**: {}\n", self.run_id));
+    md.push_str(&format!("- **Client Mode**: {}\n", if self.single_client_mode { "Single Client" } else { "Multi Client" }));
     md.push_str(&format!("- **Test Order**: {}\n", if self.randomized_order { "Randomized" } else { "Sequential" }));
     md.push_str(&format!("- **Start Time**: {}\n", self.start_time.format("%Y-%m-%d %H:%M:%S UTC")));
     md.push_str(&format!("- **End Time**: {}\n", self.end_time.format("%Y-%m-%d %H:%M:%S UTC")));
@@ -174,7 +184,6 @@ impl TestRunReport {
 }
 
 // Declare the static collection using inventory
-// All 'submit_test!(order, name, func);' instances will populate this.
 inventory::collect!(TestDefinition);
 
 // Create a Lazy HashMap for quick name lookup (used only for single test lookups)
@@ -200,13 +209,14 @@ enum Command {
   Live(ModeArgs),
   /// Replay tests from a previously logged database session.
   Replay(ModeArgs),
+  /// Show database statistics and available sessions.
+  Stats(StatsArgs),
 }
 
 #[derive(Parser, Debug)]
 struct ModeArgs {
   /// Test name to run (e.g., time, account-details, order) or "all".
-  /// This name will also be used as the session name in the database.
-  #[arg()] // Positional argument
+  #[arg()]
   test_name_or_all: String,
 
   /// TWS/Gateway host address.
@@ -225,6 +235,10 @@ struct ModeArgs {
   #[arg(long, default_value = "yatws_golden.db")]
   db_path: PathBuf,
 
+  /// Run ID for grouping related tests (defaults to timestamp or test name)
+  #[arg(long)]
+  run_id: Option<String>,
+
   /// Generate a markdown test report and save to yatws/doc/test_results.md
   #[arg(long)]
   generate_report: bool,
@@ -237,9 +251,24 @@ struct ModeArgs {
   #[arg(long)]
   randomize_order: bool,
 
-  /// Minimum interval between client creations in seconds (default: 60)
+  /// Use single client for all tests (default: true for live, false for replay)
+  #[arg(long)]
+  single_client: Option<bool>,
+
+  /// Minimum interval between client creations in seconds (only for multi-client mode)
   #[arg(long, default_value_t = 10)]
   client_throttle_seconds: u64,
+}
+
+#[derive(Parser, Debug)]
+struct StatsArgs {
+  /// Path to the SQLite database.
+  #[arg(long, default_value = "yatws_golden.db")]
+  db_path: PathBuf,
+
+  /// Show detailed information about a specific run
+  #[arg(long)]
+  run_id: Option<String>,
 }
 
 // --- Test Case Implementations ---
@@ -257,8 +286,6 @@ mod test_cases {
 }
 
 // --- Test Registration ---
-// Associate canonical names with the implementation functions in the module.
-// Tests will run in the order specified by the order number when using "all"
 submit_test!(1, "time", test_cases::time_impl);
 submit_test!(2, "account-details", test_cases::account_details_impl);
 submit_test!(3, "order-market", test_cases::order_market_impl);
@@ -299,41 +326,8 @@ submit_test!(37, "observe-historical-data", test_cases::observe_historical_data_
 submit_test!(38, "observe-historical-ticks", test_cases::observe_historical_ticks_impl);
 submit_test!(39, "multi-subscription-mixed", test_cases::multi_subscription_mixed_impl);
 submit_test!(40, "options-strategy-builder", test_cases::options_strategy_builder_test_impl);
-// Add more tests here: submit_test!(41, "new-test-name", test_cases::new_test_impl);
-// submit_test!(42, "wsh-events", test_cases::wsh_events_impl);
 
 // --- Helper Functions ---
-
-/// Creates a client for live connection, ensuring DB directory exists.
-fn create_live_client(args: &ModeArgs, session: &str) -> Result<IBKRClient> {
-  info!(
-    "Creating LIVE client for session '{}' (Host: {}:{}, ClientID: {})",
-    session, args.host, args.port, args.client_id
-  );
-  info!("Logging to DB: {:?}", args.db_path);
-
-  if let Some(parent) = args.db_path.parent() {
-    std::fs::create_dir_all(parent)
-      .with_context(|| format!("Failed to create directory for DB: {:?}", parent))?;
-  }
-
-  let log_config = Some((args.db_path.to_string_lossy().to_string(), session.to_string()));
-  IBKRClient::new(&args.host, args.port, args.client_id, log_config)
-    .context("Failed to create IBKRClient for live connection")
-}
-
-/// Creates a client for replay connection.
-fn create_replay_client(args: &ModeArgs, session: &str) -> Result<IBKRClient> {
-  info!(
-    "Creating REPLAY client for session '{}' from DB: {:?}",
-    session, args.db_path
-  );
-  if !args.db_path.exists() {
-    return Err(anyhow!("Database path does not exist: {:?}", args.db_path));
-  }
-  IBKRClient::from_db(&args.db_path.to_string_lossy(), session)
-    .context("Failed to create IBKRClient for replay")
-}
 
 /// Executes a single test and returns the result
 fn execute_test(test_def: &TestDefinition, client: &IBKRClient, is_live: bool) -> TestResult {
@@ -372,7 +366,6 @@ fn execute_test(test_def: &TestDefinition, client: &IBKRClient, is_live: bool) -
 
 /// Handles client creation throttling for live connections
 fn throttle_client_creation(last_client_creation: &mut Option<Instant>, throttle_duration: Duration, is_live: bool) {
-  // Only throttle live connections, not replay
   if !is_live {
     return;
   }
@@ -400,182 +393,456 @@ fn throttle_client_creation(last_client_creation: &mut Option<Instant>, throttle
   }
 }
 
+/// Generate a default run ID from timestamp
+fn generate_default_run_id() -> String {
+  Utc::now().format("%Y%m%d_%H%M%S").to_string()
+}
+
+/// Determine if single client mode should be used
+fn should_use_single_client(is_live: bool, explicit_choice: Option<bool>, test_count: usize) -> bool {
+  match explicit_choice {
+    Some(choice) => choice,
+    None => {
+      // Default logic: single client for live runs with multiple tests, multi-client for replay
+      if is_live {
+        test_count > 1 // Use single client for multi-test live runs
+      } else {
+        false // Use multi-client for replay (each test gets its own session)
+      }
+    }
+  }
+}
+
+// --- Run All Tests Implementation ---
+
+fn run_all_tests_single_client(
+  mode_args: &ModeArgs,
+  is_live: bool,
+  all_test_defs: &[&'static TestDefinition],
+  run_id: &str,
+) -> Result<Vec<TestResult>> {
+  let mut test_results = Vec::new();
+
+  if is_live {
+    info!("=== SINGLE CLIENT MODE (Live) ===");
+    info!("Creating single client for {} tests in run '{}'", all_test_defs.len(), run_id);
+
+    // Create test session manager for the run
+    let mut session_mgr = TestSessionManager::new(&mode_args.db_path.to_string_lossy(), run_id);
+
+    // Create single client for entire run (handshake/preamble logged to parent session)
+    let client = session_mgr.create_client(&mode_args.host, mode_args.port, mode_args.client_id)
+      .context("Failed to create client for run")?;
+
+    info!("Client created successfully, running {} tests sequentially", all_test_defs.len());
+
+    // Run each test with the same client
+    for (i, test_def) in all_test_defs.iter().enumerate() {
+      info!("===== Test {}/{}: {} =====", i + 1, all_test_defs.len(), test_def.name);
+
+      // Start test session (child session)
+      session_mgr.start_test(test_def.name)
+        .with_context(|| format!("Failed to start test session for '{}'", test_def.name))?;
+
+      // Execute test with shared client
+      let result = execute_test(test_def, &client, true);
+
+      // End test session with status
+      let status = if result.success { SessionStatus::Completed } else { SessionStatus::Failed };
+      session_mgr.end_test(status)
+        .with_context(|| format!("Failed to end test session for '{}'", test_def.name))?;
+
+      test_results.push(result);
+
+      // Reset client state for next test (if not the last test)
+      if i < all_test_defs.len() - 1 {
+        info!("Resetting client state for next test...");
+        client.reset()
+          .with_context(|| format!("Failed to reset client state after test '{}'", test_def.name))?;
+
+        // Brief pause between tests
+        std::thread::sleep(Duration::from_secs(1));
+      }
+
+      info!("----------------------------------------");
+    }
+
+    // Complete the run
+    let run_status = if test_results.iter().all(|r| r.success) {
+      SessionStatus::Completed
+    } else {
+      SessionStatus::Failed
+    };
+    session_mgr.complete_run(run_status)
+      .context("Failed to complete run")?;
+
+    info!("Single client run completed successfully");
+
+  } else {
+    info!("=== SINGLE CLIENT MODE (Replay) ===");
+    info!("Replaying run '{}' with all completed tests", run_id);
+
+    // Get available tests from the run
+    let available_tests = TestSessionManager::get_available_tests(&mode_args.db_path, run_id)
+      .with_context(|| format!("Failed to get available tests for run '{}'", run_id))?;
+
+    if available_tests.is_empty() {
+      warn!("No completed tests found for run '{}'", run_id);
+      return Ok(test_results);
+    }
+
+    info!("Found {} completed tests in run '{}': {:?}", available_tests.len(), run_id, available_tests);
+
+    // Create replay client for the entire run
+    let replay_client = TestSessionManager::replay_latest_run(&mode_args.db_path, run_id)
+      .with_context(|| format!("Failed to create replay client for run '{}'", run_id))?;
+
+    // Run only the tests that are available in the recorded session
+    for test_def in all_test_defs {
+      if available_tests.contains(&test_def.name.to_string()) {
+        info!("Replaying test: {}", test_def.name);
+        let result = execute_test(test_def, &replay_client, false);
+        test_results.push(result);
+      } else {
+        info!("Skipping test '{}' - not recorded in run '{}'", test_def.name, run_id);
+      }
+    }
+  }
+
+  Ok(test_results)
+}
+
+fn run_all_tests_multi_client(
+  mode_args: &ModeArgs,
+  is_live: bool,
+  all_test_defs: &[&'static TestDefinition],
+  run_id: &str,
+) -> Result<Vec<TestResult>> {
+  let mut test_results = Vec::new();
+
+  // Client creation throttling state (only for live)
+  let mut last_client_creation: Option<Instant> = None;
+  let throttle_duration = Duration::from_secs(mode_args.client_throttle_seconds);
+
+  if is_live && mode_args.client_throttle_seconds > 0 {
+    info!("=== MULTI CLIENT MODE (Live) ===");
+    info!("Client throttling enabled: minimum {}s interval between client creations", mode_args.client_throttle_seconds);
+  } else {
+    info!("=== MULTI CLIENT MODE ({}) ===", if is_live { "Live" } else { "Replay" });
+  }
+
+  for (i, test_def) in all_test_defs.iter().enumerate() {
+    let session_name = if is_live {
+      format!("{}_{}", run_id, test_def.name) // Unique session name for each test
+    } else {
+      test_def.name.to_string()
+    };
+
+    info!("===== Test {}/{}: {} =====", i + 1, all_test_defs.len(), test_def.name);
+
+    // Apply client creation throttling for live connections
+    throttle_client_creation(&mut last_client_creation, throttle_duration, is_live);
+
+    let client_result = if is_live {
+      // Create individual client for each test
+      IBKRClient::new(&mode_args.host, mode_args.port, mode_args.client_id, Some((
+        mode_args.db_path.to_string_lossy().to_string(),
+        session_name
+      )))
+    } else {
+      // Try to replay individual test session
+      TestSessionManager::auto_replay_test(&mode_args.db_path, test_def.name)
+    };
+
+    match client_result {
+      Ok(client) => {
+        // Update throttling timestamp after successful client creation
+        if is_live {
+          last_client_creation = Some(Instant::now());
+        }
+
+        let result = execute_test(test_def, &client, is_live);
+        test_results.push(result);
+      }
+      Err(e) => {
+        error!("Failed to create client for test '{}': {:#}", test_def.name, e);
+
+        // Add a failed result for the client creation failure
+        test_results.push(TestResult {
+          name: test_def.name.to_string(),
+          success: false,
+          error_message: Some(format!("Client creation failed: {:#}", e)),
+          duration: Duration::from_secs(0),
+          timestamp: Utc::now(),
+        });
+      }
+    }
+
+    info!("----------------------------------------");
+  }
+
+  Ok(test_results)
+}
+
+fn run_all_tests(mode_args: &ModeArgs, is_live: bool, run_id: &str) -> Result<Vec<TestResult>> {
+  // Collect all tests and sort by order field to ensure deterministic execution
+  let mut all_test_defs: Vec<&'static TestDefinition> = inventory::iter::<TestDefinition>().into_iter().collect();
+
+  if mode_args.randomize_order {
+    // Randomize the order
+    let mut rng = rand::rng();
+    all_test_defs.shuffle(&mut rng);
+    info!("Test order randomized. Execution order:");
+    for (i, test_def) in all_test_defs.iter().enumerate() {
+      info!("  {}: {} (original order: {})", i + 1, test_def.name, test_def.order);
+    }
+  } else {
+    // Sort by order field for deterministic execution
+    all_test_defs.sort_by_key(|test_def| test_def.order);
+    info!("Running tests in defined order (1-{}).", all_test_defs.len());
+  }
+
+  if all_test_defs.is_empty() {
+    warn!("No tests found in registry for 'all' run.");
+    return Ok(Vec::new());
+  }
+
+  // Determine client mode
+  let single_client = should_use_single_client(is_live, mode_args.single_client, all_test_defs.len());
+
+  info!("Run configuration:");
+  info!("  Mode: {}", if is_live { "Live" } else { "Replay" });
+  info!("  Run ID: {}", run_id);
+  info!("  Client Mode: {}", if single_client { "Single Client" } else { "Multi Client" });
+  info!("  Test Count: {}", all_test_defs.len());
+  info!("  Test Order: {}", if mode_args.randomize_order { "Randomized" } else { "Sequential" });
+
+  if single_client {
+    run_all_tests_single_client(mode_args, is_live, &all_test_defs, run_id)
+  } else {
+    run_all_tests_multi_client(mode_args, is_live, &all_test_defs, run_id)
+  }
+}
+
+fn run_single_test(mode_args: &ModeArgs, is_live: bool, test_name: &str) -> Result<TestResult> {
+  // Look up the test definition by name
+  let test_def = TEST_REGISTRY.get(test_name)
+    .ok_or_else(|| anyhow!("Unknown test name: '{}'. Available tests: {:?}", test_name, TEST_REGISTRY.keys().collect::<Vec<_>>()))?;
+
+  info!("===== Single Test: {} ({}) =====", test_name, if is_live { "Live" } else { "Replay" });
+
+  let client_result = if is_live {
+    // Use test name as session name for single test
+    IBKRClient::new(&mode_args.host, mode_args.port, mode_args.client_id, Some((
+      mode_args.db_path.to_string_lossy().to_string(),
+      test_name.to_string()
+    )))
+  } else {
+    // Try to replay the test
+    TestSessionManager::auto_replay_test(&mode_args.db_path, test_name)
+  };
+
+  match client_result {
+    Ok(client) => {
+      let result = execute_test(test_def, &client, is_live);
+      Ok(result)
+    }
+    Err(e) => {
+      error!("Failed to create client for test '{}': {:#}", test_name, e);
+      Ok(TestResult {
+        name: test_name.to_string(),
+        success: false,
+        error_message: Some(format!("Client creation failed: {:#}", e)),
+        duration: Duration::from_secs(0),
+        timestamp: Utc::now(),
+      })
+    }
+  }
+}
+
+// --- Stats Command Implementation ---
+
+fn show_stats(args: &StatsArgs) -> Result<()> {
+  info!("Database Statistics for: {:?}", args.db_path);
+
+  if !args.db_path.exists() {
+    return Err(anyhow!("Database file does not exist: {:?}", args.db_path));
+  }
+
+  // Get overall statistics
+  let stats = TestSessionManager::get_session_stats(&args.db_path)
+    .context("Failed to get session statistics")?;
+
+  println!("\n=== YATWS Session Database Statistics ===");
+  println!("Database: {:?}", args.db_path);
+  println!("Total Runs: {}", stats.total_runs);
+  println!("Total Completed Tests: {}", stats.total_completed_tests);
+  println!("Total Failed Tests: {}", stats.total_failed_tests);
+  println!("Unique Test Names: {}", stats.unique_test_names.len());
+
+  if !stats.unique_test_names.is_empty() {
+    println!("\nAvailable Test Types:");
+    for (i, test_name) in stats.unique_test_names.iter().enumerate() {
+      println!("  {}: {}", i + 1, test_name);
+    }
+  }
+
+  // Show specific run details if requested
+  if let Some(run_id) = &args.run_id {
+    println!("\n=== Run Details: '{}' ===", run_id);
+
+    match TestSessionManager::find_latest_run(&args.db_path, run_id) {
+      Ok(Some(session_info)) => {
+        println!("Run found:");
+        println!("  ID: {}", session_info.id);
+        println!("  Host: {}:{}", session_info.host, session_info.port);
+        println!("  Client ID: {}", session_info.client_id);
+        println!("  Created: {}", session_info.created_at);
+        if let Some(completed) = session_info.completed_at {
+          println!("  Completed: {}", completed);
+        }
+        println!("  Status: {}", session_info.status);
+        if let Some(server_version) = session_info.server_version {
+          println!("  Server Version: {}", server_version);
+        }
+
+        // Get completed tests for this run
+        match TestSessionManager::get_available_tests(&args.db_path, run_id) {
+          Ok(tests) => {
+            if tests.is_empty() {
+              println!("  Completed Tests: None");
+            } else {
+              println!("  Completed Tests ({}):", tests.len());
+              for (i, test) in tests.iter().enumerate() {
+                println!("    {}: {}", i + 1, test);
+              }
+            }
+          }
+          Err(e) => {
+            warn!("Failed to get completed tests for run '{}': {}", run_id, e);
+          }
+        }
+      }
+      Ok(None) => {
+        println!("Run '{}' not found.", run_id);
+      }
+      Err(e) => {
+        return Err(anyhow!("Failed to query run '{}': {}", run_id, e));
+      }
+    }
+  }
+
+  println!();
+  Ok(())
+}
+
 // --- Main Execution Logic ---
 fn main() -> Result<()> {
   env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
   // Initialize the registry by accessing it once (populates from inventory).
   Lazy::force(&TEST_REGISTRY);
   info!("Registered tests: {:?}", TEST_REGISTRY.keys().collect::<Vec<_>>());
 
   let args = Args::parse();
-  let run_start_time = Utc::now();
-  let run_start_instant = Instant::now();
 
-  let (mode_args, is_live) = match args.command {
-    Command::Live(m) => (m, true),
-    Command::Replay(m) => (m, false),
-  };
-  let mode_str = if is_live { "Live" } else { "Replay" };
-
-  let mut test_results = Vec::new();
-  let mut overall_success = true;
-
-  // Client creation throttling state
-  let mut last_client_creation: Option<Instant> = None;
-  let throttle_duration = Duration::from_secs(mode_args.client_throttle_seconds);
-
-  if is_live && mode_args.client_throttle_seconds > 0 {
-    info!(
-      "Client throttling enabled: minimum {}s interval between client creations",
-      mode_args.client_throttle_seconds
-    );
-  }
-
-  if mode_args.test_name_or_all.eq_ignore_ascii_case("all") {
-    // --- Run ALL Tests Serially ---
-    info!("Running ALL {} tests serially...", mode_str);
-    // Collect all tests and sort by order field to ensure deterministic execution
-    let mut all_test_defs: Vec<&'static TestDefinition> = inventory::iter::<TestDefinition>().into_iter().collect();
-
-    if mode_args.randomize_order {
-      // Randomize the order
-      let mut rng = rand::rng();
-      all_test_defs.shuffle(&mut rng);
-      info!("Test order randomized. Execution order:");
-      for (i, test_def) in all_test_defs.iter().enumerate() {
-        info!("  {}: {} (original order: {})", i + 1, test_def.name, test_def.order);
-      }
-    } else {
-      // Sort by order field for deterministic execution
-      all_test_defs.sort_by_key(|test_def| test_def.order);
-      info!("Running tests in defined order (1-{}).", all_test_defs.len());
+  match args.command {
+    Command::Stats(stats_args) => {
+      show_stats(&stats_args)
     }
+    Command::Live(ref mode_args) | Command::Replay(ref mode_args) => {
+      let is_live = matches!(args.command, Command::Live(_));
+      let mode_str = if is_live { "Live" } else { "Replay" };
 
-    if all_test_defs.is_empty() {
-      warn!("No tests found in registry for 'all' run.");
-    } else {
-      for (i, test_def) in all_test_defs.iter().enumerate() {
-        let session_name = test_def.name; // Use the name from the definition
-        info!("===== Preparing Test {}/{}: {} ({}) =====", i + 1, all_test_defs.len(), session_name, mode_str);
+      let run_start_time = Utc::now();
+      let run_start_instant = Instant::now();
 
-        // Apply client creation throttling
-        throttle_client_creation(&mut last_client_creation, throttle_duration, is_live);
+      let mut test_results = Vec::new();
+      let mut overall_success = true;
 
-        let client_result = if is_live {
-          create_live_client(&mode_args, session_name)
+      // Determine run ID
+      let run_id = mode_args.run_id.clone().unwrap_or_else(|| {
+        if mode_args.test_name_or_all.eq_ignore_ascii_case("all") {
+          generate_default_run_id()
         } else {
-          create_replay_client(&mode_args, session_name)
-        };
+          mode_args.test_name_or_all.clone()
+        }
+      });
 
-        match client_result {
-          Ok(client) => {
-            // Update throttling timestamp after successful client creation
-            if is_live {
-              last_client_creation = Some(Instant::now());
-            }
+      info!("Starting {} execution with run ID: '{}'", mode_str, run_id);
 
-            let result = execute_test(test_def, &client, is_live);
-            if !result.success {
-              overall_success = false;
-            }
+      if mode_args.test_name_or_all.eq_ignore_ascii_case("all") {
+        // Run all tests
+        match run_all_tests(&mode_args, is_live, &run_id) {
+          Ok(results) => {
+            overall_success = results.iter().all(|r| r.success);
+            test_results = results;
+          }
+          Err(e) => {
+            error!("Failed to run all tests: {:#}", e);
+            overall_success = false;
+          }
+        }
+      } else {
+        // Run single test
+        match run_single_test(&mode_args, is_live, &mode_args.test_name_or_all) {
+          Ok(result) => {
+            overall_success = result.success;
             test_results.push(result);
           }
           Err(e) => {
-            error!("Failed to create client for test '{}' ({}): {:#}", session_name, mode_str, e);
+            error!("Failed to run single test: {:#}", e);
             overall_success = false;
-
-            // Add a failed result for the client creation failure
-            test_results.push(TestResult {
-              name: session_name.to_string(),
-              success: false,
-              error_message: Some(format!("Client creation failed: {:#}", e)),
-              duration: Duration::from_secs(0),
-              timestamp: Utc::now(),
-            });
           }
         }
-        println!("----------------------------------------"); // Separator between tests
       }
-    }
-  } else {
-    // --- Run Single Test ---
-    let requested_name = &mode_args.test_name_or_all;
-    // Look up the test definition by name using the map
-    if let Some(test_def) = TEST_REGISTRY.get(requested_name.as_str()) {
-      let session_name = test_def.name; // Use the canonical name from definition
-      info!("===== Preparing Test: {} ({}) =====", session_name, mode_str);
 
-      // For single tests, no throttling is needed since there's only one client
-      let client_result = if is_live {
-        create_live_client(&mode_args, session_name)
+      let run_end_time = Utc::now();
+      let total_duration = run_start_instant.elapsed();
+
+      info!("All specified operations finished.");
+
+      // Generate markdown report if requested
+      if mode_args.generate_report {
+        let single_client_mode = should_use_single_client(
+          is_live,
+          mode_args.single_client,
+          if mode_args.test_name_or_all.eq_ignore_ascii_case("all") {
+            inventory::iter::<TestDefinition>().count()
+          } else { 1 }
+        );
+
+        let report = TestRunReport {
+          mode: mode_str.to_string(),
+          run_id: run_id.clone(),
+          start_time: run_start_time,
+          end_time: run_end_time,
+          total_duration,
+          results: test_results,
+          overall_success,
+          host: mode_args.host.clone(),
+          port: mode_args.port,
+          client_id: mode_args.client_id,
+          randomized_order: mode_args.randomize_order && mode_args.test_name_or_all.eq_ignore_ascii_case("all"),
+          single_client_mode,
+        };
+
+        let report_path = mode_args.report_path.clone().unwrap_or_else(|| {
+          PathBuf::from("yatws/doc/test_results.md")
+        });
+
+        if let Err(e) = report.write_to_file(&report_path) {
+          error!("Failed to write markdown report: {:#}", e);
+          // Don't fail the entire run just because report writing failed
+        }
+      }
+
+      if overall_success {
+        info!("Overall Result: PASSED");
+        Ok(())
       } else {
-        create_replay_client(&mode_args, session_name)
-      };
-
-      match client_result {
-        Ok(client) => {
-          let result = execute_test(test_def, &client, is_live);
-          if !result.success {
-            overall_success = false;
-          }
-          test_results.push(result);
-        }
-        Err(e) => {
-          error!("Failed to create client ({}): {:#}", mode_str, e);
-          overall_success = false;
-
-          // Add a failed result for the client creation failure
-          test_results.push(TestResult {
-            name: session_name.to_string(),
-            success: false,
-            error_message: Some(format!("Client creation failed: {:#}", e)),
-            duration: Duration::from_secs(0),
-            timestamp: Utc::now(),
-          });
-        }
+        Err(anyhow!("One or more tests FAILED."))
       }
-    } else {
-      return Err(anyhow!(
-        "Unknown test name specified: '{}'. Available tests: {:?}",
-        requested_name, TEST_REGISTRY.keys().collect::<Vec<_>>()
-      ));
     }
-  }
-
-  let run_end_time = Utc::now();
-  let total_duration = run_start_instant.elapsed();
-
-  info!("All specified operations finished.");
-
-  // Generate markdown report if requested
-  if mode_args.generate_report {
-    let report = TestRunReport {
-      mode: mode_str.to_string(),
-      start_time: run_start_time,
-      end_time: run_end_time,
-      total_duration,
-      results: test_results,
-      overall_success,
-      host: mode_args.host.clone(),
-      port: mode_args.port,
-      client_id: mode_args.client_id,
-      randomized_order: mode_args.randomize_order && mode_args.test_name_or_all.eq_ignore_ascii_case("all"),
-    };
-
-    let report_path = mode_args.report_path.unwrap_or_else(|| {
-      PathBuf::from("yatws/doc/test_results.md")
-    });
-
-    if let Err(e) = report.write_to_file(&report_path) {
-      error!("Failed to write markdown report: {:#}", e);
-      // Don't fail the entire run just because report writing failed
-    }
-  }
-
-  if overall_success {
-    info!("Overall Result: PASSED");
-    Ok(())
-  } else {
-    Err(anyhow!("One or more tests FAILED."))
   }
 }

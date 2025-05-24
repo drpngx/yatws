@@ -37,6 +37,15 @@ impl MessageBroker {
     }
   }
 
+  /// Get reference to the underlying logger (if any)
+  ///
+  /// This method provides access to the ConnectionLogger for session management.
+  /// Used internally by IBKRClient to expose logger functionality to TestSessionManager.
+  #[doc(hidden)]
+  pub fn get_logger(&self) -> Option<&crate::conn_log::ConnectionLogger> {
+    self.logger.as_ref()
+  }
+
   pub fn set_message_handler(&self, handler: MessageHandler) {
     let mut conn_guard = self.connection.lock();
     conn_guard.set_message_handler(handler);
