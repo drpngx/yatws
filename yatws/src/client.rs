@@ -458,15 +458,32 @@ impl IBKRClient {
     let mgr = &self.rate_limiter_mgr;
     Ok(mgr.cleanup_stale_requests(older_than))
   }
+
+  /// Explicitly disconnect from TWS
+  ///
+  /// This is called automatically when the client is dropped, but you can
+  /// call it manually for cleaner shutdown.
+  pub fn disconnect(&self) -> Result<(), IBKRError> {
+    info!("IBKRClient disconnect requested (client_id: {})", self.client_id);
+
+    // Send any final cleanup messages if needed
+    // For example, cancel all active subscriptions
+
+    // Cancel all market data subscriptions
+    // Note: In a real implementation, you'd want to track active subscriptions
+    // and cancel them here
+
+    // Then disconnect the underlying connection
+    self.message_broker.disconnect()
+  }
 }
 
 impl Drop for IBKRClient {
   fn drop(&mut self) {
     info!("Dropping IBKRClient (client_id: {}), ensuring connection is closed...", self.client_id);
 
-    // Explicitly disconnect the connection to ensure cleanup happens immediately
-    // rather than waiting for all Arc references to be dropped
-    match self.message_broker.disconnect() {
+    // Call our explicit disconnect method
+    match self.disconnect() {
       Ok(()) => {
         info!("IBKRClient connection closed successfully during drop");
       },

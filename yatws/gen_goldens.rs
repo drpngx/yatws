@@ -238,7 +238,7 @@ struct ModeArgs {
   randomize_order: bool,
 
   /// Minimum interval between client creations in seconds (default: 60)
-  #[arg(long, default_value_t = 60)]
+  #[arg(long, default_value_t = 10)]
   client_throttle_seconds: u64,
 }
 

@@ -108,6 +108,23 @@ impl MessageBroker {
   /// This method can be called even when there are multiple Arc references to the MessageBroker.
   pub fn disconnect(&self) -> Result<(), IBKRError> {
     log::info!("MessageBroker disconnect requested");
+
+    // First, try to send a disconnect message if we have an encoder available
+    // This is optional but good practice
+    if let Ok(server_version) = self.get_server_version() {
+      let encoder = crate::protocol_encoder::Encoder::new(server_version);
+      if let Ok(disconnect_msg) = encoder.encode_disconnect() {
+        // Send disconnect message, but don't fail if it doesn't work
+        // since we're disconnecting anyway
+        if let Err(e) = self.send_message(&disconnect_msg) {
+          log::warn!("Failed to send disconnect message: {:?}", e);
+        }
+
+        // Give a small delay to ensure the message is sent
+        std::thread::sleep(std::time::Duration::from_millis(100));
+      }
+    }
+
     let mut conn_guard = self.connection.lock();
     conn_guard.disconnect()
   }
@@ -446,7 +463,7 @@ mod socket {
 
     fn disconnect(&mut self) -> Result<(), IBKRError> {
       info!("Disconnecting from TWS...");
-      // Log disconnect attempt? Maybe less useful than logging messages.
+
       let mut reader_handle_guard = self.reader_thread.lock();
       let mut state = self.inner_state.lock();
 
@@ -459,15 +476,33 @@ mod socket {
         return Ok(());
       }
 
-      // 1. Signal reader
+      // 1. Signal reader to stop
       *self.stop_flag.lock() = true;
 
-      // 2. Shutdown socket
+      // 2. Properly close the socket connection
       if let Some(stream) = &mut state.stream {
-        if let Err(e) = stream.shutdown(Shutdown::Both) {
-          if e.kind() != ErrorKind::NotConnected && e.kind() != ErrorKind::BrokenPipe {
-            warn!("Error shutting down socket during disconnect: {}", e);
-          }
+        // Flush any remaining data before shutdown
+        if let Err(e) = stream.flush() {
+          warn!("Error flushing stream during disconnect: {}", e);
+        }
+
+        // First shutdown write side to signal we're done sending
+        if let Err(e) = stream.shutdown(std::net::Shutdown::Write) {
+          if e.kind() != std::io::ErrorKind::NotConnected &&
+            e.kind() != std::io::ErrorKind::BrokenPipe {
+              warn!("Error shutting down write side during disconnect: {}", e);
+            }
+        }
+
+        // Give a moment for the server to process
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        // Then shutdown both sides
+        if let Err(e) = stream.shutdown(std::net::Shutdown::Both) {
+          if e.kind() != std::io::ErrorKind::NotConnected &&
+            e.kind() != std::io::ErrorKind::BrokenPipe {
+              warn!("Error shutting down socket during disconnect: {}", e);
+            }
         }
       }
 
@@ -482,14 +517,38 @@ mod socket {
       drop(state);
       drop(reader_handle_guard);
 
-      // 5. Join reader
+      // 5. Join reader thread with timeout
       if let Some(handle) = reader_handle {
         debug!("Waiting for reader thread to join...");
-        if let Err(e) = handle.join() {
-          error!("Error joining reader thread: {:?}", e);
-        } else {
-          debug!("Reader thread joined successfully.");
+
+        // Use a timeout for joining to avoid hanging
+        let join_timeout = std::time::Duration::from_secs(2);
+        let start = std::time::Instant::now();
+
+        // We can't directly timeout a join, so we'll set the stop flag
+        // and the reader should exit quickly
+        let mut join_result = None;
+        while start.elapsed() < join_timeout {
+          if handle.is_finished() {
+            join_result = Some(handle.join());
+            break;
+          }
+          std::thread::sleep(std::time::Duration::from_millis(10));
         }
+
+        match join_result {
+          Some(Ok(())) => {
+            debug!("Reader thread joined successfully.");
+          }
+          Some(Err(e)) => {
+            error!("Error joining reader thread: {:?}", e);
+          }
+          None => {
+            warn!("Reader thread didn't join within timeout, continuing anyway");
+            // Thread will be cleaned up by OS when process exits
+          }
+        }
+
         *self.reader_thread.lock() = None;
       } else {
         debug!("No active reader thread to join.");
