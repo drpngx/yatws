@@ -535,9 +535,6 @@ pub use financial_report_parser::parse_fundamental_xml;
 pub use client::IBKRClient;
 pub use client::client_manager;
 
-#[doc(hidden)]
-pub use crate::conn_log::{SessionStatus, SessionInfo};
-
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const API_VERSION: &str = "10.30"; // IBKR API version supported

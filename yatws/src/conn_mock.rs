@@ -16,6 +16,7 @@ use std::str::FromStr;
 const CENTER_DOT: char = '·';
 
 // --- Helper Functions ---
+// (center_dot_string_to_bytes and FromStr for LogDirection remain the same)
 fn center_dot_string_to_bytes(s: &str) -> Vec<u8> {
   let mut bytes = Vec::with_capacity(s.len());
   let center_dot_bytes = CENTER_DOT.to_string();
@@ -42,6 +43,7 @@ impl FromStr for LogDirection {
   }
 }
 
+
 // --- Data Structures ---
 #[derive(Debug, Clone)]
 struct LoggedMessage {
@@ -51,7 +53,6 @@ struct LoggedMessage {
   message_type_id: Option<i32>,
   message_type_name: Option<String>,
   payload_bytes: Vec<u8>,
-  relative_timestamp_ms: f64,
 }
 
 // --- Mock Connection Implementation ---
@@ -72,6 +73,8 @@ pub struct MockConnection {
 // --- Internal Auto-Pumping Logic ---
 impl MockConnection {
   /// Internal helper to process the next RECV message if available.
+  /// Needs mutable access to the state.
+  /// Returns Ok(true) if a message was processed, Ok(false) if stopped (SEND/End/No Handler), Err on handler failure.
   fn _pump_single_recv_message(state: &mut MockConnectionState) -> Result<bool, IBKRError> {
     if state.handler.is_none() {
       log::trace!("Mock (AutoPump): Cannot pump, no handler set.");
@@ -83,11 +86,13 @@ impl MockConnection {
       return Ok(false);
     }
 
+    // Peek at the next message
     let next_message_index = state.message_iter_index;
     let next_message = &state.logged_messages[next_message_index];
 
     match next_message.direction {
       LogDirection::Recv => {
+        // Read immutable data before mutable borrow
         let is_connected = state.connected;
         let payload_to_process = next_message.payload_bytes.clone();
         let message_type_name_for_log = next_message.message_type_name.clone();
@@ -96,78 +101,76 @@ impl MockConnection {
                     next_message_index + 1,
                     message_type_name_for_log.as_deref().unwrap_or("UNKNOWN"));
 
+        // Get mutable handler ref (we know it's Some)
         let handler = state.handler.as_mut().unwrap();
 
         if !is_connected {
           log::warn!("Mock (AutoPump): Processing RECV message but state not 'connected'.");
         }
 
+        // Process (mutable borrow used here)
         let process_result = process_message(handler, &payload_to_process);
+
+        // Advance index ONLY after processing attempt
         state.message_iter_index += 1;
 
         match process_result {
           Ok(_) => {
             log::trace!("Mock (AutoPump): Successfully processed RECV message #{}.", next_message_index + 1);
-            Ok(true)
+            Ok(true) // Indicate success and potential for more
           }
           Err(e) => {
             log::error!("Mock (AutoPump): Error processing RECV message #{}: {:?}", next_message_index + 1, e);
+            // Use a specific error type if available, otherwise wrap it
             Err(IBKRError::ParseError(format!("Handler failed processing message: {}", e)))
           }
         }
       }
       LogDirection::Send => {
         log::trace!("Mock (AutoPump): Found SEND message #{}. Stopping pump.", next_message_index + 1);
-        Ok(false)
+        Ok(false) // Stop pumping, wait for client send
       }
     }
   }
 
   /// Internal helper to keep pumping RECV messages until a SEND or the end is hit.
+  /// Returns Ok(()) if pumping finished normally, Err if a handler failed.
   fn _pump_recv_messages_until_send_or_end(state: &mut MockConnectionState) -> Result<(), IBKRError> {
     log::debug!("Mock (AutoPump): Starting batch pump from index {}...", state.message_iter_index + 1);
     loop {
       match Self::_pump_single_recv_message(state) {
-        Ok(true) => continue,
+        Ok(true) => continue, // Message processed, loop again
         Ok(false) => {
           log::debug!("Mock (AutoPump): Batch pump finished (hit SEND or end). Current index: {}", state.message_iter_index + 1);
-          return Ok(());
+          return Ok(()); // Stopped normally
         },
         Err(e) => {
           log::error!("Mock (AutoPump): Batch pump failed due to handler error.");
-          return Err(e);
+          return Err(e); // Propagate handler error
         },
       }
     }
   }
 }
 
+
 // --- Public API and Connection Trait Impl ---
 impl MockConnection {
-  /// Create MockConnection from a single session (original behavior)
   pub fn new<P: AsRef<Path>>(
     db_path: P,
     session_name: &str,
   ) -> Result<Self, IBKRError> {
-    log::info!("Creating MockConnection for session '{}' from DB: {:?}",
+    log::info!("Creating MockConnection for session '{}' from DB: {:?} (Strict SEND Check, AutoPump)",
                session_name, db_path.as_ref());
 
     let db = DbConnection::open(db_path)
       .map_err(|e| IBKRError::ConfigurationError(format!("Mock: Failed to open logger DB: {}", e)))?;
 
-    // Query using new schema - try both old and new table names for compatibility
     let (session_id, server_version_opt): (i64, Option<i32>) = db.query_row(
-      "SELECT id, server_version FROM sessions WHERE session_name = ?1 ORDER BY created_at DESC LIMIT 1",
+      "SELECT session_id, server_version FROM sessions WHERE session_name = ?1",
       params![session_name],
       |row| Ok((row.get(0)?, row.get(1)?))
-    ).or_else(|_| {
-      // Fallback to old schema if new doesn't work
-      db.query_row(
-        "SELECT session_id, server_version FROM sessions WHERE session_name = ?1",
-        params![session_name],
-        |row| Ok((row.get(0)?, row.get(1)?))
-      )
-    }).map_err(|e| match e {
+    ).map_err(|e| match e {
       rusqlite::Error::QueryReturnedNoRows => IBKRError::ConfigurationError(format!("Mock: Log session '{}' not found in database.", session_name)),
       _ => IBKRError::LoggingError(format!("Mock: Failed to query session '{}': {}", session_name, e)),
     })?;
@@ -178,23 +181,13 @@ impl MockConnection {
 
     log::debug!("Mock: Found session_id={}, server_version={}", session_id, server_version);
 
-    // Load messages in a properly scoped block to ensure borrowing is released
-    let logged_messages = {
+    let logged_messages: Vec<LoggedMessage> = {
       let mut stmt = db.prepare(
-        "SELECT session_id, direction, message_type_id, message_type_name, payload_text, relative_timestamp_ms
-         FROM session_messages
-         WHERE session_id = ?1
-         ORDER BY id ASC"
-      ).or_else(|_| {
-        // Fallback to old schema
-        db.prepare(
-          "SELECT session_id, direction, message_type_id, message_type_name, payload_text,
-                  COALESCE(relative_timestamp_ms, 0.0) as relative_timestamp_ms
-           FROM messages
-           WHERE session_id = ?1
-           ORDER BY message_id ASC"
-        )
-      }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to prepare message query: {}", e)))?;
+        "SELECT session_id, direction, message_type_id, message_type_name, payload_text
+                 FROM messages
+                 WHERE session_id = ?1
+                 ORDER BY message_id ASC"
+      ).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to prepare message query: {}", e)))?;
 
       let messages_iter = stmt.query_map(params![session_id], |row| {
         let direction_str: String = row.get(1)?;
@@ -202,7 +195,6 @@ impl MockConnection {
           .map_err(|_| rusqlite::Error::InvalidColumnType(1, "LogDirection".into(), rusqlite::types::Type::Text))?;
         let payload_text: String = row.get(4)?;
         let payload_bytes = center_dot_string_to_bytes(&payload_text);
-        let relative_timestamp_ms: f64 = row.get(5).unwrap_or(0.0);
 
         Ok(LoggedMessage {
           session_id: row.get(0)?,
@@ -210,315 +202,19 @@ impl MockConnection {
           message_type_id: row.get(2)?,
           message_type_name: row.get(3)?,
           payload_bytes,
-          relative_timestamp_ms,
         })
-      }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to query messages for session {}: {}", session_id, e)))?;
+      }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to query messages: {}", e)))?;
 
       messages_iter.collect::<Result<Vec<_>, _>>()
-        .map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to map messages for session {}: {}", session_id, e)))?
-    }; // stmt is dropped here, releasing borrow of db
+        .map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to map messages: {}", e)))?
+    };
 
     log::info!("Mock: Loaded {} messages for session '{}'", logged_messages.len(), session_name);
 
     let inner_state = MockConnectionState {
-      db_conn: Some(db), // Now we can safely move db
+      db_conn: Some(db),
       server_version,
       logged_messages,
-      message_iter_index: 0,
-      handler: None,
-      connected: false,
-    };
-
-    Ok(Self {
-      inner: Arc::new(Mutex::new(inner_state)),
-    })
-  }
-
-  /// Create MockConnection from parent session + specific child session
-  pub fn from_parent_and_child<P: AsRef<Path>>(
-    db_path: P,
-    run_id: &str,
-    test_name: &str,
-  ) -> Result<Self, IBKRError> {
-    log::info!("Creating MockConnection for run '{}' + test '{}' from DB: {:?}",
-               run_id, test_name, db_path.as_ref());
-
-    let db = DbConnection::open(db_path)
-      .map_err(|e| IBKRError::ConfigurationError(format!("Mock: Failed to open logger DB: {}", e)))?;
-
-    // Find parent session
-    let (parent_id, server_version_opt): (i64, Option<i32>) = db.query_row(
-      "SELECT id, server_version FROM sessions
-       WHERE session_name = ?1 AND parent_id IS NULL
-       ORDER BY created_at DESC LIMIT 1",
-      params![run_id],
-      |row| Ok((row.get(0)?, row.get(1)?))
-    ).map_err(|e| match e {
-      rusqlite::Error::QueryReturnedNoRows => IBKRError::ConfigurationError(format!("Mock: Parent session '{}' not found.", run_id)),
-      _ => IBKRError::LoggingError(format!("Mock: Failed to query parent session '{}': {}", run_id, e)),
-    })?;
-
-    // Find child session
-    let child_id: i64 = db.query_row(
-      "SELECT id FROM sessions
-       WHERE session_name = ?1 AND parent_id = ?2",
-      params![test_name, parent_id],
-      |row| row.get(0)
-    ).map_err(|e| match e {
-      rusqlite::Error::QueryReturnedNoRows => IBKRError::ConfigurationError(format!("Mock: Child session '{}' not found under parent '{}'.", test_name, run_id)),
-      _ => IBKRError::LoggingError(format!("Mock: Failed to query child session '{}': {}", test_name, e)),
-    })?;
-
-    let server_version = server_version_opt.ok_or_else(||
-                                                       IBKRError::ConfigurationError(format!("Mock: Parent session '{}' found, but server_version is missing.", run_id))
-    )?;
-
-    log::debug!("Mock: Found parent_id={}, child_id={}, server_version={}", parent_id, child_id, server_version);
-
-    // Load and combine messages with proper scoping to avoid borrowing issues
-    let all_messages = {
-      let mut messages = Vec::new();
-
-      // Load parent messages first - ensure stmt is dropped before moving db
-      {
-        let mut stmt = db.prepare(
-          "SELECT session_id, direction, message_type_id, message_type_name, payload_text, relative_timestamp_ms
-           FROM session_messages
-           WHERE session_id = ?1
-           ORDER BY id ASC"
-        ).or_else(|_| {
-          db.prepare(
-            "SELECT session_id, direction, message_type_id, message_type_name, payload_text,
-                    COALESCE(relative_timestamp_ms, 0.0) as relative_timestamp_ms
-             FROM messages
-             WHERE session_id = ?1
-             ORDER BY message_id ASC"
-          )
-        }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to prepare parent message query: {}", e)))?;
-
-        let parent_messages: Result<Vec<_>, _> = stmt.query_map(params![parent_id], |row| {
-          let direction_str: String = row.get(1)?;
-          let direction = LogDirection::from_str(&direction_str)
-            .map_err(|_| rusqlite::Error::InvalidColumnType(1, "LogDirection".into(), rusqlite::types::Type::Text))?;
-          let payload_text: String = row.get(4)?;
-          let payload_bytes = center_dot_string_to_bytes(&payload_text);
-          let relative_timestamp_ms: f64 = row.get(5).unwrap_or(0.0);
-
-          Ok(LoggedMessage {
-            session_id: row.get(0)?,
-            direction,
-            message_type_id: row.get(2)?,
-            message_type_name: row.get(3)?,
-            payload_bytes,
-            relative_timestamp_ms,
-          })
-        }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to query parent messages: {}", e)))?
-          .collect();
-
-        messages.extend(parent_messages.map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to collect parent messages: {}", e)))?);
-      } // parent stmt is dropped here
-
-      // Load child messages - ensure stmt is dropped before moving db
-      {
-        let mut stmt = db.prepare(
-          "SELECT session_id, direction, message_type_id, message_type_name, payload_text, relative_timestamp_ms
-           FROM session_messages
-           WHERE session_id = ?1
-           ORDER BY id ASC"
-        ).or_else(|_| {
-          db.prepare(
-            "SELECT session_id, direction, message_type_id, message_type_name, payload_text,
-                    COALESCE(relative_timestamp_ms, 0.0) as relative_timestamp_ms
-             FROM messages
-             WHERE session_id = ?1
-             ORDER BY message_id ASC"
-          )
-        }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to prepare child message query: {}", e)))?;
-
-        let child_messages: Result<Vec<_>, _> = stmt.query_map(params![child_id], |row| {
-          let direction_str: String = row.get(1)?;
-          let direction = LogDirection::from_str(&direction_str)
-            .map_err(|_| rusqlite::Error::InvalidColumnType(1, "LogDirection".into(), rusqlite::types::Type::Text))?;
-          let payload_text: String = row.get(4)?;
-          let payload_bytes = center_dot_string_to_bytes(&payload_text);
-          let relative_timestamp_ms: f64 = row.get(5).unwrap_or(0.0);
-
-          Ok(LoggedMessage {
-            session_id: row.get(0)?,
-            direction,
-            message_type_id: row.get(2)?,
-            message_type_name: row.get(3)?,
-            payload_bytes,
-            relative_timestamp_ms,
-          })
-        }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to query child messages: {}", e)))?
-          .collect();
-
-        messages.extend(child_messages.map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to collect child messages: {}", e)))?);
-      } // child stmt is dropped here
-
-      // Sort by relative timestamp to maintain proper order
-      messages.sort_by(|a, b| a.relative_timestamp_ms.partial_cmp(&b.relative_timestamp_ms).unwrap_or(std::cmp::Ordering::Equal));
-      messages
-    }; // All stmt borrows are released here
-
-    log::info!("Mock: Loaded {} total messages for run '{}' + test '{}'",
-               all_messages.len(), run_id, test_name);
-
-    let inner_state = MockConnectionState {
-      db_conn: Some(db), // Now we can safely move db
-      server_version,
-      logged_messages: all_messages,
-      message_iter_index: 0,
-      handler: None,
-      connected: false,
-    };
-
-    Ok(Self {
-      inner: Arc::new(Mutex::new(inner_state)),
-    })
-  }
-
-  /// Create MockConnection from parent session + all completed child sessions
-  pub fn from_run_with_all_tests<P: AsRef<Path>>(
-    db_path: P,
-    run_id: &str,
-  ) -> Result<Self, IBKRError> {
-    log::info!("Creating MockConnection for full run '{}' from DB: {:?}",
-               run_id, db_path.as_ref());
-
-    let db = DbConnection::open(db_path)
-      .map_err(|e| IBKRError::ConfigurationError(format!("Mock: Failed to open logger DB: {}", e)))?;
-
-    // Find parent session
-    let (parent_id, server_version_opt): (i64, Option<i32>) = db.query_row(
-      "SELECT id, server_version FROM sessions
-       WHERE session_name = ?1 AND parent_id IS NULL
-       ORDER BY created_at DESC LIMIT 1",
-      params![run_id],
-      |row| Ok((row.get(0)?, row.get(1)?))
-    ).map_err(|e| match e {
-      rusqlite::Error::QueryReturnedNoRows => IBKRError::ConfigurationError(format!("Mock: Parent session '{}' not found.", run_id)),
-      _ => IBKRError::LoggingError(format!("Mock: Failed to query parent session '{}': {}", run_id, e)),
-    })?;
-
-    let server_version = server_version_opt.ok_or_else(||
-                                                       IBKRError::ConfigurationError(format!("Mock: Parent session '{}' found, but server_version is missing.", run_id))
-    )?;
-
-    // Find all completed child sessions - ensure stmt is dropped before moving db
-    let child_ids = {
-      let mut stmt = db.prepare(
-        "SELECT id FROM sessions
-         WHERE parent_id = ?1 AND status = 'completed'
-         ORDER BY created_at ASC"
-      ).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to prepare child session query: {}", e)))?;
-
-      let child_ids_result: Result<Vec<i64>, _> = stmt.query_map(params![parent_id], |row| {
-        Ok(row.get::<_, i64>(0)?)
-      }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to query child sessions: {}", e)))?
-        .collect();
-
-      child_ids_result.map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to collect child session IDs: {}", e)))?
-    }; // stmt is dropped here
-
-    log::debug!("Mock: Found parent_id={}, {} completed child sessions, server_version={}",
-                parent_id, child_ids.len(), server_version);
-
-    // Load and combine messages with proper scoping to avoid borrowing issues
-    let all_messages = {
-      let mut messages = Vec::new();
-
-      // Load parent messages first - ensure stmt is dropped before moving db
-      {
-        let mut stmt = db.prepare(
-          "SELECT session_id, direction, message_type_id, message_type_name, payload_text, relative_timestamp_ms
-           FROM session_messages
-           WHERE session_id = ?1
-           ORDER BY id ASC"
-        ).or_else(|_| {
-          db.prepare(
-            "SELECT session_id, direction, message_type_id, message_type_name, payload_text,
-                    COALESCE(relative_timestamp_ms, 0.0) as relative_timestamp_ms
-             FROM messages
-             WHERE session_id = ?1
-             ORDER BY message_id ASC"
-          )
-        }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to prepare parent message query: {}", e)))?;
-
-        let parent_messages: Result<Vec<_>, _> = stmt.query_map(params![parent_id], |row| {
-          let direction_str: String = row.get(1)?;
-          let direction = LogDirection::from_str(&direction_str)
-            .map_err(|_| rusqlite::Error::InvalidColumnType(1, "LogDirection".into(), rusqlite::types::Type::Text))?;
-          let payload_text: String = row.get(4)?;
-          let payload_bytes = center_dot_string_to_bytes(&payload_text);
-          let relative_timestamp_ms: f64 = row.get(5).unwrap_or(0.0);
-
-          Ok(LoggedMessage {
-            session_id: row.get(0)?,
-            direction,
-            message_type_id: row.get(2)?,
-            message_type_name: row.get(3)?,
-            payload_bytes,
-            relative_timestamp_ms,
-          })
-        }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to query parent messages: {}", e)))?
-          .collect();
-
-        messages.extend(parent_messages.map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to collect parent messages: {}", e)))?);
-      } // parent stmt is dropped here
-
-      // Load each child's messages - ensure each stmt is dropped before moving db
-      for child_id in child_ids {
-        let mut stmt = db.prepare(
-          "SELECT session_id, direction, message_type_id, message_type_name, payload_text, relative_timestamp_ms
-           FROM session_messages
-           WHERE session_id = ?1
-           ORDER BY id ASC"
-        ).or_else(|_| {
-          db.prepare(
-            "SELECT session_id, direction, message_type_id, message_type_name, payload_text,
-                    COALESCE(relative_timestamp_ms, 0.0) as relative_timestamp_ms
-             FROM messages
-             WHERE session_id = ?1
-             ORDER BY message_id ASC"
-          )
-        }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to prepare child message query: {}", e)))?;
-
-        let child_messages: Result<Vec<_>, _> = stmt.query_map(params![child_id], |row| {
-          let direction_str: String = row.get(1)?;
-          let direction = LogDirection::from_str(&direction_str)
-            .map_err(|_| rusqlite::Error::InvalidColumnType(1, "LogDirection".into(), rusqlite::types::Type::Text))?;
-          let payload_text: String = row.get(4)?;
-          let payload_bytes = center_dot_string_to_bytes(&payload_text);
-          let relative_timestamp_ms: f64 = row.get(5).unwrap_or(0.0);
-
-          Ok(LoggedMessage {
-            session_id: row.get(0)?,
-            direction,
-            message_type_id: row.get(2)?,
-            message_type_name: row.get(3)?,
-            payload_bytes,
-            relative_timestamp_ms,
-          })
-        }).map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to query child {} messages: {}", child_id, e)))?
-          .collect();
-
-        messages.extend(child_messages.map_err(|e| IBKRError::LoggingError(format!("Mock: Failed to collect child {} messages: {}", child_id, e)))?);
-        // stmt is dropped at end of loop iteration
-      }
-
-      // Sort by relative timestamp to maintain proper order
-      messages.sort_by(|a, b| a.relative_timestamp_ms.partial_cmp(&b.relative_timestamp_ms).unwrap_or(std::cmp::Ordering::Equal));
-      messages
-    }; // All stmt borrows are released here
-
-    log::info!("Mock: Loaded {} total messages for full run '{}'", all_messages.len(), run_id);
-
-    let inner_state = MockConnectionState {
-      db_conn: Some(db), // Now we can safely move db
-      server_version,
-      logged_messages: all_messages,
       message_iter_index: 0,
       handler: None,
       connected: false,
@@ -546,6 +242,7 @@ impl Connection for MockConnection {
   }
 
   fn send_message_body(&mut self, data: &[u8]) -> Result<(), IBKRError> {
+    // Acquire lock once for the whole operation
     let mut guard = self.inner.lock();
 
     if !guard.connected {
@@ -570,13 +267,16 @@ impl Connection for MockConnection {
         if data == expected_message.payload_bytes.as_slice() {
           log::debug!("Mock: Sent message matches expected SEND message #{}. Advancing iterator.",
                       expected_message_index + 1);
+          // Advance index past the verified SEND
           guard.message_iter_index += 1;
 
+          // --- TRIGGER AUTO-PUMP ---
           if guard.handler.is_some() {
             Self::_pump_recv_messages_until_send_or_end(&mut guard)?;
           } else {
             log::warn!("Mock: send matched SEND #{}, but no handler set to pump subsequent RECVs.", expected_message_index + 1);
           }
+          // --- END AUTO-PUMP ---
           Ok(())
         } else {
           log::error!("Mock: Mismatch! Sent message body does not match expected logged SEND message #{}.",
@@ -598,10 +298,12 @@ impl Connection for MockConnection {
         )))
       }
     }
-  }
+  } // Lock `guard` is dropped here
+
 
   /// Sets handler, marks connected, simulates implicit StartAPI verification, and triggers initial auto-pump.
   fn set_message_handler(&mut self, handler: MessageHandler) {
+    // Acquire lock once
     let mut guard = self.inner.lock();
 
     log::info!("Mock: Setting message handler.");
@@ -612,9 +314,10 @@ impl Connection for MockConnection {
     guard.connected = true;
     log::info!("Mock: Connection marked as 'connected'.");
 
-    // Simulate implicit StartAPI verification
+    // --- ADDED: Simulate implicit StartAPI verification ---
     if guard.message_iter_index == 0 && !guard.logged_messages.is_empty() {
       let first_message = &guard.logged_messages[0];
+      // Check direction and type ID (71 for StartAPI)
       if first_message.direction == LogDirection::Send && first_message.message_type_id == Some(71) {
         log::debug!("Mock: Implicitly verifying logged SEND StartAPI (message #1) during set_message_handler.");
         guard.message_iter_index += 1;
@@ -624,8 +327,10 @@ impl Connection for MockConnection {
                    first_message.direction, first_message.message_type_id);
       }
     }
+    // --- END ADDED ---
 
-    // Trigger initial auto-pump
+
+    // --- TRIGGER INITIAL AUTO-PUMP ---
     match Self::_pump_recv_messages_until_send_or_end(&mut guard) {
       Ok(_) => {
         log::info!("Mock: Initial auto-pump completed after setting handler (current index: {}).", guard.message_iter_index);
@@ -634,7 +339,9 @@ impl Connection for MockConnection {
         log::error!("Mock: Error during initial auto-pump after setting handler: {:?}. Connection may be in unexpected state.", e);
       }
     }
-  }
+    // --- END AUTO-PUMP ---
+
+  } // Lock `guard` is dropped here
 
   fn get_server_version(&self) -> i32 {
     self.inner.lock().server_version

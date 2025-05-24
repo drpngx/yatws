@@ -123,7 +123,6 @@ rust_binary(
             "test_news.rs",
             "test_data_sub.rs",
             "test_data_obs.rs",
-            "test_session_manager.rs",
             ],
     edition = "2021",
     deps = [
@@ -137,7 +136,6 @@ rust_binary(
         "@crates//:log",
         "@crates//:once_cell",
         "@crates//:rand",
-        "@crates//:rusqlite",
     ],
     visibility = ["//visibility:public"],
 )
