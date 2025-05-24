@@ -1090,6 +1090,145 @@ impl OrderManager {
     debug!("Notified for {}", order_id);
   }
 
+  /// Cleans up all pending order requests and internal state during client shutdown.
+  ///
+  /// This method attempts to cancel all open orders and clean up any pending waiters
+  /// or internal state. It's designed to be called during client disconnect/shutdown
+  /// to ensure a clean termination.
+  ///
+  /// The cleanup process includes:
+  /// 1. Attempting to cancel all open orders (globally first, then individually as fallback)
+  /// 2. Signaling any threads waiting for order book refresh to complete
+  /// 3. Notifying all order-specific waiters to wake up and handle shutdown
+  /// 4. Preserving order tracking data for any final status updates from TWS
+  ///
+  /// # Returns
+  /// * `Ok(())` - Cleanup completed (may include some non-critical errors logged as warnings)
+  /// * `Err(IBKRError)` - Critical error during cleanup that should be reported
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// // During client shutdown
+  /// client.orders().cleanup_requests()?;
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub(crate) fn cleanup_requests(&self) -> Result<(), IBKRError> {
+    info!("OrderManager: Starting cleanup of all pending requests and state...");
+
+    let mut cleanup_errors = Vec::new();
+    let start_time = std::time::Instant::now();
+
+    // 1. Get count of orders before cleanup for logging
+    let open_order_count = self.get_open_orders().len();
+    let total_order_count = self.get_all_orders().len();
+    info!("OrderManager: Found {} open orders out of {} total orders to clean up",
+          open_order_count, total_order_count);
+
+    // 2. Try global cancel first (most efficient for multiple orders)
+    if open_order_count > 0 {
+      match self.cancel_all_orders_globally() {
+        Ok(()) => {
+          info!("OrderManager: Sent global cancel request for all {} open orders", open_order_count);
+
+          // Give TWS a moment to process the global cancel
+          std::thread::sleep(std::time::Duration::from_millis(100));
+        },
+        Err(e) => {
+          warn!("OrderManager: Global cancel failed during cleanup: {:?}", e);
+          cleanup_errors.push(format!("Global cancel failed: {:?}", e));
+
+          // Fallback: Cancel orders individually
+          let open_orders = self.get_open_orders();
+          info!("OrderManager: Attempting to cancel {} orders individually as fallback", open_orders.len());
+
+          for order in open_orders {
+            match self.cancel_order(&order.id) {
+              Ok(true) => {
+                debug!("OrderManager: Sent cancel request for order {} during cleanup", order.id);
+              },
+              Ok(false) => {
+                debug!("OrderManager: Order {} already terminal, no cancel needed", order.id);
+              },
+              Err(e) => {
+                warn!("OrderManager: Failed to cancel order {} during cleanup: {:?}", order.id, e);
+                cleanup_errors.push(format!("Cancel order {} failed: {:?}", order.id, e));
+              }
+            }
+          }
+        }
+      }
+    } else {
+      info!("OrderManager: No open orders to cancel");
+    }
+
+    // 3. Signal any threads waiting for order book refresh to complete
+    // This prevents threads from hanging indefinitely during shutdown
+    {
+      let mut flag_guard = self.open_order_end_flag.lock();
+      if !*flag_guard {
+        info!("OrderManager: Signaling order book refresh waiters to complete during cleanup");
+        *flag_guard = true; // Set flag to true to unblock waiters
+        self.open_order_end_condvar.notify_all();
+      }
+    }
+
+    // 4. Wake up all order-specific waiters
+    // This includes threads waiting for order status changes, executions, cancellations, etc.
+    {
+      let condvars = self.order_update_condvars.read();
+      let waiter_count = condvars.len();
+
+      if waiter_count > 0 {
+        info!("OrderManager: Notifying {} order-specific waiters during cleanup", waiter_count);
+
+        for (order_id, condvar_pair) in condvars.iter() {
+          let (_lock, cvar) = &**condvar_pair;
+          cvar.notify_all();
+          debug!("OrderManager: Notified waiters for order {} during cleanup", order_id);
+        }
+      } else {
+        debug!("OrderManager: No order-specific waiters to notify");
+      }
+    }
+
+    // 5. Log any orders that might still be in transition states
+    // We don't modify them, but it's useful for diagnostics
+    let pending_orders: Vec<_> = self.get_all_orders()
+      .into_iter()
+      .filter(|order| matches!(order.state.status,
+                               OrderStatus::PendingSubmit | OrderStatus::PendingCancel | OrderStatus::PreSubmitted))
+      .collect();
+
+    if !pending_orders.is_empty() {
+      info!("OrderManager: {} orders remain in pending states after cleanup: {:?}",
+            pending_orders.len(),
+            pending_orders.iter().map(|o| (&o.id, &o.state.status)).collect::<Vec<_>>());
+    }
+
+    // 6. Note: We intentionally do NOT clear the order book, perm_id_map, or condvars
+    // because:
+    // - We might still receive final status updates from TWS after sending cancels
+    // - The handlers need to be able to process these final messages properly
+    // - Observers might still need access to final order states
+    // - The structures will be cleaned up when the OrderManager is dropped
+
+    let elapsed = start_time.elapsed();
+
+    if cleanup_errors.is_empty() {
+      info!("OrderManager: Cleanup completed successfully in {:?}", elapsed);
+      Ok(())
+    } else {
+      // Log errors but still return Ok since we did our best effort
+      // and the errors are likely non-critical (e.g., orders already cancelled)
+      warn!("OrderManager: Cleanup completed in {:?} with {} non-critical errors: {:?}",
+            elapsed, cleanup_errors.len(), cleanup_errors);
+      Ok(())
+    }
+  }
 }
 
 // --- Implement OrderHandler Trait ---

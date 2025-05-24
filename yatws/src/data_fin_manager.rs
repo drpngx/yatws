@@ -532,8 +532,8 @@ impl DataFundamentalsManager {
 
     // 2. Request WSH Event Data
     let expected_count = match request_details.total_limit {
-        Some(limit) if limit > 0 => limit as usize,
-        _ => return Err(IBKRError::InvalidParameter("WshEventDataRequest.total_limit must be positive for get_wsh_events".to_string())),
+      Some(limit) if limit > 0 => limit as usize,
+      _ => return Err(IBKRError::InvalidParameter("WshEventDataRequest.total_limit must be positive for get_wsh_events".to_string())),
     };
 
     info!("Requesting {} WSH events for con_id: {:?}", expected_count, request_details.con_id);
@@ -561,19 +561,19 @@ impl DataFundamentalsManager {
     let event_timeout = timeout - time_spent;
 
     let json_event_list = self.wait_for_completion(req_id_event, event_timeout, |state| {
-       // Error handled by wait_for_completion's main check
+      // Error handled by wait_for_completion's main check
       if state.request_complete { // True if expected count reached OR error occurred
-          // If an error occurred, wait_for_completion would have returned Err already.
-          // So, if we are here and request_complete is true, it means count was met.
-          Some(Ok(state.wsh_event_data_json_list.clone()))
+        // If an error occurred, wait_for_completion would have returned Err already.
+        // So, if we are here and request_complete is true, it means count was met.
+        Some(Ok(state.wsh_event_data_json_list.clone()))
       } else if state.wsh_event_data_json_list.len() >= state.wsh_event_expected_count.unwrap_or(usize::MAX) {
-          // This case handles if the handler didn't set request_complete but count is met.
-          // The handler *should* set request_complete. This is a fallback.
-          warn!("WSH event count met for req_id {} but request_complete flag not set by handler.", req_id_event);
-          Some(Ok(state.wsh_event_data_json_list.clone()))
+        // This case handles if the handler didn't set request_complete but count is met.
+        // The handler *should* set request_complete. This is a fallback.
+        warn!("WSH event count met for req_id {} but request_complete flag not set by handler.", req_id_event);
+        Some(Ok(state.wsh_event_data_json_list.clone()))
       }
       else {
-          None // Not complete yet
+        None // Not complete yet
       }
     })?;
 
@@ -614,6 +614,120 @@ impl DataFundamentalsManager {
       trace!("Received error for unknown or completed request ID: {}", req_id);
     }
   }
+
+  /// Cleanup all pending requests and subscriptions.
+  ///
+  /// This method is typically called during client shutdown to ensure all
+  /// outstanding requests are properly cancelled and resources are cleaned up.
+  /// It will attempt to send cancellation messages to TWS for all pending requests
+  /// and then clear all internal state.
+  ///
+  /// # Behavior
+  /// 1. Collects all pending request IDs and their types
+  /// 2. Marks all requests as cancelled and notifies waiting threads
+  /// 3. Attempts to send cancel messages to TWS (if connection is available)
+  /// 4. Clears all request states and WSH metadata cache
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if there are issues sending cancellation messages,
+  /// but continues processing even if individual cancellations fail to ensure
+  /// cleanup is as complete as possible.
+  pub(crate) fn cleanup_requests(&self) -> Result<(), IBKRError> {
+    info!("Cleaning up all pending fundamental data and WSH requests");
+
+    let mut cleanup_errors = Vec::new();
+    let server_version_result = self.message_broker.get_server_version();
+
+    // If we can't get server version, we can't send cancel messages but we can still clean up state
+    let encoder = match server_version_result {
+      Ok(version) => Some(Encoder::new(version)),
+      Err(e) => {
+        warn!("Could not get server version during cleanup, skipping cancel messages: {:?}", e);
+        None
+      }
+    };
+
+    // Collect all pending request IDs and their types, then clear the states
+    let request_ids_to_cancel: Vec<(i32, RequestType)>;
+    {
+      let mut states = self.request_states.lock();
+      request_ids_to_cancel = states.iter()
+        .map(|(&req_id, state)| (req_id, state.request_type))
+        .collect();
+
+      // Mark all requests as cancelled and notify waiters before clearing
+      for (req_id, state) in states.iter_mut() {
+        if !state.request_complete {
+          debug!("Marking request {} as cancelled during cleanup", req_id);
+          state.error_code = Some(-1);
+          state.error_message = Some("Request cancelled during cleanup".to_string());
+          state.request_complete = true;
+        }
+      }
+
+      let num_requests = states.len();
+      if num_requests > 0 {
+        info!("Cancelling {} pending requests", num_requests);
+        // Clear the states after marking them complete
+        states.clear();
+      }
+    }
+
+    // Notify any waiting threads that their requests have been cancelled
+    self.request_cond.notify_all();
+
+    // Send cancel messages to TWS if we have an encoder and connection
+    if let Some(encoder) = encoder {
+      for (req_id, request_type) in request_ids_to_cancel {
+        let cancel_result = match request_type {
+          RequestType::Fundamental => {
+            debug!("Sending cancel for fundamental data request: ReqID={}", req_id);
+            encoder.encode_cancel_fundamental_data(req_id)
+              .and_then(|msg| self.message_broker.send_message(&msg))
+          },
+          RequestType::WshMetaData => {
+            debug!("Sending cancel for WSH metadata request: ReqID={}", req_id);
+            encoder.encode_cancel_wsh_meta_data(req_id)
+              .and_then(|msg| self.message_broker.send_message(&msg))
+          },
+          RequestType::WshEventData => {
+            debug!("Sending cancel for WSH event data request: ReqID={}", req_id);
+            encoder.encode_cancel_wsh_event_data(req_id)
+              .and_then(|msg| self.message_broker.send_message(&msg))
+          },
+        };
+
+        if let Err(e) = cancel_result {
+          // Log as debug since connection may already be closed during shutdown
+          debug!("Failed to send cancel message for request {} (type {:?}): {:?}", req_id, request_type, e);
+          cleanup_errors.push(e);
+        }
+      }
+    }
+
+    // Clear WSH metadata cache
+    {
+      let mut meta_cache = self.wsh_meta_data_cache.lock();
+      if meta_cache.is_some() {
+        *meta_cache = None;
+        debug!("Cleared WSH metadata cache");
+      }
+    }
+
+    // Note: We don't try to acquire wsh_global_lock since:
+    // 1. We're shutting down and don't want to block
+    // 2. Any ongoing get_wsh_events() calls will fail when their requests are cancelled
+    // 3. The lock will be released when those calls complete or timeout
+
+    if cleanup_errors.is_empty() {
+      info!("Successfully cleaned up all fundamental data and WSH requests");
+      Ok(())
+    } else {
+      // During shutdown, connection errors are expected, so don't treat as fatal
+      info!("Cleanup completed with {} non-fatal errors (connection may already be closed)", cleanup_errors.len());
+      Ok(()) // Return Ok since cleanup of state was successful
+    }
+  }
 }
 
 // --- Implement FinancialDataHandler Trait ---
@@ -647,7 +761,7 @@ impl FinancialDataHandler for DataFundamentalsManager {
         info!("WSH metadata received for request {}. Notifying waiter.", req_id);
         self.request_cond.notify_all();
       } else {
-         warn!("Received wsh_meta_data for ReqID {} with unexpected request_type {:?}", req_id, state.request_type);
+        warn!("Received wsh_meta_data for ReqID {} with unexpected request_type {:?}", req_id, state.request_type);
       }
     } else {
       warn!("Received wsh_meta_data for unknown or completed request ID: {}", req_id);
@@ -661,7 +775,7 @@ impl FinancialDataHandler for DataFundamentalsManager {
       if matches!(state.request_type, RequestType::WshEventData) {
         state.wsh_event_data_json_list.push(data_json.to_string());
         debug!("WSH event data added for ReqID {}. Current count: {}/{}",
-                 req_id, state.wsh_event_data_json_list.len(), state.wsh_event_expected_count.unwrap_or(0));
+               req_id, state.wsh_event_data_json_list.len(), state.wsh_event_expected_count.unwrap_or(0));
         if let Some(expected_count) = state.wsh_event_expected_count {
           if state.wsh_event_data_json_list.len() >= expected_count {
             state.request_complete = true;

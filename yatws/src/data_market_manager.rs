@@ -3175,6 +3175,170 @@ impl DataMarketManager {
       state.result.ok_or_else(|| IBKRError::InternalError(format!("{} result missing for ReqID {}", request_type_name, req_id)))
     })
   }
+
+  /// Cleanup all pending requests during shutdown.
+  ///
+  /// This method cancels all active subscriptions and cleans up global state.
+  /// It handles both requests with req_ids (tracked in subscriptions HashMap)
+  /// and global requests without req_ids (like scanner parameters).
+  ///
+  /// # Returns
+  /// Always returns `Ok(())` to avoid failing shutdown due to cleanup errors.
+  /// Individual cancellation errors are logged but do not stop the cleanup process.
+  ///
+  /// # Example
+  /// ```rust
+  /// // Called during client shutdown
+  /// if let Err(e) = market_data_mgr.cleanup_requests() {
+  ///     warn!("Market data cleanup encountered errors: {:?}", e);
+  /// }
+  /// ```
+  pub fn cleanup_requests(&self) -> Result<(), IBKRError> {
+    info!("DataMarketManager: Starting cleanup of all pending requests...");
+
+    let mut cleanup_errors = Vec::new();
+    let mut total_cancelled = 0;
+
+    // Get snapshot of all active request IDs and the info needed for cancellation
+    // We collect this first to avoid holding the lock during cancellation calls
+    let requests_to_cancel: Vec<(i32, String, Option<bool>)> = {
+      let subs = self.subscriptions.lock();
+      subs.iter().map(|(req_id, stream)| {
+        let (stream_type, smart_depth_flag) = match stream {
+          MarketStream::TickData(_) => ("TickData", None),
+          MarketStream::RealTimeBars(_) => ("RealTimeBars", None),
+          MarketStream::TickByTick(_) => ("TickByTick", None),
+          MarketStream::MarketDepth(state) => ("MarketDepth", Some(state.is_smart_depth)),
+          MarketStream::HistoricalData(_) => ("HistoricalData", None),
+          MarketStream::Scanner(_) => ("Scanner", None),
+          MarketStream::OptionCalc(_) => ("OptionCalc", None),
+          MarketStream::HistogramData(_) => ("HistogramData", None),
+          MarketStream::HistoricalTicks(_) => ("HistoricalTicks", None),
+        };
+        (*req_id, stream_type.to_string(), smart_depth_flag)
+      }).collect()
+    };
+
+    // Cancel each request based on its type
+    for (req_id, stream_type, smart_depth_flag) in requests_to_cancel {
+      let result = match stream_type.as_str() {
+        "TickData" => self.cancel_market_data(req_id),
+        "RealTimeBars" => self.cancel_real_time_bars(req_id),
+        "TickByTick" => self.cancel_tick_by_tick_data(req_id),
+        "MarketDepth" => {
+          let is_smart_depth = smart_depth_flag.unwrap_or(false);
+          self._cancel_market_depth_internal(req_id, is_smart_depth)
+        },
+        "HistoricalData" => self.cancel_historical_data(req_id),
+        "Scanner" => self.cancel_scanner_info(req_id),
+        "OptionCalc" => {
+          // For option calculations, we don't track which specific type it is,
+          // so try both cancellation methods. These methods will handle
+          // "request not found" gracefully.
+          let _ = self.cancel_calculate_implied_volatility(req_id);
+          let _ = self.cancel_calculate_option_price(req_id);
+          Ok(())
+        },
+        "HistogramData" => self.cancel_histogram_data(req_id),
+        "HistoricalTicks" => self.cancel_historical_ticks(req_id),
+        _ => {
+          warn!("Unknown stream type '{}' for req_id {}, skipping", stream_type, req_id);
+          Ok(())
+        }
+      };
+
+      match result {
+        Ok(()) => {
+          total_cancelled += 1;
+          debug!("Successfully cancelled {} request {}", stream_type, req_id);
+        },
+        Err(e) => {
+          warn!("Failed to cancel {} request {}: {:?}", stream_type, req_id, e);
+          cleanup_errors.push((req_id, stream_type, e));
+        }
+      }
+    }
+
+    // Handle global requests that don't have req_ids
+
+    // Scanner parameters: Clear cache and notify waiting threads
+    {
+      let mut params_guard = self.scanner_parameters_xml.lock();
+      if params_guard.is_some() {
+        debug!("Clearing cached scanner parameters during cleanup");
+        *params_guard = None;
+        // Notify any threads waiting for scanner parameters to wake up
+        self.scanner_parameters_cond.notify_all();
+      }
+    }
+
+    // Wake up any threads waiting on various conditions during shutdown
+    self.request_cond.notify_all();
+    self.market_data_type_cond.notify_all();
+
+    // Clear observer maps to release resources
+    // Note: This will effectively disable all observers during shutdown
+    {
+      let mut observers = self.market_data_observers.write();
+      let observer_count = observers.len();
+      observers.clear();
+      if observer_count > 0 {
+        debug!("Cleared {} market data observers", observer_count);
+      }
+    }
+    {
+      let mut observers = self.realtime_bars_observers.write();
+      let observer_count = observers.len();
+      observers.clear();
+      if observer_count > 0 {
+        debug!("Cleared {} real-time bars observers", observer_count);
+      }
+    }
+    {
+      let mut observers = self.tick_by_tick_observers.write();
+      let observer_count = observers.len();
+      observers.clear();
+      if observer_count > 0 {
+        debug!("Cleared {} tick-by-tick observers", observer_count);
+      }
+    }
+    {
+      let mut observers = self.market_depth_observers.write();
+      let observer_count = observers.len();
+      observers.clear();
+      if observer_count > 0 {
+        debug!("Cleared {} market depth observers", observer_count);
+      }
+    }
+    {
+      let mut observers = self.historical_data_observers.write();
+      let observer_count = observers.len();
+      observers.clear();
+      if observer_count > 0 {
+        debug!("Cleared {} historical data observers", observer_count);
+      }
+    }
+    {
+      let mut observers = self.historical_ticks_observers.write();
+      let observer_count = observers.len();
+      observers.clear();
+      if observer_count > 0 {
+        debug!("Cleared {} historical ticks observers", observer_count);
+      }
+    }
+
+    info!("DataMarketManager cleanup completed: {} requests cancelled, {} errors",
+          total_cancelled, cleanup_errors.len());
+
+    // Log all errors but don't fail shutdown for cleanup errors
+    for (req_id, stream_type, ref error) in &cleanup_errors {
+      warn!("Cleanup error for {} request {}: {:?}", stream_type, req_id, error);
+    }
+
+    // Always return Ok to avoid failing shutdown due to cleanup errors
+    Ok(())
+  }
+
 }
 
 // --- Implement MarketDataHandler Trait for DataMarketManager ---

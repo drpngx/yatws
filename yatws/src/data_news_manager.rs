@@ -609,6 +609,90 @@ impl DataNewsManager {
       // If it's a bulletin error, the NewsSubscription's internal observer will push a NewsEvent::Error.
     }
   }
+
+  /// Cleanup all pending news requests and subscriptions.
+  ///
+  /// This should be called during client shutdown to ensure clean disconnection
+  /// and proper cleanup of all pending requests, including those without req_ids.
+  ///
+  /// The function will:
+  /// - Cancel active news bulletin subscriptions
+  /// - Signal all blocking request threads with shutdown errors
+  /// - Cancel and cleanup historical news event subscriptions
+  /// - Release rate limiter resources
+  /// - Clear all registered observers
+  pub(crate) fn cleanup_requests(&self) -> Result<(), IBKRError> {
+    info!("Cleaning up all pending news requests and subscriptions");
+
+    // 1. Cancel news bulletins if active (no req_id, so we attempt cancel regardless)
+    // This is idempotent, so it's safe to call even if no subscription is active
+    if let Err(e) = self.cancel_news_bulletins() {
+      warn!("Error cancelling news bulletins during cleanup: {:?}", e);
+      // Continue with cleanup even if this fails since we're shutting down
+    }
+
+    // 2. Handle blocking request states - signal waiting threads with shutdown error
+    {
+      let mut states = self.request_states.lock();
+      let pending_count = states.len();
+
+      if pending_count > 0 {
+        info!("Signaling {} pending blocking news requests with shutdown error", pending_count);
+
+        // Mark all pending requests as errored due to shutdown
+        for (req_id, state) in states.iter_mut() {
+          if state.error_code.is_none() {
+            warn!("Marking pending news request {} as failed due to shutdown", req_id);
+            state.error_code = Some(-1);
+            state.error_message = Some("Client shutting down".to_string());
+          }
+        }
+
+        // Signal all waiting threads to wake up and see the error
+        self.request_cond.notify_all();
+      }
+
+      // Clear all request states
+      states.clear();
+    }
+
+    // 3. Cancel and cleanup historical news event subscriptions
+    {
+      let mut event_subs = self.historical_news_event_subscriptions.lock();
+      let subscription_count = event_subs.len();
+
+      if subscription_count > 0 {
+        info!("Cleaning up {} historical news event subscriptions", subscription_count);
+
+        // Drain all subscriptions and send shutdown errors
+        for (req_id, state_weak) in event_subs.drain() {
+          // Release rate limiter resource for this request
+          self.historical_news_limiter.release(req_id);
+
+          // Notify the subscription state about shutdown if it's still alive
+          if let Some(state_arc) = state_weak.upgrade() {
+            warn!("Signaling historical news subscription {} with shutdown error", req_id);
+            let err = IBKRError::ConnectionFailed("Client shutting down".to_string());
+            state_arc.push_event(HistoricalNewsEvent::Error(err.clone()));
+            state_arc.set_error(err);
+            state_arc.mark_completed_and_inactive();
+          }
+        }
+      }
+    }
+
+    // 4. Clear all observers to prevent further notifications during shutdown
+    {
+      let observer_count = self.observers.read().len();
+      if observer_count > 0 {
+        info!("Clearing {} news observers", observer_count);
+      }
+      self.clear_observers();
+    }
+
+    info!("News manager cleanup completed successfully");
+    Ok(())
+  }
 }
 
 // --- Implement NewsDataHandler Trait ---

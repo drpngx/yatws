@@ -352,6 +352,52 @@ impl FinancialAdvisorManager {
     }
     Ok(aliases)
   }
+
+  /// Cancels all pending Financial Advisor requests and cleans up internal state.
+  ///
+  /// This method is typically called during client shutdown to ensure that any
+  /// threads waiting for FA data requests or replacements are properly notified
+  /// and released.
+  ///
+  /// # Returns
+  /// `Ok(())` if cleanup completed successfully.
+  ///
+  /// # Example
+  /// ```no_run
+  /// // This is typically called internally during IBKRClient::disconnect()
+  /// fa_manager.cleanup_requests()?;
+  /// ```
+  pub(crate) fn cleanup_requests(&self) -> Result<(), IBKRError> {
+    let mut req_state_guard = self.request_state.lock();
+
+    let had_pending_requests = req_state_guard.waiting_for_data || req_state_guard.waiting_for_replace_end;
+
+    if had_pending_requests {
+      info!("Cleaning up pending FA requests during shutdown");
+
+      // Set error state for any waiting operations
+      req_state_guard.error_occurred = Some(IBKRError::ConnectionFailed(
+        "Connection closing, canceling pending FA requests".to_string()
+      ));
+
+      // Clear all waiting flags
+      req_state_guard.waiting_for_data = false;
+      req_state_guard.waiting_for_replace_end = false;
+      req_state_guard.data_type_expected = None;
+      req_state_guard.replace_end_text = None;
+
+      // Notify any waiting threads
+      self.request_cond.notify_all();
+
+      info!("Successfully cleaned up {} pending FA request(s)",
+            if had_pending_requests { 1 } else { 0 });
+    } else {
+      debug!("No pending FA requests to clean up");
+    }
+
+    Ok(())
+  }
+
 }
 
 impl FinancialAdvisorHandler for FinancialAdvisorManager {

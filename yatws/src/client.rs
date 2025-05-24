@@ -466,12 +466,26 @@ impl IBKRClient {
   pub fn disconnect(&self) -> Result<(), IBKRError> {
     info!("IBKRClient disconnect requested (client_id: {})", self.client_id);
 
-    // Send any final cleanup messages if needed
-    // For example, cancel all active subscriptions
+    self.account().cleanup_requests()
+      .unwrap_or_else(|e| error!("Failed to clean up account manager: {}.", e));
 
-    // Cancel all market data subscriptions
-    // Note: In a real implementation, you'd want to track active subscriptions
-    // and cancel them here
+    self.data_financials().cleanup_requests()
+      .unwrap_or_else(|e| error!("Failed to clean up data financials manager: {}.", e));
+
+    self.data_market().cleanup_requests()
+      .unwrap_or_else(|e| error!("Failed to clean up data market manager: {}.", e));
+
+    self.data_news().cleanup_requests()
+      .unwrap_or_else(|e| error!("Failed to clean up data news manager: {}.", e));
+
+    self.data_ref().cleanup_requests()
+      .unwrap_or_else(|e| error!("Failed to clean up data reference manager: {}.", e));
+
+    self.financial_advisor().cleanup_requests()
+      .unwrap_or_else(|e| error!("Failed to clean up financial advisor manager: {}.", e));
+
+    self.orders().cleanup_requests()
+      .unwrap_or_else(|e| error!("Failed to clean up order manager: {}.", e));
 
     // Then disconnect the underlying connection
     self.message_broker.disconnect()

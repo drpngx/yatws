@@ -297,6 +297,91 @@ impl DataRefManager {
     }
   }
 
+  /// Cleans up all pending reference data requests during shutdown.
+  ///
+  /// This method cancels all active requests, sets error states for pending operations,
+  /// and notifies any waiting threads. It handles both requests with explicit cancellation
+  /// support (like historical schedule) and those without.
+  ///
+  /// This should be called during client shutdown to ensure clean termination.
+  pub(crate) fn cleanup_requests(&self) -> Result<(), IBKRError> {
+    info!("DataRefManager: Cleaning up all pending requests...");
+
+    let mut states = self.request_states.lock();
+    let pending_req_ids: Vec<i32> = states.keys().cloned().collect();
+
+    if pending_req_ids.is_empty() {
+      info!("No pending reference data requests to clean up.");
+      return Ok(());
+    }
+
+    info!("Cleaning up {} pending reference data requests: {:?}", pending_req_ids.len(), pending_req_ids);
+
+    // Get encoder for cancellation messages
+    let encoder = match self.message_broker.get_server_version() {
+      Ok(version) => Some(Encoder::new(version)),
+      Err(e) => {
+        warn!("Could not get server version for cleanup cancellations: {:?}", e);
+        None
+      }
+    };
+
+    // Cancel requests that support explicit cancellation
+    if let Some(enc) = &encoder {
+      for req_id in &pending_req_ids {
+        if let Some(state) = states.get(req_id) {
+          // Check if this looks like a historical schedule request
+          // (it's the only reference data request type that supports cancellation)
+          let might_be_historical = state.historical_schedule.is_none() &&
+            state.contract_details_list.is_empty() &&
+            state.sec_def_params_list.is_empty() &&
+            state.soft_dollar_tiers.is_none() &&
+            state.family_codes.is_none() &&
+            state.symbol_samples.is_none() &&
+            state.mkt_depth_exchanges.is_none() &&
+            state.smart_components.is_none() &&
+            state.market_rule.is_none() &&
+            state.error_code.is_none();
+
+          if might_be_historical {
+            // Try to cancel as historical schedule request
+            match enc.encode_cancel_historical_data(*req_id) {
+              Ok(cancel_msg) => {
+                if let Err(e) = self.message_broker.send_message(&cancel_msg) {
+                  warn!("Failed to send historical schedule cancellation for req_id {}: {:?}", req_id, e);
+                } else {
+                  debug!("Sent historical schedule cancellation for req_id {}", req_id);
+                }
+              }
+              Err(e) => {
+                debug!("Could not encode historical schedule cancellation for req_id {}: {:?}", req_id, e);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // Set error state for all pending requests to wake up waiting threads
+    for req_id in &pending_req_ids {
+      if let Some(state) = states.get_mut(req_id) {
+        // Only set error if not already set
+        if state.error_code.is_none() {
+          state.error_code = Some(-1);
+          state.error_message = Some("Request cancelled during client shutdown".to_string());
+        }
+      }
+    }
+
+    // Notify all waiting threads before clearing states
+    self.request_cond.notify_all();
+
+    // Clear all pending request states
+    states.clear();
+
+    info!("DataRefManager cleanup completed. Processed {} requests.", pending_req_ids.len());
+    Ok(())
+  }
 
   // --- Public API Methods ---
 

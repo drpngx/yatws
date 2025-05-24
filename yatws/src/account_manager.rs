@@ -1224,6 +1224,94 @@ impl AccountManager {
       }
     }
   }
+
+  /// Cleanly shuts down all active subscriptions and resets internal state.
+  ///
+  /// This method should be called during client disconnect to ensure:
+  /// - All active subscriptions are cancelled
+  /// - Internal state is reset to initial values
+  /// - No pending requests are left hanging
+  ///
+  /// This method is safe to call multiple times.
+  pub(crate) fn cleanup_requests(&self) -> Result<(), IBKRError> {
+    info!("AccountManager: Cleaning up all subscriptions and resetting state...");
+
+    let mut cleanup_errors = Vec::new();
+
+    // 1. Stop account updates (summary + positions)
+    if let Err(e) = self.stop_account_updates() {
+      warn!("Error stopping account updates during cleanup: {:?}", e);
+      cleanup_errors.push(e);
+    }
+
+    // 2. Unsubscribe from all PnL single subscriptions
+    if let Err(e) = self.unsubscribe_pnl() {
+      warn!("Error unsubscribing PnL during cleanup: {:?}", e);
+      cleanup_errors.push(e);
+    }
+
+    // 3. Cancel any pending execution requests
+    {
+      let mut exec_state = self.executions_state.lock();
+      let pending_req_ids: Vec<i32> = exec_state.keys().cloned().collect();
+
+      if !pending_req_ids.is_empty() {
+        info!("Cleaning up {} pending execution requests", pending_req_ids.len());
+
+        for req_id in pending_req_ids {
+          if let Some(mut state) = exec_state.remove(&req_id) {
+            state.waiting = false;
+            state.end_received = true;
+          }
+        }
+
+        // Notify any waiting threads
+        self.executions_cond.notify_all();
+      }
+    }
+
+    // 4. Reset subscription flags and state
+    self.is_subscribed.store(false, Ordering::SeqCst);
+    self.is_initializing.store(false, Ordering::SeqCst);
+    self.pre_liquidation_warning_received.store(false, Ordering::SeqCst);
+
+    // 5. Reset update state
+    {
+      let mut u_state = self.update_state.lock();
+      u_state.current_summary_req_id = None;
+      u_state.waiting_for_initial_summary_end = false;
+      u_state.waiting_for_initial_position_end = false;
+      u_state.is_initial_fetch_active = false;
+
+      // Notify any waiting threads
+      self.update_cond.notify_all();
+    }
+
+    // 6. Reset manual position refresh state
+    {
+      let mut waiting_guard = self.manual_position_refresh_waiting.lock();
+      if *waiting_guard {
+        *waiting_guard = false;
+        self.manual_position_refresh_cond.notify_all();
+      }
+    }
+
+    // 7. Clear PnL filter
+    *self.pnl_filter.write() = None;
+
+    // 8. Clear subscription mappings (they should already be cleared by unsubscribe_pnl, but ensure)
+    self.pnl_single_subscriptions.write().clear();
+    self.pnl_single_req_id_to_con_id.write().clear();
+
+    info!("AccountManager cleanup completed. {} errors encountered.", cleanup_errors.len());
+
+    // Return the first error if any occurred, but continue with full cleanup
+    if let Some(first_error) = cleanup_errors.into_iter().next() {
+      Err(first_error)
+    } else {
+      Ok(())
+    }
+  }
 }
 
 // --- Implement AccountHandler Trait ---
