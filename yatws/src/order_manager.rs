@@ -754,7 +754,7 @@ impl OrderManager {
   fn _wait_for_what_if_state(&self, order_id: &str, timeout_duration: Duration) -> Result<OrderState, IBKRError> {
     debug!("Waiting for What-If state for order {} (timeout: {:?})", order_id, timeout_duration);
 
-    // Get or create the condvar pair
+    // Get or create the condvar pair BEFORE checking state to ensure it exists
     let condvar_pair = {
       let condvars_read = self.order_update_condvars.read();
       if let Some(pair) = condvars_read.get(order_id) {
@@ -772,16 +772,43 @@ impl OrderManager {
     let mut guard = lock.lock();
     let start_time = std::time::Instant::now();
 
+    // CRITICAL: Check state BEFORE entering the wait loop to catch race conditions
+    // where TWS responds immediately before we start waiting
+    let initial_state_check = {
+      let book = self.order_book.read();
+      book.get(order_id).map(|order_arc| order_arc.read().state.clone())
+    };
+
+    match initial_state_check {
+      None => {
+        error!("Order {} not found before starting what-if wait", order_id);
+        return Err(IBKRError::InternalError(format!("Order {} lost before what-if wait", order_id)));
+      }
+      Some(state) => {
+        // Check if error already occurred (race condition case)
+        if let Some(err) = &state.error {
+          error!("Order {} already failed before wait started (race condition): {:?}", order_id, err);
+          return Err(err.clone());
+        }
+        // Check if margin/commission data already available (very fast response case)
+        if state.initial_margin_after.is_some() || state.maintenance_margin_after.is_some() || state.commission.is_some() {
+          info!("Order {} what-if state already available before wait started", order_id);
+          return Ok(state);
+        }
+        // Otherwise, proceed to wait loop
+        debug!("Order {} what-if state not yet available, entering wait loop", order_id);
+      }
+    }
+
     loop {
       // --- Check current state ---
       let current_order_state = {
         let book = self.order_book.read();
-        book.get(order_id).map(|order_arc| order_arc.read().state.clone()) // Clone the state
+        book.get(order_id).map(|order_arc| order_arc.read().state.clone())
       };
 
       match current_order_state {
         None => {
-          // Should not happen if place_order succeeded before calling wait
           error!("Order {} disappeared while waiting for What-If state", order_id);
           return Err(IBKRError::InternalError(format!("Order {} lost during What-If wait", order_id)));
         }
@@ -791,28 +818,25 @@ impl OrderManager {
             error!("Order {} (What-If) failed while waiting for state: {:?}", order_id, err);
             return Err(err.clone());
           }
-          // Check if the state contains the expected What-If info (margin or commission)
-          // These fields are populated by the openOrder message.
+          // Check if the state contains the expected What-If info
           if state.initial_margin_after.is_some() || state.maintenance_margin_after.is_some() || state.commission.is_some() {
             info!("Order {} received What-If state.", order_id);
-            return Ok(state); // Success condition met
+            return Ok(state);
           }
-          // If not yet populated and no error, continue waiting
           debug!("Order {} What-If state not yet populated, continuing wait...", order_id);
         }
       }
-      // --- End Check current state ---
 
       // --- Wait or Timeout ---
       let elapsed = start_time.elapsed();
       if elapsed >= timeout_duration {
         warn!("Timeout waiting for order {} What-If state", order_id);
-        // Re-check one last time
-        let final_state_after_timeout = {
+        // Final check after timeout
+        let final_state = {
           let book = self.order_book.read();
           book.get(order_id).map(|o| o.read().state.clone())
         };
-        match final_state_after_timeout {
+        match final_state {
           Some(state) if state.error.is_some() => return Err(state.error.unwrap()),
           Some(state) if state.initial_margin_after.is_some() || state.maintenance_margin_after.is_some() || state.commission.is_some() => return Ok(state),
           _ => return Err(IBKRError::Timeout(format!("Timeout waiting for order {} What-If state", order_id))),
@@ -825,10 +849,8 @@ impl OrderManager {
       } else {
         debug!("Wait for order {} (What-If) notified, re-checking status...", order_id);
       }
-      // --- End Wait or Timeout ---
     }
   }
-
 
   // --- Wait Functions ---
 
@@ -1490,7 +1512,7 @@ impl OrderHandler for OrderManager {
         // For now, setting to Cancelled and storing the error is common practice.
         let previous_status = order.state.status;
         if !order.state.status.is_terminal() {
-          order.state.status = OrderStatus::Cancelled; // Or Inactive? Depends on error code interpretation.
+          order.state.status = OrderStatus::ApiCancelled;
         }
         order.state.error = Some(ibkr_error.clone());
         order.updated_at = Utc::now();

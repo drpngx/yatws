@@ -231,6 +231,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InvalidScalePriceAdjustmentInterval |
     ClientErrorCode::UnexpectedScalePriceAdjustment |
     ClientErrorCode::NoTradingPermissions |
+    ClientErrorCode::NoSecurityDefinitionFound |
     // TWS Order Errors (10000+)
     ClientErrorCode::MissingParentOrder |
     ClientErrorCode::InvalidDeltaHedgeOrder |
@@ -266,6 +267,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InvalidOrderBondExpired | // Could be Contract
     ClientErrorCode::EtradeOnlyAttributeNotSupported |
     ClientErrorCode::FirmQuoteOnlyAttributeNotSupported |
+    ClientErrorCode::NoTradingPermissions |
     ClientErrorCode::NbboPriceCapAttributeNotSupported => {
       handler.order.handle_error(id, error_code, &error_msg);
     }
@@ -315,6 +317,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::DuplicateTickerIdApiHistorical |
     ClientErrorCode::SnapshotNotApplicableToGenericTicks |
     ClientErrorCode::InvalidRealTimeQuery |
+    ClientErrorCode::NoSecurityDefinitionFound |
     // TWS Market Data Errors (10000+)
     ClientErrorCode::NotSubscribedMarketData | // Error
     ClientErrorCode::PartiallySubscribedMarketData | // Warning
@@ -398,6 +401,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::FailSendCanWshMetaData |
     ClientErrorCode::FailSendReqWshEventData |
     ClientErrorCode::FailSendCanWshEventData |
+    ClientErrorCode::NoSecurityDefinitionFound |
     // TWS Financial Data Errors
     ClientErrorCode::FundamentalsDataNotAvailable |
     ClientErrorCode::DuplicateWshMetadataRequest |
