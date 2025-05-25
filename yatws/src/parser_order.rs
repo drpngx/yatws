@@ -636,10 +636,6 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
         } else {
           self.request.algo_params = Vec::new(); // Ensure empty
         }
-        // AlgoId added in VER_ALGO_ID (71), not explicitly checked in Java EOrderDecoder here
-        if self.server_version >= min_server_ver::ALGO_ID {
-          self.request.algo_id = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
-        }
       } else {
         // Ensure related fields are cleared if no strategy
         self.request.algo_params = Vec::new();

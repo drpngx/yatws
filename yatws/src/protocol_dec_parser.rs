@@ -181,7 +181,7 @@ impl<'a> FieldParser<'a> {
     }
 
     s.parse::<i32>()
-      .map_err(|e| IBKRError::ParseError(format!("Failed to parse integer: {}", e)))
+      .map_err(|e| IBKRError::ParseError(format!("Failed to parse integer `{}`: {}", s, e)))
   }
 
   /// Read an integer field
@@ -193,7 +193,7 @@ impl<'a> FieldParser<'a> {
     }
 
     s.parse::<i64>()
-      .map_err(|e| IBKRError::ParseError(format!("Failed to parse integer: {}", e)))
+      .map_err(|e| IBKRError::ParseError(format!("Failed to parse integer `{}`: {}", s, e)))
   }
 
   /// Read a double field
@@ -205,7 +205,7 @@ impl<'a> FieldParser<'a> {
     }
 
     s.parse::<f64>()
-      .map_err(|e| IBKRError::ParseError(format!("Failed to parse double: {}", e)))
+      .map_err(|e| IBKRError::ParseError(format!("Failed to parse double `{}`: {}", s, e)))
   }
 
   pub fn read_double_max(&mut self) -> Result<Option<f64>, IBKRError> {
