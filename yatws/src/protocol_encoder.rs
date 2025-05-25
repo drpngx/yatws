@@ -1608,7 +1608,17 @@ impl Encoder {
     self.write_int_to_cursor(&mut cursor, exercise_quantity)?;
     self.write_str_to_cursor(&mut cursor, account)?;
     self.write_int_to_cursor(&mut cursor, override_action)?; // 0 for no override, 1 for override
-
+    // Manual Order Time field (added in newer server versions)
+    if self.server_version >= min_server_ver::MANUAL_ORDER_TIME {
+      // Send empty string for manual order time (let TWS use current time)
+      self.write_str_to_cursor(&mut cursor, "")?;
+    }
+    if self.server_version >= min_server_ver::CUSTOMER_ACCOUNT {
+      self.write_str_to_cursor(&mut cursor, "")?;
+    }
+    if self.server_version >= min_server_ver::PROFESSIONAL_CUSTOMER {
+      self.write_str_to_cursor(&mut cursor, "")?;
+    }
     Ok(self.finish_encoding(cursor))
   }
 

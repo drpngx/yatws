@@ -2,12 +2,13 @@
 use anyhow::{anyhow, Context, Result};
 use log::{debug, error, info, warn};
 use std::time::Duration;
+
 use yatws::{
   IBKRError,
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder,
-  contract::{Contract, SecType},
+  contract::{Contract, SecType, OptionRight},
 };
 
 pub(super) fn order_market_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
@@ -420,9 +421,9 @@ pub(super) fn order_global_cancel_impl(client: &IBKRClient, is_live: bool) -> Re
 pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
   info!("--- Testing Option Exercise/Lapse ---");
   if is_live {
-    warn!("This test requires an account with an existing SPY option position.");
+    warn!("This test requires an account with an existing IBM option position.");
     warn!("It will attempt to EXERCISE 1 contract and LAPSE 1 contract (if available).");
-    warn!("Ensure you have at least 2 contracts of a near-term SPY option.");
+    warn!("Ensure you have at least 2 contracts of a near-term IBM option.");
     warn!("The test uses a placeholder req_id (9001, 9002) and assumes the first account.");
     std::thread::sleep(Duration::from_secs(5));
   }
@@ -435,28 +436,27 @@ pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> 
   let account_id = acct_mgr.get_account_info()?.account_id;
   info!("Using account ID: {}", account_id);
 
-  // 2. Find a suitable SPY option to "exercise" and "lapse"
-  //    This is tricky for a golden test. We'll try to find any SPY option.
+  // 2. Find a suitable IBM option to "exercise" and "lapse"
+  //    This is tricky for a golden test. We'll try to find any IBM option.
   //    In a real scenario, you'd know the specific contract.
-  let spy_stock_contract = Contract::stock("SPY");
-  let contract_details_list = ref_data_mgr.get_contract_details(&spy_stock_contract)
-    .context("Failed to get contract details for SPY stock to find options")?;
+  let mut stock_contract = Contract::stock("IBM");
+  let contract_details_list = ref_data_mgr.get_contract_details(&stock_contract)
+    .context("Failed to get contract details for IBM stock to find options")?;
   if contract_details_list.is_empty() {
-    return Err(anyhow!("No contract details found for SPY stock."));
+    return Err(anyhow!("No contract details found for IBM stock."));
   }
   let mut option_search_contract = Contract::new();
-  option_search_contract.symbol = "SPY".to_string();
+  option_search_contract.symbol = "IBM".to_string();
   option_search_contract.sec_type = SecType::Option;
-  option_search_contract.exchange = "SMART".to_string();
   option_search_contract.currency = "USD".to_string();
-  // No specific expiry/strike, get a list of option chains
-  // This might return a lot. We'll just pick the first one for the test.
+  option_search_contract.last_trade_date_or_contract_month = Some(OrderBuilder::next_monthly_option_expiry().format("%Y%m%d").to_string());
+  option_search_contract.right = Some(OptionRight::Call);
 
   let option_details_list = ref_data_mgr.get_contract_details(&option_search_contract)
-    .context("Failed to get option contract details for SPY")?;
+    .context("Failed to get option contract details for IBM")?;
 
   if option_details_list.is_empty() {
-    return Err(anyhow!("No SPY options found to test exercise/lapse. Ensure market data subscription for SPY options."));
+    return Err(anyhow!("No IBM options found to test exercise/lapse. Ensure market data subscription for IBM options."));
   }
   // For the test, pick the first available option contract.
   // A real application would specify the exact contract.
