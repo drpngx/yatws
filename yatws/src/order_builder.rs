@@ -1164,22 +1164,13 @@ impl OrderBuilder {
       // The IB docs mention for AccumulateDistribute: "The Time Zone in "startTime" and "endTime" attributes is ignored and always defaulted to GMT"
       // This implies sending "HH:MM:SS" without a timezone might be okay for that specific algo if only time is relevant.
       // However, to be explicit, we'll send with " UTC".
-      let format_datetime_for_algo = |dt: DateTime<Utc>, is_date_required: bool| -> String {
-        if is_date_required { // e.g. activeTimeStart/End for AD
-          dt.format("%Y%m%d-%H:%M:%S UTC").to_string()
-        } else { // e.g. startTime/endTime for VWAP, ArrivalPx etc.
-          // Check if date part is significantly different from today, if so, include date.
-          // This is a heuristic. If user provides a DateTime<Utc> from a different day,
-          // they likely intend for that date to be part of the algo param.
-          // Otherwise, just time is fine.
-          // For now, let's be explicit: if it's a DateTime<Utc>, include the date part.
-          // The TWS docs are a bit vague on when "hh:mm:ss TMZ" is sufficient vs "YYYYMMDD-hh:mm:ss TMZ".
-          // Using the longer form is safer.
-          dt.format("%Y%m%d-%H:%M:%S UTC").to_string()
-          // Alternative for time-only: dt.format("%H:%M:%S UTC").to_string()
-        }
+      let format_datetime_for_algo = |dt: DateTime<Utc>, _is_date_required: bool| -> String {
+        // TWS expects "yyyymmdd-hh:mm:ss" for UTC times (no timezone suffix)
+        // According to TWS error message: "You can also provide yyyymmddd-hh:mm:ss time is in UTC.
+        // Note that there is a dash between the date and time in UTC notation."
+        // The dash format automatically implies UTC, so no "UTC" suffix should be added.
+        dt.format("%Y%m%d-%H:%M:%S").to_string()
       };
-
       match algo_enum_instance {
         crate::order::IBKRAlgo::Adaptive { priority } => {
           final_order.algo_strategy = Some("Adaptive".to_string());
