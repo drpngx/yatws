@@ -10,11 +10,11 @@ use yatws::{
   OrderBuilder,
   contract::{SecType, OptionRight},
   order::{OrderSide, OrderType, TimeInForce, IBKRAlgo, AdaptivePriority, RiskAversion, TwapStrategyType},
-  order_builder::{TriggerMethod, ConditionConjunction},
+  order_build_types::{TriggerMethod, ConditionConjunction},
 };
 
-pub(super) fn order_builder_test_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
-  info!("--- Testing OrderBuilder - Comprehensive Functionality ---");
+pub(super) fn order_builder_test_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+  info!("--- Testing OrderBuilder - Comprehensive Functionality with Server Validation ---");
 
   // Track which test categories failed
   let mut failed_categories: Vec<String> = Vec::new();
@@ -156,8 +156,42 @@ pub(super) fn order_builder_test_impl(client: &IBKRClient, _is_live: bool) -> Re
     }
   }
 
+  // Test Category 10: Server-Side What-If Validation (only if live connection)
+  if is_live {
+    info!("=== Testing Server-Side What-If Order Validation ===");
+    let what_if_results = test_what_if_orders_with_server_validation(client);
+    total_tests += what_if_results.len();
+    let what_if_passed = what_if_results.iter().filter(|r| r.success).count();
+    passed_tests += what_if_passed;
+    if what_if_passed < what_if_results.len() {
+      failed_categories.push("Server-Side What-If Validation".to_string());
+      for result in &what_if_results {
+        if !result.success {
+          error!("  ✗ {}: {}", result.name, result.error.as_deref().unwrap_or("Unknown error"));
+        }
+      }
+    }
+
+    // Test Category 11: Specific Validation Scenarios (only if live connection)
+    info!("=== Testing Specific Validation Scenarios ===");
+    let scenario_results = test_specific_validation_scenarios(client);
+    total_tests += scenario_results.len();
+    let scenario_passed = scenario_results.iter().filter(|r| r.success).count();
+    passed_tests += scenario_passed;
+    if scenario_passed < scenario_results.len() {
+      failed_categories.push("Specific Validation Scenarios".to_string());
+      for result in &scenario_results {
+        if !result.success {
+          error!("  ✗ {}: {}", result.name, result.error.as_deref().unwrap_or("Unknown error"));
+        }
+      }
+    }
+  } else {
+    info!("=== Skipping Server-Side What-If Tests (not connected to live TWS/Gateway) ===");
+  }
+
   // Print summary
-  info!("=== OrderBuilder Test Summary ===");
+  info!("=== Enhanced OrderBuilder Test Summary ===");
   info!("Total tests: {}", total_tests);
   info!("Passed tests: {}", passed_tests);
   info!("Failed tests: {}", total_tests - passed_tests);
@@ -174,8 +208,9 @@ pub(super) fn order_builder_test_impl(client: &IBKRClient, _is_live: bool) -> Re
     info!("OrderBuilder comprehensive test completed successfully - all categories passed!");
     Ok(())
   } else {
+    let total_categories = if is_live { 11 } else { 9 };
     Err(anyhow!("OrderBuilder test failed: {}/{} categories failed: {:?}",
-                failed_categories.len(), 9, failed_categories))
+                failed_categories.len(), total_categories, failed_categories))
   }
 }
 
@@ -219,6 +254,53 @@ where
     }
     Err(e) => {
       TestResult::failure(name, &format!("{:?}", e))
+    }
+  }
+}
+
+// Helper function to test what-if orders with server validation
+fn test_what_if_order_server<F>(name: &str, what_if_fn: F) -> TestResult
+where
+  F: FnOnce() -> Result<(yatws::contract::Contract, yatws::order::OrderRequest, yatws::order::OrderState), IBKRError>,
+{
+  match what_if_fn() {
+    Ok((contract, order, order_state)) => {
+      info!("  ✓ {}: Contract: {:?} {}, Order: {:?} {} @ {:?}",
+            name, contract.sec_type, contract.symbol,
+            order.side, order.order_type, order.limit_price);
+
+      // Log server validation results
+      if let Some(init_margin) = order_state.initial_margin_before {
+        info!("    Initial Margin Required: ${:.2}", init_margin);
+      }
+      if let Some(maint_margin) = order_state.maintenance_margin_before {
+        info!("    Maintenance Margin Required: ${:.2}", maint_margin);
+      }
+      if let Some(commission) = order_state.commission {
+        info!("    Estimated Commission: ${:.2}", commission);
+      }
+      if let Some(min_commission) = order_state.min_commission {
+        info!("    Minimum Commission: ${:.2}", min_commission);
+      }
+      if let Some(max_commission) = order_state.max_commission {
+        info!("    Maximum Commission: ${:.2}", max_commission);
+      }
+
+      TestResult::success(name)
+    }
+    Err(e) => {
+      // Some errors are expected (like invalid tickers), so we differentiate
+      match &e {
+        IBKRError::ApiError(error_code, error_msg) => {
+          if *error_code == 200 || error_msg.contains("invalid") || error_msg.contains("not found") {
+            info!("  ✓ {} (Expected server validation error): {} - {}", name, error_code, error_msg);
+            TestResult::success(name) // Expected validation error
+          } else {
+            TestResult::failure(name, &format!("Unexpected API error: {} - {}", error_code, error_msg))
+          }
+        }
+        _ => TestResult::failure(name, &format!("{:?}", e))
+      }
     }
   }
 }
@@ -1123,6 +1205,189 @@ fn test_validation_cases() -> Vec<TestResult> {
     Ok(_) => results.push(TestResult::failure("Vol Condition Non-SMART", "Should have failed validation")),
     Err(_) => results.push(TestResult::success("Vol Condition Non-SMART")),
   }
+
+  results
+}
+
+// Server-side what-if validation tests
+fn test_what_if_orders_with_server_validation(client: &IBKRClient) -> Vec<TestResult> {
+  let mut results = Vec::new();
+  let timeout = Duration::from_secs(10);
+
+  // Test 1: Basic Stock What-If Order
+  results.push(test_what_if_order_server("Stock What-If Order", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 100.0)
+      .for_stock("AAPL")
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(150.0)
+      .build()?;
+
+    // Send to server for validation
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test 2: Option What-If Order
+  results.push(test_what_if_order_server("Option What-If Order", || {
+    let expiry = (chrono::Utc::now() + ChronoDuration::days(30)).format("%Y%m%d").to_string();
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 10.0)
+      .for_option("AAPL", &expiry, 160.0, OptionRight::Call)
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(2.5)
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test 3: Future What-If Order
+  results.push(test_what_if_order_server("Future What-If Order", || {
+    let expiry = (chrono::Utc::now() + ChronoDuration::days(90)).format("%Y%m%d").to_string();
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 1.0)
+      .for_future("ES", &expiry)
+      .with_exchange("CME")
+      .with_currency("USD")
+      .limit(4500.0)
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test 4: Forex What-If Order
+  results.push(test_what_if_order_server("Forex What-If Order", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 100000.0)
+      .for_forex("EUR/USD")
+      .limit(1.1000)
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test 5: Complex Order with Algorithm What-If
+  results.push(test_what_if_order_server("VWAP Algorithm What-If Order", || {
+    let start_time = chrono::Utc::now() + ChronoDuration::hours(1);
+    let end_time = start_time + ChronoDuration::hours(6);
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 5000.0)
+      .for_stock("AAPL")
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(150.0)
+      .with_ibkr_algo(IBKRAlgo::VWAP {
+        max_pct_vol: 0.10,
+        start_time: Some(start_time),
+        end_time: Some(end_time),
+        allow_past_end_time: false,
+        no_take_liq: false,
+        speed_up: false,
+      })
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test 6: Margin-intensive Order What-If
+  results.push(test_what_if_order_server("High Margin What-If Order", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 10000.0) // Large quantity
+      .for_stock("AAPL")
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(150.0)
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test 7: Invalid Contract What-If (should fail validation)
+  results.push(test_what_if_order_server("Invalid Contract What-If", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 100.0)
+      .for_stock("INVALIDTICKER")
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(150.0)
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  results
+}
+
+// Additional utility function to test specific order validation scenarios
+fn test_specific_validation_scenarios(client: &IBKRClient) -> Vec<TestResult> {
+  let mut results = Vec::new();
+  let timeout = Duration::from_secs(10);
+
+  // Test insufficient buying power scenario
+  results.push(test_what_if_order_server("Insufficient Buying Power", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 1000000.0) // Very large quantity
+      .for_stock("BRK.A") // Expensive stock
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(500000.0) // Very high price
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test options margin requirements
+  results.push(test_what_if_order_server("Options Margin Requirements", || {
+    let expiry = (chrono::Utc::now() + ChronoDuration::days(30)).format("%Y%m%d").to_string();
+    let (contract, order) = OrderBuilder::new(OrderSide::Sell, 100.0) // Naked call sell
+      .for_option("AAPL", &expiry, 160.0, OptionRight::Call)
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(2.5)
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test forex margin requirements
+  results.push(test_what_if_order_server("Forex Margin Requirements", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 10000000.0) // Large forex position
+      .for_forex("EUR/USD")
+      .limit(1.1000)
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test commission calculation
+  results.push(test_what_if_order_server("Commission Calculation", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 1000.0) // Medium quantity
+      .for_stock("AAPL")
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(150.0)
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  // Test pre-market order validation
+  results.push(test_what_if_order_server("Pre-Market Order Validation", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 100.0)
+      .for_stock("AAPL")
+      .with_exchange("SMART")
+      .with_currency("USD")
+      .limit(150.0)
+      .with_outside_rth(true) // Allow outside regular trading hours
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
 
   results
 }

@@ -499,6 +499,13 @@ mod parser_order;
 mod protocol_dec_parser;
 mod protocol_decoder;
 mod protocol_encoder;
+mod order_builder;
+
+pub mod order_build_types {
+  use super::order_builder;
+  pub use order_builder::TriggerMethod;
+  pub use order_builder::ConditionConjunction;
+}
 
 // Data structures:
 pub mod account;
@@ -508,7 +515,6 @@ pub mod order;
 pub mod data_wsh;
 pub mod news;
 pub mod financial_advisor;
-pub mod order_builder;
 
 // API:
 pub mod account_subscription;
