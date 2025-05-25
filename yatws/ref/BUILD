@@ -33,6 +33,12 @@ py_binary(
 )
 
 py_binary(
+    name = "vwap_order",
+    srcs = ["vwap_order.py"],
+    deps = ["//:ibapi"],
+)
+
+py_binary(
     name = "historical_schedule",
     srcs = ["historical_schedule.py"],
     deps = ["//:ibapi"],
