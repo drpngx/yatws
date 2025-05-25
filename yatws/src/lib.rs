@@ -488,7 +488,6 @@ mod handler;
 mod message_parser;
 mod min_server_ver;
 mod options_strategy_builder;
-mod order_builder;
 mod parser_account;
 mod parser_client;
 mod parser_data_fin;
@@ -509,6 +508,7 @@ pub mod order;
 pub mod data_wsh;
 pub mod news;
 pub mod financial_advisor;
+pub mod order_builder;
 
 // API:
 pub mod account_subscription;

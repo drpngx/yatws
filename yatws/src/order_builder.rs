@@ -588,7 +588,7 @@ impl OrderBuilder {
     self
   }
   pub fn forex_cash_quantity(mut self, cash_quantity: f64, limit_price: Option<f64>) -> Self {
-    self.contract.sec_type = SecType::Forex; // Ensure sec type is Forex
+    //  We check later: self.conract.sec_type = SecType::Forex;
     if self.contract.exchange.is_empty() || self.contract.exchange == "SMART" {
       self.contract.exchange = "IDEALPRO".to_string(); // Default Forex ECN
     }
@@ -872,6 +872,10 @@ impl OrderBuilder {
       log::warn!("Both quantity ({}) and cash_qty ({:?}) are set. Typically only one should be used. Quantity will likely be ignored by TWS if cash_qty is present.", self.order.quantity, self.order.cash_qty);
       // Don't error, let TWS decide, but warn the user.
     }
+    if self.order.quantity <= 0.0 && self.order.cash_qty.is_none() {
+      return Err(IBKRError::InvalidOrder(
+        format!("Order quantity or cash quantity must be positive, got: {}.", self.order.quantity)));
+    }
     if self.order.order_type == OrderType::None {
       return Err(IBKRError::InvalidOrder("Order type must be specified.".to_string()));
     }
@@ -969,8 +973,11 @@ impl OrderBuilder {
       }
     }
 
-    // Check Forex Cash Quantity rules (Keep previous checks)
-    if self.order.cash_qty.is_some() {
+    // Check Forex Cash Quantity rules
+    if let Some(cash_qty) = self.order.cash_qty {
+      if cash_qty <= 0.0 {
+        return Err(IBKRError::InvalidOrder("Cash quantity must be positive.".to_string()));
+      }
       if self.contract.sec_type != SecType::Forex {
         return Err(IBKRError::InvalidOrder("Cash quantity can only be used for Forex orders.".to_string()));
       }

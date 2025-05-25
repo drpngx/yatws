@@ -117,6 +117,7 @@ rust_binary(
             "test_general.rs",
             "test_account.rs",
             "test_order.rs",
+            "test_order_builder.rs",
             "test_fin.rs",
             "test_market.rs",
             "test_option.rs",

@@ -20,6 +20,7 @@ use yatws::IBKRClient;
 mod test_general;
 mod test_account;
 mod test_order;
+mod test_order_builder;
 mod test_fin;
 mod test_market;
 mod test_option;
@@ -248,6 +249,7 @@ mod test_cases {
   pub(super) use crate::test_general::*;
   pub(super) use crate::test_account::*;
   pub(super) use crate::test_order::*;
+  pub(super) use crate::test_order_builder::*;
   pub(super) use crate::test_fin::*;
   pub(super) use crate::test_market::*;
   pub(super) use crate::test_option::*;
@@ -299,6 +301,7 @@ submit_test!(37, "observe-historical-data", test_cases::observe_historical_data_
 submit_test!(38, "observe-historical-ticks", test_cases::observe_historical_ticks_impl);
 submit_test!(39, "multi-subscription-mixed", test_cases::multi_subscription_mixed_impl);
 submit_test!(40, "options-strategy-builder", test_cases::options_strategy_builder_test_impl);
+submit_test!(41, "order-builder", test_cases::order_builder_test_impl);
 // Add more tests here: submit_test!(41, "new-test-name", test_cases::new_test_impl);
 // submit_test!(42, "wsh-events", test_cases::wsh_events_impl);
 
