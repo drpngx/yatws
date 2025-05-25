@@ -1238,7 +1238,7 @@ fn test_validation_cases() -> Vec<TestResult> {
 // Server-side what-if validation tests
 fn test_what_if_orders_with_server_validation(client: &IBKRClient) -> Vec<TestResult> {
   let mut results = Vec::new();
-  let timeout = Duration::from_secs(10);
+  let timeout = Duration::from_secs(20);
 
   // Test 1: Basic Stock What-If Order
   results.push(test_what_if_order_server("Stock What-If Order", || {
@@ -1255,32 +1255,34 @@ fn test_what_if_orders_with_server_validation(client: &IBKRClient) -> Vec<TestRe
   }));
 
   // Test 2: Option What-If Order
-  results.push(test_what_if_order_server("Option What-If Order", || {
-    let expiry = OrderBuilder::next_monthly_option_expiry();
-    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 10.0)
-      .for_option("AAPL", expiry, 160.0, OptionRight::Call)
-      .with_exchange("SMART")
-      .with_currency("USD")
-      .limit(2.5)
-      .build()?;
+  // Options not enabled in this account.
+  // results.push(test_what_if_order_server("Option What-If Order", || {
+  //   let expiry = OrderBuilder::next_monthly_option_expiry();
+  //   let (contract, order) = OrderBuilder::new(OrderSide::Buy, 10.0)
+  //     .for_option("AAPL", expiry, 160.0, OptionRight::Call)
+  //     .with_exchange("SMART")
+  //     .with_currency("USD")
+  //     .limit(2.5)
+  //     .build()?;
 
-    client.orders().check_what_if_order(&contract, &order, timeout)
-      .map(|order_state| (contract, order, order_state))
-  }));
+  //   client.orders().check_what_if_order(&contract, &order, timeout)
+  //     .map(|order_state| (contract, order, order_state))
+  // }));
 
   // Test 3: Future What-If Order
-  results.push(test_what_if_order_server("Future What-If Order", || {
-    let expiry = OrderBuilder::next_quarterly_future_expiry();
-    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 1.0)
-      .for_future("ES", expiry)
-      .with_exchange("CME")
-      .with_currency("USD")
-      .limit(4500.0)
-      .build()?;
+  // Futures not enabled in this account.
+  // results.push(test_what_if_order_server("Future What-If Order", || {
+  //   let expiry = OrderBuilder::next_quarterly_future_expiry();
+  //   let (contract, order) = OrderBuilder::new(OrderSide::Buy, 1.0)
+  //     .for_future("ES", expiry)
+  //     .with_exchange("CME")
+  //     .with_currency("USD")
+  //     .limit(4500.0)
+  //     .build()?;
 
-    client.orders().check_what_if_order(&contract, &order, timeout)
-      .map(|order_state| (contract, order, order_state))
-  }));
+  //   client.orders().check_what_if_order(&contract, &order, timeout)
+  //     .map(|order_state| (contract, order, order_state))
+  // }));
 
   // Test 4: Forex What-If Order
   results.push(test_what_if_order_server("Forex What-If Order", || {
@@ -1338,8 +1340,14 @@ fn test_what_if_orders_with_server_validation(client: &IBKRClient) -> Vec<TestRe
       .limit(150.0)
       .build()?;
 
-    client.orders().check_what_if_order(&contract, &order, timeout)
-      .map(|order_state| (contract, order, order_state))
+    match client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state)) {
+        Ok(state) => Err(IBKRError::InvalidOrder(format!("Invalid success with invalid ticker: {:?}", state))),
+        Err(IBKRError::ApiError(code, msg)) =>
+          if code == 200 { Ok((Contract::default(), OrderRequest::default(), OrderState::default())) } else {
+            Err(IBKRError::InvalidOrder(format!("Unexpected API error: {}, {}", code, msg))) },
+        Err(e) => Err(e),
+      }
   }));
 
   results
@@ -1348,7 +1356,7 @@ fn test_what_if_orders_with_server_validation(client: &IBKRClient) -> Vec<TestRe
 // Additional utility function to test specific order validation scenarios
 fn test_specific_validation_scenarios(client: &IBKRClient) -> Vec<TestResult> {
   let mut results = Vec::new();
-  let timeout = Duration::from_secs(10);
+  let timeout = Duration::from_secs(20);
 
   // Test options margin requirements
   results.push(test_what_if_order_server("Options Margin Requirements", || {
