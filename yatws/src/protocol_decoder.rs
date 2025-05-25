@@ -752,6 +752,8 @@ pub enum ClientErrorCode {
   InvalidScalePriceAdjustmentInterval = 448,
   /// Unexpected scale price adjustment amount or interval.
   UnexpectedScalePriceAdjustment = 449,
+  /// No trading permissions.
+  NoTradingPermissions = 460,
   // Note: 507 Bad Message Length is already defined in the client section
 
   // --- TWS Error Codes (10000+) ---
@@ -1227,6 +1229,7 @@ impl fmt::Display for ClientErrorCode {
       ClientErrorCode::MissingScalePriceAdjustment => "Missing scale price adjustment amount or interval.",
       ClientErrorCode::InvalidScalePriceAdjustmentInterval => "Invalid scale price adjustment interval.",
       ClientErrorCode::UnexpectedScalePriceAdjustment => "Unexpected scale price adjustment amount or interval.",
+      ClientErrorCode::NoTradingPermissions => "No trading permissions.",
       // TWS Errors (10000+)
       ClientErrorCode::CrossCurrencyComboError => "Cross currency combo error.",
       ClientErrorCode::CrossCurrencyVolError => "Cross currency vol error.",
@@ -1637,6 +1640,7 @@ impl TryFrom<i32> for ClientErrorCode {
       447 => Ok(ClientErrorCode::MissingScalePriceAdjustment),
       448 => Ok(ClientErrorCode::InvalidScalePriceAdjustmentInterval),
       449 => Ok(ClientErrorCode::UnexpectedScalePriceAdjustment),
+      460 => Ok(ClientErrorCode::NoTradingPermissions),
 
       // TWS Errors (10000+)
       10000 => Ok(ClientErrorCode::CrossCurrencyComboError),

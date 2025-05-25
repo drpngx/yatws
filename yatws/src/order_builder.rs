@@ -1,8 +1,7 @@
-
 use crate::contract::{Contract, SecType, OptionRight, ComboLeg};
 use crate::order::{OrderRequest, OrderSide, OrderType, TimeInForce};
 use crate::base::IBKRError;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, NaiveDate, Datelike, Weekday};
 
 // --- Helper Enums/Structs for Builder (Keep necessary ones) ---
 
@@ -24,7 +23,6 @@ pub enum TriggerMethod {
   Midpoint = 8,
 }
 
-
 /// Build an order.
 /// The most [common types](https://www.interactivebrokers.com/campus/ibkr-api-page/order-types/#introduction)
 /// are supported, in addition to the usual `.with` pattern.
@@ -42,22 +40,14 @@ pub enum TriggerMethod {
 ///         .build()
 /// }
 ///
-/// fn example_order_with_conditions() -> Result<(Contract, OrderRequest), IBKRError> {
-///     // Example: Buy 100 MSFT if AAPL price > 180 AND MSFT volume > 1,000,000
-///     let aapl_conid = 265598; // Example ConId for AAPL
-///     let msft_conid = 272093; // Example ConId for MSFT
-///
-///     OrderBuilder::new(OrderSide::Buy, 100.0)
-///         .for_stock("MSFT")
-///         .with_exchange("SMART") // Volume condition requires SMART
+/// fn example_option_order() -> Result<(Contract, OrderRequest), IBKRError> {
+///     use chrono::NaiveDate;
+///     let expiry = OrderBuilder::next_monthly_option_expiry(); // Third Friday
+///     OrderBuilder::new(OrderSide::Buy, 10.0)
+///         .for_option("AAPL", expiry, 160.0, OptionRight::Call)
+///         .with_exchange("SMART")
 ///         .with_currency("USD")
-///         .market() // Submit as market order when conditions met
-///         .with_tif(TimeInForce::Day)
-///         // Condition 1: AAPL Price > 180
-///         .add_price_condition(aapl_conid, "SMART", 180.0, TriggerMethod::Default, true)
-///         // Condition 2: MSFT Volume > 1M (linked with AND)
-///         .with_next_condition_conjunction("and") // Specify AND for the *next* condition
-///         .add_volume_condition(msft_conid, "SMART", 1_000_000, true)
+///         .limit(2.5)
 ///         .build()
 /// }
 /// ```
@@ -109,7 +99,111 @@ impl OrderBuilder {
     }
   }
 
-  // --- Contract Methods (Keep as before) ---
+  // --- Expiry Date Helper Functions ---
+
+  /// Calculates the next monthly option expiry (third Friday of the current or next month).
+  /// This is calendar-based and does not take market holidays into account
+  pub fn next_monthly_option_expiry() -> NaiveDate {
+    Self::next_monthly_option_expiry_from_date(chrono::Utc::now().date_naive())
+  }
+
+  /// Calculates the next monthly option expiry from a given date.
+  /// This is calendar-based and does not take market holidays into account
+  pub fn next_monthly_option_expiry_from_date(from_date: NaiveDate) -> NaiveDate {
+    let mut year = from_date.year();
+    let mut month = from_date.month();
+
+    // Try current month first
+    let current_month_expiry = Self::third_friday_of_month(year, month);
+    if current_month_expiry > from_date {
+      return current_month_expiry;
+    }
+
+    // Move to next month
+    month += 1;
+    if month > 12 {
+      month = 1;
+      year += 1;
+    }
+
+    Self::third_friday_of_month(year, month)
+  }
+
+  /// Calculates the third Friday of a given month/year
+  pub fn third_friday_of_month(year: i32, month: u32) -> NaiveDate {
+    // Find the first day of the month
+    let first_day = NaiveDate::from_ymd_opt(year, month, 1)
+      .expect("Invalid date");
+
+    // Find the first Friday
+    let days_until_friday = match first_day.weekday() {
+      Weekday::Fri => 0,
+      Weekday::Sat => 6,
+      Weekday::Sun => 5,
+      Weekday::Mon => 4,
+      Weekday::Tue => 3,
+      Weekday::Wed => 2,
+      Weekday::Thu => 1,
+    };
+
+    let first_friday = first_day + chrono::Duration::days(days_until_friday as i64);
+
+    // Third Friday is 14 days after first Friday
+    first_friday + chrono::Duration::days(14)
+  }
+
+  /// Calculates the next quarterly future expiry (last Thursday of March/June/September/December).
+  /// This is calendar-based and does not take market holidays into account
+  pub fn next_quarterly_future_expiry() -> NaiveDate {
+    Self::next_quarterly_future_expiry_from_date(chrono::Utc::now().date_naive())
+  }
+
+  /// Calculates the next quarterly future expiry from a given date.
+  /// This is calendar-based and does not take market holidays into account
+  pub fn next_quarterly_future_expiry_from_date(from_date: NaiveDate) -> NaiveDate {
+    let current_year = from_date.year();
+    let current_month = from_date.month();
+
+    // Quarterly months: March (3), June (6), September (9), December (12)
+    let quarterly_months = [3, 6, 9, 12];
+
+    for &month in &quarterly_months {
+      if month >= current_month {
+        let expiry = Self::last_thursday_of_month(current_year, month);
+        if expiry > from_date {
+          return expiry;
+        }
+      }
+    }
+
+    // If no quarterly month found in current year, use March of next year
+    Self::last_thursday_of_month(current_year + 1, 3)
+  }
+
+  /// Calculates the last Thursday of a given month/year
+  pub fn last_thursday_of_month(year: i32, month: u32) -> NaiveDate {
+    // Get the last day of the month
+    let next_month = if month == 12 { 1 } else { month + 1 };
+    let next_year = if month == 12 { year + 1 } else { year };
+    let first_day_next_month = NaiveDate::from_ymd_opt(next_year, next_month, 1)
+      .expect("Invalid date");
+    let last_day = first_day_next_month - chrono::Duration::days(1);
+
+    // Find the last Thursday
+    let days_back_to_thursday = match last_day.weekday() {
+      Weekday::Thu => 0,
+      Weekday::Fri => 1,
+      Weekday::Sat => 2,
+      Weekday::Sun => 3,
+      Weekday::Mon => 4,
+      Weekday::Tue => 5,
+      Weekday::Wed => 6,
+    };
+
+    last_day - chrono::Duration::days(days_back_to_thursday as i64)
+  }
+
+  // --- Contract Methods ---
   pub fn for_stock(mut self, symbol: &str) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::Stock;
@@ -117,10 +211,10 @@ impl OrderBuilder {
     self
   }
 
-  pub fn for_option(mut self, symbol: &str, expiry: &str, strike: f64, right: OptionRight) -> Self {
+  pub fn for_option(mut self, symbol: &str, expiry: NaiveDate, strike: f64, right: OptionRight) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::Option;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.to_string());
+    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
     self.contract.strike = Some(strike);
     self.contract.right = Some(right);
     self.contract.multiplier = Some("100".to_string()); // Default US
@@ -128,10 +222,10 @@ impl OrderBuilder {
     self
   }
 
-  pub fn for_future(mut self, symbol: &str, expiry: &str) -> Self {
+  pub fn for_future(mut self, symbol: &str, expiry: NaiveDate) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::Future;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.to_string());
+    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
     self.is_combo = false;
     self
   }
@@ -173,10 +267,10 @@ impl OrderBuilder {
     self
   }
 
-  pub fn for_future_option(mut self, symbol: &str, expiry: &str, strike: f64, right: OptionRight) -> Self {
+  pub fn for_future_option(mut self, symbol: &str, expiry: NaiveDate, strike: f64, right: OptionRight) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::FutureOption;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.to_string());
+    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
     self.contract.strike = Some(strike);
     self.contract.right = Some(right);
     // Exchange, Currency, Multiplier likely needed via .with_ methods
@@ -193,10 +287,10 @@ impl OrderBuilder {
     self
   }
 
-  pub fn for_index_option(mut self, symbol: &str, expiry: &str, strike: f64, right: OptionRight) -> Self {
+  pub fn for_index_option(mut self, symbol: &str, expiry: NaiveDate, strike: f64, right: OptionRight) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::IndexOption;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.to_string());
+    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
     self.contract.strike = Some(strike);
     self.contract.right = Some(right);
     // Exchange, Currency, Multiplier likely needed via .with_ methods
@@ -204,10 +298,10 @@ impl OrderBuilder {
     self
   }
 
-  pub fn for_forward(mut self, symbol: &str, expiry: &str) -> Self {
+  pub fn for_forward(mut self, symbol: &str, expiry: NaiveDate) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::Forward;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.to_string());
+    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
     // Exchange, Currency likely needed via .with_ methods
     self.is_combo = false;
     self

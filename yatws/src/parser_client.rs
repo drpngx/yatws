@@ -230,6 +230,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::MissingScalePriceAdjustment |
     ClientErrorCode::InvalidScalePriceAdjustmentInterval |
     ClientErrorCode::UnexpectedScalePriceAdjustment |
+    ClientErrorCode::NoTradingPermissions |
     // TWS Order Errors (10000+)
     ClientErrorCode::MissingParentOrder |
     ClientErrorCode::InvalidDeltaHedgeOrder |

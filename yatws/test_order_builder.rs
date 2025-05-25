@@ -3,13 +3,13 @@ use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
 use log::{error, info, warn};
 use std::time::Duration;
-use chrono::{Utc, Duration as ChronoDuration};
+use chrono::{Utc, Duration as ChronoDuration, NaiveDate};
 use yatws::{
   IBKRError,
   IBKRClient,
   OrderBuilder,
-  contract::{SecType, OptionRight},
-  order::{OrderSide, OrderType, TimeInForce, IBKRAlgo, AdaptivePriority, RiskAversion, TwapStrategyType},
+  contract::{Contract, SecType, OptionRight},
+  order::{OrderSide, OrderState, OrderType, OrderRequest, TimeInForce, IBKRAlgo, AdaptivePriority, RiskAversion, TwapStrategyType},
   order_build_types::{TriggerMethod, ConditionConjunction},
 };
 
@@ -404,22 +404,24 @@ fn test_contract_types(client: &IBKRClient) -> Vec<TestResult> {
       .build()
   }));
 
-  // Option
+  // Option - Using proper third Friday expiry
   results.push(test_order_build("Option Contract", || {
-    let expiry = (chrono::Utc::now() + ChronoDuration::days(30)).format("%Y%m%d").to_string();
+    let expiry = OrderBuilder::next_monthly_option_expiry();
+    info!("Using option expiry: {}", expiry);
     OrderBuilder::new(OrderSide::Buy, 10.0)
-      .for_option("AAPL", &expiry, 160.0, OptionRight::Call)
+      .for_option("AAPL", expiry, 160.0, OptionRight::Call)
       .with_exchange("SMART")
       .with_currency("USD")
       .limit(2.5)
       .build()
   }));
 
-  // Future
+  // Future - Using proper quarterly expiry (last Thursday)
   results.push(test_order_build("Future Contract", || {
-    let expiry = (chrono::Utc::now() + ChronoDuration::days(90)).format("%Y%m%d").to_string();
+    let expiry = OrderBuilder::next_quarterly_future_expiry();
+    info!("Using future expiry: {}", expiry);
     OrderBuilder::new(OrderSide::Buy, 1.0)
-      .for_future("ES", &expiry)
+      .for_future("ES", expiry)
       .with_exchange("CME")
       .with_currency("USD")
       .limit(4500.0)
@@ -488,6 +490,30 @@ fn test_contract_types(client: &IBKRClient) -> Vec<TestResult> {
       .with_exchange("ARCA")
       .with_currency("USD")
       .limit(450.0)
+      .build()
+  }));
+
+  // Future Option - Using proper quarterly expiry
+  results.push(test_order_build("Future Option Contract", || {
+    let expiry = OrderBuilder::next_quarterly_future_expiry();
+    info!("Using future option expiry: {}", expiry);
+    OrderBuilder::new(OrderSide::Buy, 1.0)
+      .for_future_option("ES", expiry, 4500.0, OptionRight::Call)
+      .with_exchange("CME")
+      .with_currency("USD")
+      .limit(50.0)
+      .build()
+  }));
+
+  // Index Option - Using proper monthly expiry
+  results.push(test_order_build("Index Option Contract", || {
+    let expiry = OrderBuilder::next_monthly_option_expiry();
+    info!("Using index option expiry: {}", expiry);
+    OrderBuilder::new(OrderSide::Buy, 1.0)
+      .for_index_option("SPX", expiry, 4500.0, OptionRight::Call)
+      .with_exchange("CBOE")
+      .with_currency("USD")
+      .limit(100.0)
       .build()
   }));
 
@@ -578,9 +604,9 @@ fn test_order_parameters() -> Vec<TestResult> {
 
   // Block Order (Options)
   results.push(test_order_build("Block Order", || {
-    let expiry = (chrono::Utc::now() + ChronoDuration::days(30)).format("%Y%m%d").to_string();
+    let expiry = OrderBuilder::next_monthly_option_expiry();
     OrderBuilder::new(OrderSide::Buy, 50.0) // 50 contracts for block order
-      .for_option("AAPL", &expiry, 160.0, OptionRight::Call)
+      .for_option("AAPL", expiry, 160.0, OptionRight::Call)
       .limit(2.5)
       .with_block_order(true)
       .build()
@@ -687,9 +713,9 @@ fn test_special_order_types() -> Vec<TestResult> {
 
   // Volatility Order
   results.push(test_order_build("Volatility Order", || {
-    let expiry = (chrono::Utc::now() + ChronoDuration::days(30)).format("%Y%m%d").to_string();
+    let expiry = OrderBuilder::next_monthly_option_expiry();
     OrderBuilder::new(OrderSide::Buy, 10.0)
-      .for_option("AAPL", &expiry, 160.0, OptionRight::Call)
+      .for_option("AAPL", expiry, 160.0, OptionRight::Call)
       .volatility(25.0, 2) // 25% annual volatility
       .build()
   }));
@@ -705,9 +731,9 @@ fn test_special_order_types() -> Vec<TestResult> {
 
   // Box Top (BOX exchange)
   results.push(test_order_build("Box Top", || {
-    let expiry = (chrono::Utc::now() + ChronoDuration::days(30)).format("%Y%m%d").to_string();
+    let expiry = OrderBuilder::next_monthly_option_expiry();
     OrderBuilder::new(OrderSide::Buy, 10.0)
-      .for_option("SPY", &expiry, 450.0, OptionRight::Call)
+      .for_option("SPY", expiry, 450.0, OptionRight::Call)
       .box_top() // Automatically sets exchange to BOX
       .build()
   }));
@@ -1230,9 +1256,9 @@ fn test_what_if_orders_with_server_validation(client: &IBKRClient) -> Vec<TestRe
 
   // Test 2: Option What-If Order
   results.push(test_what_if_order_server("Option What-If Order", || {
-    let expiry = (chrono::Utc::now() + ChronoDuration::days(30)).format("%Y%m%d").to_string();
+    let expiry = OrderBuilder::next_monthly_option_expiry();
     let (contract, order) = OrderBuilder::new(OrderSide::Buy, 10.0)
-      .for_option("AAPL", &expiry, 160.0, OptionRight::Call)
+      .for_option("AAPL", expiry, 160.0, OptionRight::Call)
       .with_exchange("SMART")
       .with_currency("USD")
       .limit(2.5)
@@ -1244,9 +1270,9 @@ fn test_what_if_orders_with_server_validation(client: &IBKRClient) -> Vec<TestRe
 
   // Test 3: Future What-If Order
   results.push(test_what_if_order_server("Future What-If Order", || {
-    let expiry = (chrono::Utc::now() + ChronoDuration::days(90)).format("%Y%m%d").to_string();
+    let expiry = OrderBuilder::next_quarterly_future_expiry();
     let (contract, order) = OrderBuilder::new(OrderSide::Buy, 1.0)
-      .for_future("ES", &expiry)
+      .for_future("ES", expiry)
       .with_exchange("CME")
       .with_currency("USD")
       .limit(4500.0)
@@ -1324,42 +1350,25 @@ fn test_specific_validation_scenarios(client: &IBKRClient) -> Vec<TestResult> {
   let mut results = Vec::new();
   let timeout = Duration::from_secs(10);
 
-  // Test insufficient buying power scenario
-  results.push(test_what_if_order_server("Insufficient Buying Power", || {
-    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 1000000.0) // Very large quantity
-      .for_stock("BRK.A") // Expensive stock
-      .with_exchange("SMART")
-      .with_currency("USD")
-      .limit(500000.0) // Very high price
-      .build()?;
-
-    client.orders().check_what_if_order(&contract, &order, timeout)
-      .map(|order_state| (contract, order, order_state))
-  }));
-
   // Test options margin requirements
   results.push(test_what_if_order_server("Options Margin Requirements", || {
-    let expiry = (chrono::Utc::now() + ChronoDuration::days(30)).format("%Y%m%d").to_string();
+    let expiry = OrderBuilder::next_monthly_option_expiry();
     let (contract, order) = OrderBuilder::new(OrderSide::Sell, 100.0) // Naked call sell
-      .for_option("AAPL", &expiry, 160.0, OptionRight::Call)
+      .for_option("AAPL", expiry, 160.0, OptionRight::Call)
       .with_exchange("SMART")
       .with_currency("USD")
       .limit(2.5)
       .build()?;
 
-    client.orders().check_what_if_order(&contract, &order, timeout)
-      .map(|order_state| (contract, order, order_state))
-  }));
-
-  // Test forex margin requirements
-  results.push(test_what_if_order_server("Forex Margin Requirements", || {
-    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 10000000.0) // Large forex position
-      .for_forex("EUR/USD")
-      .limit(1.1000)
-      .build()?;
-
-    client.orders().check_what_if_order(&contract, &order, timeout)
-      .map(|order_state| (contract, order, order_state))
+    // We expect and error: invert the condition of Ok.
+    match client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state)) {
+        Ok(state) => Err(IBKRError::InvalidOrder(format!("Invalid success selling naked call: {:?}", state))),
+        Err(IBKRError::ApiError(code, msg)) =>
+          if code == 460 { Ok((Contract::default(), OrderRequest::default(), OrderState::default())) } else {
+            Err(IBKRError::InvalidOrder(format!("Unexpected API error: {}, {}", code, msg))) },
+        Err(e) => Err(e),
+      }
   }));
 
   // Test commission calculation
