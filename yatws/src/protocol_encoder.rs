@@ -2876,12 +2876,4 @@ info.".to_string()));
     self.write_str_to_cursor(&mut cursor, xml_data)?;
     Ok(self.finish_encoding(cursor))
   }
-
-  /// Encodes a disconnect message to cleanly terminate the TWS session
-  pub fn encode_disconnect(&self) -> Result<Vec<u8>, IBKRError> {
-    // TWS disconnect is typically just closing the connection, but we should
-    // send any pending messages and ensure clean shutdown
-    // For now, we'll create an empty message that signals intent to disconnect
-    Ok(vec![])
-  }
 } // end impl Encoder

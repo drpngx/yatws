@@ -685,8 +685,10 @@ pub mod client_manager {
     /// This is called internally by the connection logic or when specific error messages
     /// indicate a disconnection.
     pub(crate) fn set_connected_status(&self, status: bool) {
-      self.connected.store(status, Ordering::Relaxed);
-      info!("ClientManager connection status set to: {}", status);
+      let old_status = self.connected.swap(status, Ordering::Relaxed);
+      if old_status != status {
+        info!("ClientManager connection status changed: {} -> {}", old_status, status);
+      }
     }
   }
 
@@ -739,11 +741,14 @@ pub mod client_manager {
 
     /// Handles notification that the connection was closed (e.g., detected by reader thread).
     fn connection_closed(&self) {
-      error!("ClientManager notified: Connection Closed.");
-      self.set_connected_status(false);
-      // Clear last error maybe? Or keep it for diagnostics? Keep for now.
-      // TODO: Notify observers
-      // self.notify_observers_connection_closed();
+      let was_connected = self.connected.swap(false, Ordering::Relaxed);
+      if was_connected {
+        error!("ClientManager notified: Connection Closed.");
+        // TODO: Notify observers
+        // self.notify_observers_connection_closed();
+      } else {
+        debug!("ClientManager: connection_closed() called but already disconnected");
+      }
     }
 
     /// Handles the CURRENT_TIME message.
