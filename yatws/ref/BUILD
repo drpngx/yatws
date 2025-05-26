@@ -73,3 +73,9 @@ py_binary(
     srcs = ["option_price_calc.py"],
     deps = ["//:ibapi"],
 )
+
+py_binary(
+    name = "smart_components",
+    srcs = ["smart_components.py"],
+    deps = ["//:ibapi"],
+)
