@@ -421,34 +421,26 @@ pub(super) fn order_global_cancel_impl(client: &IBKRClient, is_live: bool) -> Re
 pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
   info!("--- Testing Option Exercise/Lapse ---");
   if is_live {
-    warn!("This test requires an account with an existing IBM option position.");
-    warn!("It will attempt to EXERCISE 1 contract and LAPSE 1 contract (if available).");
-    warn!("Ensure you have at least 2 contracts of a near-term IBM option.");
-    warn!("The test uses a placeholder req_id (9001, 9002) and assumes the first account.");
+    warn!("This test will BUY 2 IBM call option contracts and then EXERCISE 1 and LAPSE 1.");
+    warn!("The test will select the lowest strike (most in-the-money) call option for the current month.");
+    warn!("Ensure you have sufficient buying power for IBM options.");
     std::thread::sleep(Duration::from_secs(5));
   }
 
   let order_mgr = client.orders();
   let acct_mgr = client.account();
-  let ref_data_mgr = client.data_ref(); // For finding a suitable option
+  let ref_data_mgr = client.data_ref();
 
   // 1. Get account ID
   let account_id = acct_mgr.get_account_info()?.account_id;
   info!("Using account ID: {}", account_id);
 
-  // 2. Find a suitable IBM option to "exercise" and "lapse"
-  //    This is tricky for a golden test. We'll try to find any IBM option.
-  //    In a real scenario, you'd know the specific contract.
-  let mut stock_contract = Contract::stock("IBM");
-  let contract_details_list = ref_data_mgr.get_contract_details(&stock_contract)
-    .context("Failed to get contract details for IBM stock to find options")?;
-  if contract_details_list.is_empty() {
-    return Err(anyhow!("No contract details found for IBM stock."));
-  }
+  // 2. Find IBM call options for the current month
   let mut option_search_contract = Contract::new();
   option_search_contract.symbol = "IBM".to_string();
   option_search_contract.sec_type = SecType::Option;
   option_search_contract.currency = "USD".to_string();
+  option_search_contract.exchange = "SMART".to_string();
   option_search_contract.last_trade_date_or_contract_month = Some(OrderBuilder::next_monthly_option_expiry().format("%Y%m%d").to_string());
   option_search_contract.right = Some(OptionRight::Call);
 
@@ -456,59 +448,150 @@ pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> 
     .context("Failed to get option contract details for IBM")?;
 
   if option_details_list.is_empty() {
-    return Err(anyhow!("No IBM options found to test exercise/lapse. Ensure market data subscription for IBM options."));
+    return Err(anyhow!("No IBM call options found for current month. Ensure market data subscription for IBM options."));
   }
-  // For the test, pick the first available option contract.
-  // A real application would specify the exact contract.
-  let option_to_exercise = option_details_list[0].contract.clone();
-  info!("Selected option for test: ConID={}, Symbol={}, Expiry={}, Strike={}, Right={:?}",
-        option_to_exercise.con_id, option_to_exercise.symbol,
-        option_to_exercise.last_trade_date_or_contract_month.as_deref().unwrap_or("N/A"),
-        option_to_exercise.strike.unwrap_or(0.0), option_to_exercise.right);
 
+  // 3. Find the lowest strike call option (most likely to be in-the-money)
+  let mut best_option = None;
+  let mut lowest_strike = f64::MAX;
 
-  // 3. Attempt to Exercise 1 contract (if live, this needs a position)
-  let exercise_req_id = 9001; // Arbitrary req_id for this operation
-  let exercise_qty = 1;
-  let override_exercise = false; // Usually false unless forcing OTM exercise
-
-  info!("Attempting to EXERCISE {} contract(s) of {:?} with ReqID {}", exercise_qty, option_to_exercise.local_symbol.as_deref().unwrap_or(&option_to_exercise.symbol), exercise_req_id);
-  match order_mgr.exercise_option(exercise_req_id, &option_to_exercise, yatws::order::ExerciseAction::Exercise, exercise_qty, &account_id, override_exercise) {
-    Ok(_) => info!("Exercise request sent for ReqID {}. Monitor account updates.", exercise_req_id),
-    Err(e) => {
-      // In non-live (replay), this might fail if not in logs. In live, it might fail if no position.
-      warn!("Failed to send EXERCISE request for ReqID {}: {:?}. This might be expected if no position or in replay.", exercise_req_id, e);
-      // Don't fail the whole test for this, as setup is complex.
+  for details in &option_details_list {
+    if let Some(strike) = details.contract.strike {
+      if strike < lowest_strike {
+        lowest_strike = strike;
+        best_option = Some(details.contract.clone());
+      }
     }
   }
 
-  // Allow time for processing if live
-  if is_live { std::thread::sleep(Duration::from_secs(5)); }
+  let option_contract = best_option.ok_or_else(|| anyhow!("No valid IBM call option found with strike price"))?;
 
-  // 4. Attempt to Lapse 1 contract (if live, this needs a position)
-  // For testing, we'll use the same option contract. A real scenario might use a different one.
-  let lapse_req_id = 9002; // Arbitrary req_id
+  info!("Selected lowest strike call option: ConID={}, Symbol={}, Expiry={}, Strike={}, Right={:?}",
+        option_contract.con_id, option_contract.symbol,
+        option_contract.last_trade_date_or_contract_month.as_deref().unwrap_or("N/A"),
+        option_contract.strike.unwrap_or(0.0), option_contract.right);
+
+  // 4. Buy 2 option contracts at market price
+  info!("Placing market order to BUY 2 {} call option contracts...", option_contract.symbol);
+
+  let option_buy_request = OrderRequest {
+    side: OrderSide::Buy,
+    order_type: OrderType::Market,
+    quantity: 2.0, // Buy 2 contracts so we can exercise 1 and lapse 1
+    time_in_force: TimeInForce::Day,
+    transmit: true,
+    ..Default::default()
+  };
+
+  let buy_order_id = order_mgr.place_order(option_contract.clone(), option_buy_request)
+    .context("Failed to place option buy order")?;
+
+  info!("Option BUY order placed with ID: {}. Waiting for execution...", buy_order_id);
+
+  // 5. Wait for the option purchase to fill
+  let buy_timeout = Duration::from_secs(30);
+  match order_mgr.try_wait_order_executed(&buy_order_id, buy_timeout) {
+    Ok(OrderStatus::Filled) => {
+      info!("Option BUY order {} filled successfully.", buy_order_id);
+    }
+    Ok(status) => {
+      error!("Option BUY order {} did not fill. Final status: {:?}", buy_order_id, status);
+      return Err(anyhow!("Option BUY order {} failed to fill. Status: {:?}", buy_order_id, status));
+    }
+    Err(e) => {
+      error!("Error waiting for option BUY order {}: {:?}", buy_order_id, e);
+      return Err(e).context(format!("Waiting for option BUY order {} failed", buy_order_id));
+    }
+  }
+
+  // 6. Verify we have the option position
+  info!("Verifying option position exists...");
+  std::thread::sleep(Duration::from_secs(3)); // Allow position data to update
+
+  let positions = acct_mgr.list_open_positions()?;
+  let option_position = positions.iter().find(|p| {
+    p.contract.symbol == option_contract.symbol &&
+    p.contract.sec_type == SecType::Option &&
+    p.contract.strike == option_contract.strike &&
+    p.contract.right == option_contract.right &&
+    p.contract.last_trade_date_or_contract_month == option_contract.last_trade_date_or_contract_month
+  });
+
+  match option_position {
+    Some(pos) if pos.quantity >= 2.0 => {
+      info!("Verified option position: {} has quantity {}", pos.symbol, pos.quantity);
+    }
+    Some(pos) => {
+      warn!("Option position exists but quantity {} is less than expected 2.0", pos.quantity);
+      // Continue anyway, adjust quantities
+    }
+    None => {
+      error!("Option position not found after purchase!");
+      return Err(anyhow!("Option position not found after successful purchase"));
+    }
+  }
+
+  // 7. Exercise 1 contract
+  let exercise_req_id = 9001;
+  let exercise_qty = 1;
+  let override_exercise = false;
+
+  info!("Attempting to EXERCISE {} contract(s) of {} with ReqID {}",
+        exercise_qty, option_contract.local_symbol.as_deref().unwrap_or(&option_contract.symbol), exercise_req_id);
+
+  match order_mgr.exercise_option(exercise_req_id, &option_contract, yatws::order::ExerciseAction::Exercise, exercise_qty, &account_id, override_exercise) {
+    Ok(_) => info!("Exercise request sent for ReqID {}. Monitor account updates.", exercise_req_id),
+    Err(e) => {
+      error!("Failed to send EXERCISE request for ReqID {}: {:?}", exercise_req_id, e);
+      return Err(e).context("Exercise option request failed");
+    }
+  }
+
+  // Allow time for processing
+  std::thread::sleep(Duration::from_secs(5));
+
+  // 8. Lapse 1 contract (if we still have position)
+  let lapse_req_id = 9002;
   let lapse_qty = 1;
-  let override_lapse = false; // Usually false
+  let override_lapse = false;
 
-  info!("Attempting to LAPSE {} contract(s) of {:?} with ReqID {}", lapse_qty, option_to_exercise.local_symbol.as_deref().unwrap_or(&option_to_exercise.symbol), lapse_req_id);
-  match order_mgr.exercise_option(lapse_req_id, &option_to_exercise, yatws::order::ExerciseAction::Lapse, lapse_qty, &account_id, override_lapse) {
+  info!("Attempting to LAPSE {} contract(s) of {} with ReqID {}",
+        lapse_qty, option_contract.local_symbol.as_deref().unwrap_or(&option_contract.symbol), lapse_req_id);
+
+  match order_mgr.exercise_option(lapse_req_id, &option_contract, yatws::order::ExerciseAction::Lapse, lapse_qty, &account_id, override_lapse) {
     Ok(_) => info!("Lapse request sent for ReqID {}. Monitor account updates.", lapse_req_id),
     Err(e) => {
-      warn!("Failed to send LAPSE request for ReqID {}: {:?}. This might be expected if no position or in replay.", lapse_req_id, e);
+      warn!("Failed to send LAPSE request for ReqID {}: {:?}. This might be expected if position was reduced by exercise.", lapse_req_id, e);
     }
   }
 
   if is_live {
-    info!("Exercise/Lapse requests sent. Manual verification of account and position changes is required for live test.");
-    info!("Waiting for 10 seconds to allow observation of potential messages...");
-    std::thread::sleep(Duration::from_secs(10));
+    info!("Exercise/Lapse requests completed. Waiting 15 seconds for processing...");
+    std::thread::sleep(Duration::from_secs(15));
+
+    // Check final positions
+    info!("Checking final positions after exercise/lapse operations...");
+    let final_positions = acct_mgr.list_open_positions()?;
+
+    // Look for the underlying stock position (from exercise)
+    if let Some(stock_pos) = final_positions.iter().find(|p| p.contract.symbol == "IBM" && p.contract.sec_type == SecType::Stock) {
+      info!("Found IBM stock position from exercise: quantity = {}", stock_pos.quantity);
+    }
+
+    // Look for remaining option position
+    if let Some(opt_pos) = final_positions.iter().find(|p| {
+      p.contract.symbol == option_contract.symbol &&
+      p.contract.sec_type == SecType::Option &&
+      p.contract.strike == option_contract.strike
+    }) {
+      info!("Remaining {} option position: quantity = {}", opt_pos.symbol, opt_pos.quantity);
+    }
+
+    info!("Manual verification of exercise/lapse operations and resulting positions is recommended.");
   } else {
     info!("Exercise/Lapse test sequence completed for replay mode.");
   }
 
-  // This test primarily checks if the calls can be made.
-  // Verifying the outcome requires checking account/position data, which is complex for an automated golden.
   Ok(())
 }
 

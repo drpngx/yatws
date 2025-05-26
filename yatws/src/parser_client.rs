@@ -370,7 +370,6 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     // TWS Reference Data Errors
     ClientErrorCode::NoRecordForConid | // Placeholder, Deprecated
     ClientErrorCode::NoMarketRuleForConid | // Placeholder
-    ClientErrorCode::NoSecurityDefinitionFound |
     ClientErrorCode::AmbiguousContract | // Special code 2001
     ClientErrorCode::InvalidRoute | // Deprecated
     ClientErrorCode::ContractNotAvailableForTrading |
@@ -401,7 +400,6 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::FailSendCanWshMetaData |
     ClientErrorCode::FailSendReqWshEventData |
     ClientErrorCode::FailSendCanWshEventData |
-    ClientErrorCode::NoSecurityDefinitionFound |
     // TWS Financial Data Errors
     ClientErrorCode::FundamentalsDataNotAvailable |
     ClientErrorCode::DuplicateWshMetadataRequest |
