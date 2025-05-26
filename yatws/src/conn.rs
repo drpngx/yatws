@@ -197,6 +197,52 @@ mod socket {
     Ok(())
   }
 
+  fn read_framed_message_body_blocking(stream: &mut TcpStream) -> Result<Vec<u8>, IBKRError> {
+    // Remove any existing timeout - we want pure blocking behavior
+    stream.set_read_timeout(None)
+      .map_err(|e| IBKRError::SocketError(format!("Failed to clear read timeout: {}", e)))?;
+
+    // Read 4-byte message size (BLOCKS until available or socket closed)
+    let mut size_buf = [0u8; 4];
+    stream.read_exact(&mut size_buf)
+      .map_err(|e| match e.kind() {
+        std::io::ErrorKind::UnexpectedEof =>
+          IBKRError::ConnectionFailed("Connection closed while reading message size".to_string()),
+        std::io::ErrorKind::ConnectionReset |
+        std::io::ErrorKind::ConnectionAborted |
+        std::io::ErrorKind::BrokenPipe =>
+          IBKRError::ConnectionFailed(format!("Connection lost: {}", e)),
+        _ => IBKRError::SocketError(format!("Reading message size: {}", e)),
+      })?;
+
+    let size = Cursor::new(size_buf).read_u32::<BigEndian>()
+      .map_err(|e| IBKRError::ParseError(format!("Parsing message size: {}", e)))? as usize;
+
+    if size == 0 {
+      return Ok(Vec::new());
+    }
+
+    const MAX_MSG_SIZE: usize = 10 * 1024 * 1024;
+    if size > MAX_MSG_SIZE {
+      return Err(IBKRError::InternalError(format!("Message size too large: {}", size)));
+    }
+
+    // Read message body (BLOCKS until complete or socket closed)
+    let mut msg_buf = vec![0u8; size];
+    stream.read_exact(&mut msg_buf)
+      .map_err(|e| match e.kind() {
+        std::io::ErrorKind::UnexpectedEof =>
+          IBKRError::ConnectionFailed(format!("Connection closed while reading {} byte message", size)),
+        std::io::ErrorKind::ConnectionReset |
+        std::io::ErrorKind::ConnectionAborted |
+        std::io::ErrorKind::BrokenPipe =>
+          IBKRError::ConnectionFailed(format!("Connection lost while reading message: {}", e)),
+        _ => IBKRError::SocketError(format!("Reading message body ({} bytes): {}", size, e)),
+      })?;
+
+    Ok(msg_buf)
+  }
+
   fn read_framed_message_body(stream: &mut TcpStream, timeout: Duration) -> Result<Vec<u8>, IBKRError> {
     let mut size_buf = [0u8; 4];
     stream.set_read_timeout(Some(timeout)).map_err(|e| IBKRError::SocketError(format!("Failed to set read timeout: {}", e)))?;
@@ -364,8 +410,6 @@ mod socket {
       Ok((stream, server_version, connection_time))
     }
 
-
-    // start_reader_thread remains the same
     fn start_reader_thread(
       &self,
       mut reader_stream: TcpStream,
@@ -373,7 +417,7 @@ mod socket {
       server_version: i32,
       logger_clone: Option<ConnectionLogger>,
     ) -> Result<(), IBKRError> {
-      log::info!("Starting the reader thread.");
+      log::info!("Starting the reader thread (event-driven, no polling).");
 
       let stop_flag_clone = self.stop_flag.clone();
       let reader_thread_handle_clone = self.reader_thread.clone();
@@ -383,73 +427,54 @@ mod socket {
 
       let handle = thread::spawn(move || {
         debug!("Message reader thread started (Server Version: {})", server_version);
-        // This needs to be tight because it introduces latency during shutdown.
-        let read_loop_timeout = Duration::from_millis(200);
 
+        // NO TIMEOUT - pure blocking reads, only interrupted by socket shutdown
         loop {
+          // Quick stop flag check (no polling loop needed)
           if *stop_flag_clone.lock() {
-            debug!("Reader thread received stop signal, exiting gracefully.");
+            debug!("Reader thread received stop signal.");
             break;
           }
 
-          match read_framed_message_body(&mut reader_stream, read_loop_timeout) {
+          // PURE BLOCKING READ - thread sleeps until data arrives or socket is closed
+          match read_framed_message_body_blocking(&mut reader_stream) {
             Ok(msg_data) => {
               if msg_data.is_empty() { continue; }
 
-              // Check stop flag before processing message
-              if *stop_flag_clone.lock() {
-                debug!("Reader thread: stop signal detected, discarding message and exiting.");
-                break;
-              }
-
-              // --- Log Received Message ---
+              // Log received message
               if let Some(logger) = &thread_logger {
                 logger.log_message(LogDirection::Recv, &msg_data);
               }
-              // --- End Logging ---
 
               if let Err(e) = process_message(&mut handler, &msg_data) {
                 error!("Error processing message [{}]: {:?}", msg_to_string(&msg_data), e);
               }
             },
-            Err(IBKRError::Timeout(_)) => {
-              // Check stop flag on timeout - this is our main exit point during shutdown
-              continue;
-            }
-            Err(IBKRError::ConnectionFailed(msg)) | Err(IBKRError::SocketError(msg)) => {
-              // Always check stop flag first for any connection error
-              if *stop_flag_clone.lock() {
-                debug!("Reader thread: Connection error during shutdown (expected): {}", msg);
-                break; // Exit loop quietly
-              }
-
-              if msg.contains("timed out") || msg.contains("reset") || msg.contains("broken pipe") || msg.contains("refused") || msg.contains("closed") || msg.contains("EOF") || msg.contains("network") || msg.contains("host is down") {
-                error!("Connection lost/error in reader thread: {}", msg);
-                handler.client.connection_closed();
-                break;
-              } else {
-                warn!("Unhandled socket/connection error in reader: {}", msg);
-                thread_sleep(Duration::from_millis(100));
-              }
+            // Socket shutdown/close immediately breaks the blocking read
+            Err(IBKRError::ConnectionFailed(_)) |
+            Err(IBKRError::SocketError(_)) => {
+              debug!("Reader thread: socket closed/shutdown detected.");
+              handler.client.connection_closed();
+              break; // Exit immediately on socket errors
             },
             Err(e) => {
-              error!("Non-IO error in reader thread: {:?}", e);
-              thread_sleep(Duration::from_millis(100));
+              error!("Unexpected error in reader thread: {:?}", e);
+              break; // Exit on unexpected errors
             }
           }
-        } // End loop
+        }
 
-        // --- Cleanup ---
+        // Cleanup
         info!("Message reader thread stopping cleanup...");
         *stop_flag_clone.lock() = true;
-
         *reader_thread_handle_clone.lock() = None;
         debug!("Message reader thread finished.");
-      }); // End thread::spawn
+      });
 
       *self.reader_thread.lock() = Some(handle);
       Ok(())
     }
+
   } // end impl SocketConnection
 
   // --- Implement the Connection Trait ---
@@ -462,66 +487,49 @@ mod socket {
     fn disconnect(&mut self) -> Result<(), IBKRError> {
       info!("Disconnecting from TWS...");
 
-      // 1. Signal reader to stop (but don't close socket yet)
-      *self.stop_flag.lock() = true;
-      debug!("Stop signal sent to reader thread");
-
-      // 2. Wait for reader thread to exit gracefully (up to 3 seconds)
-      let shutdown_timeout = Duration::from_secs(3);
-      let start_time = std::time::Instant::now();
-
-      loop {
-        if self.reader_thread.lock().as_ref().map_or(true, |h| h.is_finished()) {
-          debug!("Reader thread has exited");
-          break;
-        }
-
-        if start_time.elapsed() > shutdown_timeout {
-          warn!("Reader thread didn't exit within timeout, proceeding with socket closure");
-          break;
-        }
-
-        std::thread::sleep(Duration::from_millis(5));
-      }
-
-      // 3. Now safely close the socket and clean up
       let mut reader_handle_guard = self.reader_thread.lock();
       let mut state = self.inner_state.lock();
 
-      // Close socket
+      // 1. IMMEDIATELY shutdown socket - this interrupts the blocking read
       if let Some(stream) = &mut state.stream {
-        if let Err(e) = stream.flush() {
-          warn!("Error flushing stream during disconnect: {}", e);
-        }
-        if let Err(e) = stream.shutdown(std::net::Shutdown::Write) {
-          if e.kind() != std::io::ErrorKind::NotConnected &&
-            e.kind() != std::io::ErrorKind::BrokenPipe {
-              warn!("Error shutting down write side during disconnect: {}", e);
-            }
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        debug!("Shutting down socket to interrupt blocking read...");
+
+        // Shutdown both directions immediately
         if let Err(e) = stream.shutdown(std::net::Shutdown::Both) {
           if e.kind() != std::io::ErrorKind::NotConnected &&
             e.kind() != std::io::ErrorKind::BrokenPipe {
-              warn!("Error shutting down socket during disconnect: {}", e);
+              warn!("Error shutting down socket: {}", e);
             }
         }
+        debug!("Socket shutdown complete - blocking read should be interrupted.");
       }
 
-      // Reset state
+      // 2. Set stop flag (backup safety)
+      *self.stop_flag.lock() = true;
+
+      // 3. Reset connection state
       state.connected = false;
       state.h3_sent = false;
       state.stream = None;
       state.handler = None;
 
-      // Join reader thread
+      // 4. Join reader thread - should be VERY fast since socket is shutdown
       let reader_handle = reader_handle_guard.take();
       drop(state);
       drop(reader_handle_guard);
 
       if let Some(handle) = reader_handle {
-        if let Err(e) = handle.join() {
-          error!("Error joining reader thread: {:?}", e);
+        debug!("Waiting for reader thread to join...");
+
+        // Since we shut down the socket, the blocking read should return immediately
+        // with a connection error, so this should be very fast
+        match handle.join() {
+          Ok(()) => {
+            debug!("Reader thread joined successfully.");
+          },
+          Err(e) => {
+            error!("Error joining reader thread: {:?}", e);
+          }
         }
       }
 
