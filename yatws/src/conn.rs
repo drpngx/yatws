@@ -383,7 +383,8 @@ mod socket {
 
       let handle = thread::spawn(move || {
         debug!("Message reader thread started (Server Version: {})", server_version);
-        let read_loop_timeout = Duration::from_secs(2);
+        // This needs to be tight because it introduces latency during shutdown.
+        let read_loop_timeout = Duration::from_millis(200);
 
         loop {
           if *stop_flag_clone.lock() {
