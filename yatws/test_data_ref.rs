@@ -355,8 +355,8 @@ pub(super) fn smart_components_impl(client: &IBKRClient, _is_live: bool) -> Resu
         }
       }
       Err(e) => {
-        warn!("SPY SMART components request failed (not critical): {:?}", e);
-        // Don't mark as overall failure since SPY might have different availability
+        error!("SPY SMART components request failed: {:?}", e);
+        overall_success = false;
       }
     }
   }
