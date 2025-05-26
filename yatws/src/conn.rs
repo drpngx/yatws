@@ -480,7 +480,7 @@ mod socket {
           break;
         }
 
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(5));
       }
 
       // 3. Now safely close the socket and clean up
