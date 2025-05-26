@@ -369,40 +369,140 @@ pub(super) fn smart_components_impl(client: &IBKRClient, _is_live: bool) -> Resu
 }
 
 pub(super) fn market_rule_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
-  info!("--- Testing Market Rule ---");
+  info!("--- Testing Market Rule (Dynamic Discovery) ---");
   let data_ref_mgr = client.data_ref();
   let mut overall_success = true;
+  let mut discovered_rule_ids = std::collections::HashSet::new();
 
-  // Test with common market rule IDs
-  let rule_ids = vec![26, 1, 239]; // Common rule IDs for different markets
+  // Define test contracts for different instrument types
+  let test_contracts = vec![
+    ("NYSE Stock", Contract::stock_with_exchange("IBM", "NYSE", "USD")),
+    ("NASDAQ Stock", Contract::stock_with_exchange("AAPL", "NASDAQ", "USD")),
+    ("Forex", {
+      let mut forex = Contract::new();
+      forex.symbol = "EUR".to_string();
+      forex.sec_type = SecType::Forex;
+      forex.exchange = "IDEALPRO".to_string();
+      forex.currency = "USD".to_string();
+      forex
+    }),
+    ("Bond", {
+      let mut bond = Contract::new();
+      bond.symbol = "912828C57".to_string(); // US Treasury bond CUSIP
+      bond.sec_type = SecType::Bond;
+      bond.exchange = "SMART".to_string();
+      bond.currency = "USD".to_string();
+      bond
+    }),
+  ];
 
-  for rule_id in rule_ids {
-    info!("Getting market rule for ID: {}", rule_id);
-    match data_ref_mgr.get_market_rule(rule_id) {
-      Ok(market_rule) => {
-        info!("Successfully received market rule {}", market_rule.market_rule_id);
-        info!("  Number of price increments: {}", market_rule.price_increments.len());
+  // Discover market rule IDs from contract details
+  info!("Discovering market rule IDs from contract details...");
+  for (contract_type, contract) in &test_contracts {
+    info!("Getting contract details for {}: {}", contract_type, contract.symbol);
 
-        // Show first few price increments
-        for (i, increment) in market_rule.price_increments.iter().enumerate().take(5) {
-          info!("    Increment {}: LowEdge=${:.4}, Increment=${:.4}",
-                i + 1, increment.low_edge, increment.increment);
+    match data_ref_mgr.get_contract_details(contract) {
+      Ok(details_list) => {
+        if details_list.is_empty() {
+          warn!("No contract details found for {} ({})", contract_type, contract.symbol);
+          continue;
         }
-        if market_rule.price_increments.len() > 5 {
-          info!("    ... and {} more increments", market_rule.price_increments.len() - 5);
+
+        for (i, details) in details_list.iter().enumerate() {
+          let market_rule_ids_str = &details.market_rule_ids;
+          info!("  Contract {}: ConID={}, MarketRuleIds='{}'",
+                i + 1, details.contract.con_id, market_rule_ids_str);
+
+          if !market_rule_ids_str.is_empty() {
+            // Parse comma-separated market rule IDs
+            for rule_id_str in market_rule_ids_str.split(',') {
+              let rule_id_str = rule_id_str.trim();
+              if !rule_id_str.is_empty() {
+                match rule_id_str.parse::<i32>() {
+                  Ok(rule_id) => {
+                    discovered_rule_ids.insert(rule_id);
+                    info!("    Discovered market rule ID: {}", rule_id);
+                  }
+                  Err(e) => {
+                    warn!("    Failed to parse market rule ID '{}': {:?}", rule_id_str, e);
+                  }
+                }
+              }
+            }
+          }
         }
       }
       Err(e) => {
-        warn!("Failed to get market rule {}: {:?}", rule_id, e);
-        // Some rule IDs might not exist, so not marking as overall failure
+        warn!("Failed to get contract details for {} ({}): {:?}",
+              contract_type, contract.symbol, e);
+        // Continue with other contracts
       }
     }
+
+    // Small delay between contract detail requests
+    std::thread::sleep(std::time::Duration::from_millis(200));
   }
 
-  if overall_success {
+  if discovered_rule_ids.is_empty() {
+    error!("No market rule IDs discovered from contract details");
+    return Err(anyhow!("No market rule IDs found to test"));
+  }
+
+  info!("Discovered {} unique market rule IDs: {:?}",
+        discovered_rule_ids.len(),
+        {
+          let mut sorted_ids: Vec<_> = discovered_rule_ids.iter().collect();
+          sorted_ids.sort();
+          sorted_ids
+        });
+
+  // Test discovered market rule IDs
+  info!("Testing discovered market rule IDs...");
+  let mut successful_tests = 0;
+  let mut total_tests = 0;
+
+  // Test up to 5 rule IDs to avoid overwhelming the API
+  for &rule_id in discovered_rule_ids.iter().take(5) {
+    total_tests += 1;
+    info!("Testing market rule ID: {}", rule_id);
+
+    match data_ref_mgr.get_market_rule(rule_id) {
+      Ok(market_rule) => {
+        info!("✓ Successfully received market rule {}", market_rule.market_rule_id);
+        info!("  Number of price increments: {}", market_rule.price_increments.len());
+
+        if market_rule.price_increments.is_empty() {
+          warn!("  Warning: Market rule {} has no price increments", rule_id);
+        } else {
+          // Show first few price increments
+          for (i, increment) in market_rule.price_increments.iter().enumerate().take(3) {
+            info!("    Increment {}: LowEdge=${:.6}, Increment=${:.6}",
+                  i + 1, increment.low_edge, increment.increment);
+          }
+          if market_rule.price_increments.len() > 3 {
+            info!("    ... and {} more increments", market_rule.price_increments.len() - 3);
+          }
+        }
+        successful_tests += 1;
+      }
+      Err(e) => {
+        error!("✗ Failed to get market rule {}: {:?}", rule_id, e);
+        overall_success = false;
+      }
+    }
+
+    // Small delay between market rule requests
+    std::thread::sleep(std::time::Duration::from_millis(200));
+  }
+
+  info!("Market rule test results: {}/{} successful", successful_tests, total_tests);
+
+  if overall_success && successful_tests > 0 {
     Ok(())
+  } else if successful_tests == 0 {
+    Err(anyhow!("No market rule requests succeeded"))
   } else {
-    Err(anyhow!("Market rule test had significant issues"))
+    Err(anyhow!("Market rule test had some failures ({}/{} successful)", successful_tests, total_tests))
   }
 }
 
