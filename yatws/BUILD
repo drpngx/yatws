@@ -120,6 +120,7 @@ rust_binary(
             "test_order_builder.rs",
             "test_fin.rs",
             "test_market.rs",
+            "test_data_ref.rs",
             "test_option.rs",
             "test_news.rs",
             "test_data_sub.rs",

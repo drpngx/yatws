@@ -17,16 +17,17 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use yatws::IBKRClient;
 
-mod test_general;
 mod test_account;
+mod test_data_obs;
+mod test_data_ref;
+mod test_data_sub;
+mod test_fin;
+mod test_general;
+mod test_market;
+mod test_news;
+mod test_option;
 mod test_order;
 mod test_order_builder;
-mod test_fin;
-mod test_market;
-mod test_option;
-mod test_news;
-mod test_data_sub;
-mod test_data_obs;
 
 // --- Test Definition Infrastructure ---
 
@@ -246,16 +247,17 @@ struct ModeArgs {
 // --- Test Case Implementations ---
 
 mod test_cases {
-  pub(super) use crate::test_general::*;
   pub(super) use crate::test_account::*;
+  pub(super) use crate::test_data_obs::*;
+  pub(super) use crate::test_data_ref::*;
+  pub(super) use crate::test_data_sub::*;
+  pub(super) use crate::test_fin::*;
+  pub(super) use crate::test_general::*;
+  pub(super) use crate::test_market::*;
+  pub(super) use crate::test_news::*;
+  pub(super) use crate::test_option::*;
   pub(super) use crate::test_order::*;
   pub(super) use crate::test_order_builder::*;
-  pub(super) use crate::test_fin::*;
-  pub(super) use crate::test_market::*;
-  pub(super) use crate::test_option::*;
-  pub(super) use crate::test_news::*;
-  pub(super) use crate::test_data_sub::*;
-  pub(super) use crate::test_data_obs::*;
 }
 
 // --- Test Registration ---
@@ -302,8 +304,11 @@ submit_test!(38, "observe-historical-ticks", test_cases::observe_historical_tick
 submit_test!(39, "multi-subscription-mixed", test_cases::multi_subscription_mixed_impl);
 submit_test!(40, "options-strategy-builder", test_cases::options_strategy_builder_test_impl);
 submit_test!(41, "order-builder", test_cases::order_builder_test_impl);
-// Add more tests here: submit_test!(41, "new-test-name", test_cases::new_test_impl);
-// submit_test!(42, "wsh-events", test_cases::wsh_events_impl);
+submit_test!(42, "contract-details", test_cases::contract_details_impl);
+submit_test!(43, "option-chain-params", test_cases::option_chain_params_impl);
+submit_test!(44, "reference-data", test_cases::reference_data_impl);
+// Add more tests here: submit_test!(45, "new-test-name", test_cases::new_test_impl);
+// submit_test!(46, "wsh-events", test_cases::wsh_events_impl);
 
 // --- Helper Functions ---
 

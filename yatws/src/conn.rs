@@ -22,7 +22,14 @@ pub struct MessageBroker {
   rate_limit_timeout: Duration,
 }
 
-const START_REQUEST_ID: usize = 1;
+/// The start request ID.
+///
+/// It is possible for TWS to return errors with an ID code, for instance
+/// "No Security Definition Found" can refer to a market data query, or an
+/// order ID. We assume that there are fewer than 1000 order requests per
+/// day. This counter is reset on the mandatory weekly reset. That way,
+/// the ambiguous ID spaces will not overlap.
+const START_REQUEST_ID: usize = 8000;
 
 impl MessageBroker {
   // Modify new to accept optional logger

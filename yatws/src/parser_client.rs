@@ -231,7 +231,6 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InvalidScalePriceAdjustmentInterval |
     ClientErrorCode::UnexpectedScalePriceAdjustment |
     ClientErrorCode::NoTradingPermissions |
-    ClientErrorCode::NoSecurityDefinitionFound |
     // TWS Order Errors (10000+)
     ClientErrorCode::MissingParentOrder |
     ClientErrorCode::InvalidDeltaHedgeOrder |
@@ -516,6 +515,15 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
         _ => { handler.client.handle_error(id, error_code, &error_msg); }
       }
     }
+    ClientErrorCode::NoSecurityDefinitionFound => {
+      // Brodcast to managers. Note that the client ID is in a separate space, so it might
+      // trigger a cancel accidentally.
+      handler.order.handle_error(id, error_code, &error_msg);
+      handler.data_market.handle_error(id, error_code, &error_msg);
+      handler.data_ref.handle_error(id, error_code, &error_msg);
+      handler.data_news.handle_error(id, error_code, &error_msg);
+    }
+
     // Catch-all for any codes missed in the above explicit routing.
     // This prevents compile errors if new codes are added to the enum
     // but not yet routed here. It defaults to the client handler.
