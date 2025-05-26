@@ -159,12 +159,6 @@ impl DataNewsManager {
     })
   }
 
-  /// Generates a new unique ObserverId value.
-  /// Used by NewsSubscriptionBuilder before creating SubscriptionState.
-  pub(crate) fn new_observer_id_val(&self) -> usize {
-    self.next_observer_id.fetch_add(1, Ordering::SeqCst)
-  }
-
   /// Registers an observer to receive streaming news updates (bulletins and news ticks).
   ///
   /// Observers implement the [`NewsObserver`] trait. They are held by `Weak` pointers,

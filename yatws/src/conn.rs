@@ -139,7 +139,7 @@ mod socket {
   use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
   use log::{debug, error, info, warn};
   use std::io::{self, Cursor, ErrorKind, Read, Write};
-  use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+  use std::net::{TcpStream, ToSocketAddrs};
   use socket2::{SockRef, TcpKeepalive};
   use std::thread;
   use std::time::Duration;

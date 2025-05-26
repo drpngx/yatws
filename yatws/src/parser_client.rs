@@ -267,7 +267,6 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InvalidOrderBondExpired | // Could be Contract
     ClientErrorCode::EtradeOnlyAttributeNotSupported |
     ClientErrorCode::FirmQuoteOnlyAttributeNotSupported |
-    ClientErrorCode::NoTradingPermissions |
     ClientErrorCode::NbboPriceCapAttributeNotSupported => {
       handler.order.handle_error(id, error_code, &error_msg);
     }
@@ -317,7 +316,6 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::DuplicateTickerIdApiHistorical |
     ClientErrorCode::SnapshotNotApplicableToGenericTicks |
     ClientErrorCode::InvalidRealTimeQuery |
-    ClientErrorCode::NoSecurityDefinitionFound |
     // TWS Market Data Errors (10000+)
     ClientErrorCode::NotSubscribedMarketData | // Error
     ClientErrorCode::PartiallySubscribedMarketData | // Warning

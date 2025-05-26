@@ -14,10 +14,10 @@ use std::time::Duration;
 
 /// Contains exchange-specific option chain information with liquidity metrics
 #[derive(Debug, Clone)]
+#[allow(dead_code)]  // Some fields may be used later in the sort function.
 pub struct OptionExchangeInfo {
   pub exchange: String,
   pub trading_class: String,
-  pub multiplier: String,
   pub expirations: Vec<String>,
   pub strikes: Vec<f64>,
   pub liquidity_score: f64,           // Calculated liquidity score (0.0-1.0)
@@ -28,7 +28,6 @@ pub struct OptionExchangeInfo {
 /// Aggregated option chain parameters across all exchanges
 #[derive(Debug, Clone)]
 pub struct OptionChainParams {
-  pub underlying_con_id: i32,
   pub exchanges: Vec<OptionExchangeInfo>, // Multiple exchanges
   pub primary_exchange: Option<String>,    // Suggested primary
 }
@@ -334,7 +333,6 @@ impl OptionsStrategyBuilder {
         exchanges.push(OptionExchangeInfo {
           exchange: p.exchange,
           trading_class: p.trading_class,
-          multiplier: p.multiplier,
           expirations: p.expirations,
           strikes: p.strikes,
           liquidity_score,
@@ -361,7 +359,6 @@ impl OptionsStrategyBuilder {
       );
 
       self.option_chain_params = Some(OptionChainParams {
-        underlying_con_id,
         exchanges,
         primary_exchange,
       });

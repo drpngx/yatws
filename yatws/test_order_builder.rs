@@ -1,15 +1,14 @@
 // yatws/test_order_builder.rs
-use anyhow::{anyhow, Context, Result};
-use std::sync::Arc;
-use log::{error, info, warn};
+use anyhow::{anyhow, Result};
+use log::{error, info};
 use std::time::Duration;
-use chrono::{Utc, Duration as ChronoDuration, NaiveDate};
+use chrono::{Duration as ChronoDuration};
 use yatws::{
   IBKRError,
   IBKRClient,
   OrderBuilder,
-  contract::{Contract, SecType, OptionRight},
-  order::{OrderSide, OrderState, OrderType, OrderRequest, TimeInForce, IBKRAlgo, AdaptivePriority, RiskAversion, TwapStrategyType},
+  contract::{Contract, OptionRight},
+  order::{OrderSide, OrderState, OrderRequest, TimeInForce, IBKRAlgo, AdaptivePriority, RiskAversion, TwapStrategyType},
   order_build_types::{TriggerMethod, ConditionConjunction},
 };
 
@@ -391,7 +390,7 @@ fn test_basic_order_types() -> Vec<TestResult> {
   results
 }
 
-fn test_contract_types(client: &IBKRClient) -> Vec<TestResult> {
+fn test_contract_types(_client: &IBKRClient) -> Vec<TestResult> {
   let mut results = Vec::new();
 
   // Stock
