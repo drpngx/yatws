@@ -187,9 +187,64 @@ YATWS supports an observer pattern for handling asynchronous events. This is a p
 
 This is best suited for event-driven trading, such as reacting to news, order fills and buying power depletion.
 
+### Market Data Observer Example
+
+```rust
+use yatws::{IBKRClient, IBKRError, contract::Contract, data::{MarketDataType, TickType, TickAttrib}, data_observer::MarketDataObserver};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+#[derive(Debug)]
+struct MyMarketObserver {
+    name: String,
+    tick_count: Arc<Mutex<usize>>,
+}
+
+impl MarketDataObserver for MyMarketObserver {
+    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, _attrib: TickAttrib) {
+        println!("[{}] TickPrice: ReqID={}, Type={:?}, Price={}", self.name, req_id, tick_type, price);
+        *self.tick_count.lock().unwrap() += 1;
+    }
+    // Implement other MarketDataObserver methods as needed (on_tick_size, on_error, etc.)
+    fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+        eprintln!("[{}] Error: ReqID={}, Code={}, Msg='{}'", self.name, req_id, error_code, error_message);
+    }
+}
+
+fn main() -> Result<(), IBKRError> {
+    let client = IBKRClient::new("127.0.0.1", 7497, 2, None)?;
+    let market_mgr = client.data_market();
+    let contract = Contract::stock("AAPL");
+
+    let observer = MyMarketObserver {
+        name: "AAPL-Observer".to_string(),
+        tick_count: Arc::new(Mutex::new(0)),
+    };
+    
+    // Request streaming data and associate it with the observer
+    let (req_id, _observer_id) = market_mgr.request_observe_market_data(
+        &contract,
+        &[], // Empty generic_tick_list for default ticks
+        false, // snapshot = false for streaming
+        false, // regulatory_snapshot
+        &[],   // mkt_data_options
+        Some(MarketDataType::Delayed), // Or RealTime if subscribed
+        observer,
+    )?;
+    println!("Observing market data for AAPL with ReqID: {}", req_id);
+
+    thread::sleep(Duration::from_secs(15)); // Observe for 15 seconds
+
+    market_mgr.cancel_market_data(req_id)?; // Cancel the stream
+    println!("Cancelled market data for AAPL.");
+    
+    Ok(())
+}
+```
+
 ## Subscriptions
 Simimlar to the `ibapi` crate, you can use a subscription programming model. This is in-between the sync and async models desribed above. This is best suited for receiving a stream of data. This is a pull model where you receive an iterator of events.
-
 
 ### Account Subscription Example
 
@@ -248,6 +303,52 @@ fn main() -> Result<(), IBKRError> {
     // Wait for the event thread to finish
     event_thread.join().expect("Event thread panicked");
     println!("Main thread: Done.");
+
+    Ok(())
+}
+```
+
+### News Subscription Example
+
+```rust
+use yatws::{IBKRClient, IBKRError, news_subscription::NewsEvent};
+use std::time::Duration;
+use std::thread;
+
+fn main() -> Result<(), IBKRError> {
+    let client = IBKRClient::new("127.0.0.1", 7497, 3, None)?;
+    let news_manager = client.data_news();
+
+    // Subscribe to new news bulletins
+    let mut news_sub = news_manager.subscribe_news_bulletins_stream(false).submit()?;
+    println!("Subscribed to news bulletins (ReqID: {}).", news_sub.request_id());
+
+    let event_receiver = news_sub.events();
+    let news_thread = thread::spawn(move || {
+        for event in event_receiver {
+            match event {
+                NewsEvent::Bulletin { article, .. } => {
+                    println!("[Thread] News Bulletin: Provider={}, ID={}, Headline='{}'",
+                             article.provider_code, article.article_id, article.headline);
+                }
+                NewsEvent::Error(e) => {
+                    eprintln!("[Thread] NewsSubscription Error: {:?}", e);
+                }
+                NewsEvent::Closed { .. } => {
+                    println!("[Thread] NewsSubscription closed.");
+                    break;
+                }
+            }
+        }
+    });
+
+    thread::sleep(Duration::from_secs(60)); // Listen for news for 60 seconds
+
+    println!("Main thread: Closing NewsSubscription...");
+    news_sub.cancel()?; // Explicitly cancel the subscription
+
+    news_thread.join().expect("News thread panicked");
+    println!("Main thread: Done with news.");
 
     Ok(())
 }
@@ -327,8 +428,8 @@ println!("Cleaned up {} historical and {} market data requests", hist_cleaned, m
 YATWS uses Rust's Result pattern consistently, with a custom `IBKRError` type:
 
 ```rust
-match client.account().get_equity() {
-    Ok(equity) => println!("Account equity: ${}", equity),
+match client.account().get_net_liquidation() {
+    Ok(net_liq_value) => println!("Account Net Liquidation Value: ${}", net_liq_value),
     Err(IBKRError::Timeout) => println!("Operation timed out"),
     Err(IBKRError::ApiError(code, msg)) => println!("API error {}: {}", code, msg),
     Err(e) => println!("Other error: {:?}", e),

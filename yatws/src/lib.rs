@@ -228,6 +228,54 @@
 //!      }
 //!    }
 //! ```
+//! 
+//! ### News Subscription Example
+//! 
+//! ```rust
+//! use yatws::{IBKRClient, IBKRError, news_subscription::NewsEvent};
+//! use std::time::Duration;
+//! use std::thread;
+//! 
+//! # fn main() -> Result<(), IBKRError> {
+//! # let client = IBKRClient::new("127.0.0.1", 7497, 103, None)?; // Use a unique client_id
+//! let news_manager = client.data_news();
+//!
+//! // Subscribe to new news bulletins only
+//! let mut news_sub = news_manager.subscribe_news_bulletins_stream(false).submit()?;
+//! println!("Subscribed to news bulletins (ReqID: {}).", news_sub.request_id());
+//!
+//! let event_receiver = news_sub.events();
+//! let news_thread = thread::spawn(move || {
+//!     for event in event_receiver { // Iterates until channel is disconnected
+//!         match event {
+//!             NewsEvent::Bulletin { article, .. } => {
+//!                 println!("[Thread] News Bulletin: Provider={}, ID={}, Headline='{}'",
+//!                          article.provider_code, article.article_id, article.headline);
+//!             }
+//!             NewsEvent::Error(e) => {
+//!                 eprintln!("[Thread] NewsSubscription Error: {:?}", e);
+//!             }
+//!             NewsEvent::Closed { .. } => {
+//!                 println!("[Thread] NewsSubscription closed.");
+//!                 break; // Exit loop
+//!             }
+//!         }
+//!     }
+//! });
+//!
+//! // Let the subscription run for a bit
+//! thread::sleep(Duration::from_secs(30));
+//!
+//! // Explicitly close the subscription
+//! println!("Main thread: Closing NewsSubscription...");
+//! news_sub.cancel()?; // This will send NewsEvent::Closed and disconnect the channel
+//!
+//! // Wait for the event thread to finish
+//! news_thread.join().expect("News thread panicked");
+//! println!("Main thread: Done with news.");
+//! # Ok(())
+//! # }
+//! ```
 //!
 //! ## Key Functional Areas
 //!
@@ -238,7 +286,7 @@
 //! client.account().subscribe_account_updates()?;
 //!
 //! // Get account summary
-//! let equity = client.account().get_equity()?;
+//! let equity = client.account().get_net_liquidation()?;
 //! let buying_power = client.account().get_buying_power()?;
 //! let positions = client.account().list_open_positions()?;
 //!
@@ -278,17 +326,21 @@
 //! )?;
 //!
 //! // Get historical data
+//! use yatws::data::DurationUnit;
+//! use yatws::contract::{BarSize, WhatToShow};
+//! use yatws::data::MarketDataType;
+//!
 //! let bars = client.data_market().get_historical_data(
 //!     &contract,
-//!     None,                 // End time (None = now)
-//!     "1 D",                // Duration string
-//!     "1 hour",             // Bar size
-//!     "TRADES",             // What to show
-//!     true,                 // Use RTH
-//!     1,                    // Date format
-//!     false,                // Keep up to date?
-//!     None,                 // Market data type
-//!     &[]                   // Chart options
+//!     None,                               // End time (None = now)
+//!     DurationUnit::Day(1),               // Duration 
+//!     BarSize::Hour1,                     // Bar size
+//!     WhatToShow::Trades,                 // What to show
+//!     true,                               // Use RTH
+//!     1,                                  // Date format (1 for yyyyMMdd HH:mm:ss)
+//!     false,                              // Keep up to date?
+//!     Some(MarketDataType::Delayed),      // Market data type
+//!     &[]                                 // Chart options
 //! )?;
 //! ```
 //!
@@ -470,8 +522,8 @@
 //! YATWS uses Rust's Result pattern consistently, with a custom `IBKRError` type:
 //!
 //! ```rust
-//! match client.account().get_equity() {
-//!     Ok(equity) => println!("Account equity: ${}", equity),
+//! match client.account().get_net_liquidation() {
+//!     Ok(net_liq_value) => println!("Account Net Liquidation Value: ${}", net_liq_value),
 //!     Err(IBKRError::Timeout) => println!("Operation timed out"),
 //!     Err(IBKRError::ApiError(code, msg)) => println!("API error {}: {}", code, msg),
 //!     Err(e) => println!("Other error: {:?}", e),

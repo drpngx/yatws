@@ -179,7 +179,7 @@ Retrieves total cash balance. Requires active subscription.
 
 ### `AccountManager::get_net_liquidation(&self) -> Result<f64, IBKRError>`
 
-Retrieves the net liquidation value (equity) of the account. Requires active subscription.
+Retrieves the net liquidation value of the account. Requires active subscription.
 
 ### `AccountManager::list_open_positions(&self) -> Result<Vec<Position>, IBKRError>`
 

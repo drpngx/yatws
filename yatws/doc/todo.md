@@ -3,7 +3,6 @@
 - finish happy paths
 - failure paths
 - same client_id failure path
-- lib.rs doc about tick types, perhaps api.md and README.
 
 # Missing features from ibapi:
 1.  `account_updates_multi`: Request account updates for multiple accounts/models.
