@@ -2,10 +2,9 @@
 use anyhow::{anyhow, Result};
 use log::{error, info, warn};
 use yatws::{
-  IBKRClient,
-  contract::{Contract, SecType, OptionRight},
+  IBKRClient, IBKRError,
+  contract::{Contract, SecType},
 };
-use chrono::{DateTime, Utc, Duration as ChronoDuration};
 
 pub(super) fn contract_details_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
   info!("--- Testing Contract Details Requests ---");
@@ -271,35 +270,93 @@ pub(super) fn market_depth_exchanges_impl(client: &IBKRClient, _is_live: bool) -
 }
 
 pub(super) fn smart_components_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
-  info!("--- Testing SMART Components ---");
+  info!("--- Testing SMART Components (with tickReqParams workflow) ---");
   let data_ref_mgr = client.data_ref();
   let mut overall_success = true;
 
-  // Test with common BBO exchanges
-  let bbo_exchanges = vec!["NASDAQ", "NYSE", "ARCA", "SMART"];
+  // Test with a common stock contract to get SMART components
+  // This follows the correct workflow: market data request -> tickReqParams -> reqSmartComponents
+  info!("Testing SMART components for AAPL stock contract");
+  let test_contract = Contract::stock("AAPL"); // Use AAPL as test contract
 
-  for exchange in bbo_exchanges {
-    info!("Getting SMART components for BBO exchange: '{}'", exchange);
-    match data_ref_mgr.get_smart_components(exchange) {
+  match data_ref_mgr.get_smart_components(&test_contract) {
+    Ok(components) => {
+      info!("Successfully received {} SMART components for AAPL", components.len());
+      if components.is_empty() {
+        warn!("Received empty SMART components for AAPL");
+        // This might be normal if markets are closed or no SMART routing available
+      } else {
+        let mut sorted_components: Vec<_> = components.iter().collect();
+        sorted_components.sort_by_key(|(bit_number, _)| *bit_number);
+
+        info!("SMART Components for AAPL:");
+        for (bit_number, (exchange_name, exchange_letter)) in sorted_components.iter().take(10) {
+          info!("  Bit {}: Exchange='{}', Letter='{}'", bit_number, exchange_name, exchange_letter);
+        }
+        if components.len() > 10 {
+          info!("  ... and {} more components", components.len() - 10);
+        }
+
+        // Show summary statistics
+        let exchanges: std::collections::HashSet<_> = components.values().map(|(exchange, _)| exchange).collect();
+        info!("  Total unique exchanges: {}", exchanges.len());
+
+        // Show first few unique exchange names
+        let mut exchange_names: Vec<_> = exchanges.into_iter().collect();
+        exchange_names.sort();
+        let sample_exchanges: Vec<_> = exchange_names.iter().take(5).collect();
+        info!("  Sample exchanges: {:?}{}", sample_exchanges,
+              if exchange_names.len() > 5 { "..." } else { "" });
+
+        // Verify that common exchanges are present (if any components received)
+        let has_nasdaq = components.values().any(|(exchange, _)| exchange.contains("NASDAQ"));
+        let has_nyse = components.values().any(|(exchange, _)| exchange.contains("NYSE"));
+        let has_arca = components.values().any(|(exchange, _)| exchange.contains("ARCA"));
+
+        info!("  Contains NASDAQ: {}, NYSE: {}, ARCA: {}", has_nasdaq, has_nyse, has_arca);
+      }
+    }
+    Err(e) => {
+      error!("Failed to get SMART components for AAPL: {:?}", e);
+      overall_success = false;
+
+      // Check if this is a specific known error that might be expected
+      match &e {
+        IBKRError::ApiError(code, msg) => {
+          if msg.contains("No market data during weekend") ||
+            msg.contains("market data not available") ||
+            msg.contains("outside of trading hours") {
+              warn!("SMART components unavailable due to market hours/data availability: {} - {}", code, msg);
+              // Don't mark as failure if it's just a timing/market hours issue
+              overall_success = true;
+            }
+        }
+        IBKRError::Timeout(_) => {
+          warn!("SMART components request timed out - this might be due to market conditions");
+          // Timeouts during off-market hours might be expected
+        }
+        _ => {
+          // Other errors are unexpected
+        }
+      }
+    }
+  }
+
+  // Additional test: Try with a different contract type if the first one worked
+  if overall_success {
+    info!("Testing SMART components for SPY (ETF) contract");
+    let spy_contract = Contract::stock("SPY");
+
+    match data_ref_mgr.get_smart_components(&spy_contract) {
       Ok(components) => {
-        info!("Successfully received {} SMART components for '{}'", components.len(), exchange);
-        if components.is_empty() {
-          info!("No SMART components found for exchange '{}'", exchange);
-        } else {
-          let mut sorted_components: Vec<_> = components.iter().collect();
-          sorted_components.sort_by_key(|(bit_number, _)| *bit_number);
-
-          for (bit_number, (exchange_name, exchange_letter)) in sorted_components.iter().take(5) {
-            info!("  Bit {}: Exchange='{}', Letter='{}'", bit_number, exchange_name, exchange_letter);
-          }
-          if components.len() > 5 {
-            info!("  ... and {} more components", components.len() - 5);
-          }
+        info!("Successfully received {} SMART components for SPY", components.len());
+        if !components.is_empty() {
+          info!("  SPY has {} routing components available", components.len());
         }
       }
       Err(e) => {
-        warn!("Failed to get SMART components for '{}': {:?}", exchange, e);
-        // Not marking as overall failure since some exchanges might not support this
+        warn!("SPY SMART components request failed (not critical): {:?}", e);
+        // Don't mark as overall failure since SPY might have different availability
       }
     }
   }
@@ -307,7 +364,7 @@ pub(super) fn smart_components_impl(client: &IBKRClient, _is_live: bool) -> Resu
   if overall_success {
     Ok(())
   } else {
-    Err(anyhow!("SMART components test had issues"))
+    Err(anyhow!("SMART components test had significant issues"))
   }
 }
 

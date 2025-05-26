@@ -171,6 +171,8 @@ pub trait ReferenceDataHandler: Send + Sync {
   /// Provides exchanges offering market depth for a requested contract.
   fn mkt_depth_exchanges(&self, descriptions: &[DepthMktDataDescription]);
 
+  fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32);
+
   /// Provides the components of a SMART routing destination.
   fn smart_components(&self, req_id: i32, components: &HashMap<i32, (String, char)>);
 
@@ -206,7 +208,6 @@ pub trait MarketDataHandler: Send + Sync {
   fn tick_option_computation(&self, req_id: i32, data: TickOptionComputationData); // data contains TickType
   fn tick_snapshot_end(&self, req_id: i32);
   fn market_data_type(&self, req_id: i32, market_data_type: MarketDataType);
-  fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32);
 
   // --- Real Time Bars ---
   fn real_time_bar(&self, req_id: i32, time: i64, open: f64, high: f64, low: f64, close: f64,

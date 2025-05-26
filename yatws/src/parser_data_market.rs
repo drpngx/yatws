@@ -345,18 +345,6 @@ pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, par
   Ok(())
 }
 
-/// Process tick req params message
-pub fn process_tick_req_params(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let min_tick = parser.read_double()?;
-  let bbo_exchange = parser.read_string()?;
-  let snapshot_permissions = parser.read_int()?;
-
-  log::debug!("Tick Req Params: ID={}, MinTick={}, BBOExch={}, Permissions={}", req_id, min_tick, bbo_exchange, snapshot_permissions);
-  handler.tick_req_params(req_id, min_tick, &bbo_exchange, snapshot_permissions);
-  Ok(())
-}
-
 /// Process histogram data message
 pub fn process_histogram_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let req_id = parser.read_int()?;

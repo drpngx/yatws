@@ -193,6 +193,21 @@ class TestApp(wrapper.EWrapper, EClient):
 
 # --- Main Execution ---
 def main():
+    """Main.
+
+    Message exchange:
+        Req tick params:
+        [C->S] Body (46 bytes): 1·11·1·0·AAPL·STK··0.0···SMART··USD···0··0·0··
+        [S->C] Body (9 bytes): 58·1·1·1·
+        [S->C] Body (19 bytes): 81·1·0.01·9c0001·2·
+        [S->C] Body (17 bytes): 1·6·1·1·-1.00··1·
+        [S->C] Body (17 bytes): 1·6·1·2·-1.00··1·
+        Cancel market:
+        [C->S] Body (6 bytes): 2·2·1·
+        Req smart components:
+        [C->S] Body (12 bytes): 83·2·9c0001·
+        [S->C] Body (7 bytes): 82·2·0·
+    """
     parser = argparse.ArgumentParser(description="IB API SMART Components Test")
     parser.add_argument("--host", default=DEFAULT_HOST, help="Host address")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port number")

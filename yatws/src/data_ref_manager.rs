@@ -12,7 +12,7 @@ use parking_lot::{Condvar, Mutex};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use log::{debug, info, warn};
+use log::{debug, info, error, warn};
 
 
 // --- State for Pending Requests ---
@@ -43,7 +43,8 @@ struct DataRefRequestState {
   mkt_depth_exchanges: Option<Vec<DepthMktDataDescription>>,
   // No explicit end message for MktDepthExchanges
 
-  // Fields for SmartComponents
+  // Fields for SmartComponents workflow
+  exchange_mapping_code: Option<String>, // From tickReqParams
   smart_components: Option<HashMap<i32, (String, char)>>,
   // No explicit end message for SmartComponents
 
@@ -55,10 +56,13 @@ struct DataRefRequestState {
   historical_schedule: Option<HistoricalScheduleResult>,
   // No explicit end message for HistoricalSchedule
 
-
   // General error fields
   error_code: Option<i32>,
   error_message: Option<String>,
+
+  // Workflow flags for SMART components
+  is_smart_components_workflow: bool, // Flag to identify this as a SMART components request
+  market_data_req_id: Option<i32>,   // Track market data request ID for cancellation
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +106,67 @@ impl DataRefManager {
       message_broker,
       request_states: Mutex::new(HashMap::new()),
       request_cond: Condvar::new(),
+    })
+  }
+
+  /// Requests and returns SMART routing components for a contract.
+  ///
+  /// This method follows the correct workflow:
+  /// 1. Request market data for the contract to get the exchange mapping code
+  /// 2. Use the exchange mapping code to request SMART components
+  ///
+  /// # Arguments
+  /// * `contract` - The contract for which to get SMART components (typically a stock)
+  ///
+  /// # Returns
+  /// A `Result` containing a HashMap where:
+  /// - Key: bit number (i32)
+  /// - Value: tuple of (exchange_name: String, exchange_letter: char)
+  pub fn get_smart_components(&self, contract: &Contract) -> Result<HashMap<i32, (String, char)>, IBKRError> {
+    info!("Requesting SMART components for contract: {} (following tickReqParams workflow)", contract.symbol);
+
+    // Step 1: Request market data to get exchange mapping code
+    let market_data_req_id = self.message_broker.next_request_id();
+    let smart_components_req_id = self.message_broker.next_request_id();
+
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    // Initialize state for SMART components workflow
+    {
+      let mut states = self.request_states.lock();
+      if states.contains_key(&smart_components_req_id) {
+        return Err(IBKRError::DuplicateRequestId(smart_components_req_id));
+      }
+
+      let mut state = DataRefRequestState::default();
+      state.is_smart_components_workflow = true;
+      state.market_data_req_id = Some(market_data_req_id);
+      states.insert(smart_components_req_id, state);
+    }
+
+    // Request market data to trigger tickReqParams
+    info!("Step 1: Requesting market data (req_id: {}) to get exchange mapping code", market_data_req_id);
+    let market_data_msg = encoder.encode_request_market_data(
+      market_data_req_id,
+      contract,
+      "", // No generic ticks needed
+      false, // Not a snapshot
+      false, // Not regulatory snapshot
+      &[], // No market data options
+    )?;
+
+    self.message_broker.send_message(&market_data_msg)?;
+
+    // Wait for SMART components response (the tick_req_params handler will automatically
+    // trigger the SMART components request when the exchange mapping code is received)
+    let total_timeout = Duration::from_secs(30);
+    self.wait_for_completion(smart_components_req_id, total_timeout, |state| {
+      if state.is_smart_components_workflow && state.smart_components.is_some() {
+        Some(Ok(state.smart_components.clone().unwrap()))
+      } else {
+        None // Not complete yet
+      }
     })
   }
 
@@ -330,8 +395,25 @@ impl DataRefManager {
     if let Some(enc) = &encoder {
       for req_id in &pending_req_ids {
         if let Some(state) = states.get(req_id) {
+          // Cancel market data requests for SMART components workflow
+          if state.is_smart_components_workflow {
+            if let Some(market_data_req_id) = state.market_data_req_id {
+              match enc.encode_cancel_market_data(market_data_req_id) {
+                Ok(cancel_msg) => {
+                  if let Err(e) = self.message_broker.send_message(&cancel_msg) {
+                    warn!("Failed to send market data cancellation for req_id {}: {:?}", market_data_req_id, e);
+                  } else {
+                    debug!("Sent market data cancellation for req_id {}", market_data_req_id);
+                  }
+                }
+                Err(e) => {
+                  debug!("Could not encode market data cancellation for req_id {}: {:?}", market_data_req_id, e);
+                }
+              }
+            }
+          }
+
           // Check if this looks like a historical schedule request
-          // (it's the only reference data request type that supports cancellation)
           let might_be_historical = state.historical_schedule.is_none() &&
             state.contract_details_list.is_empty() &&
             state.sec_def_params_list.is_empty() &&
@@ -341,7 +423,8 @@ impl DataRefManager {
             state.mkt_depth_exchanges.is_none() &&
             state.smart_components.is_none() &&
             state.market_rule.is_none() &&
-            state.error_code.is_none();
+            state.error_code.is_none() &&
+            !state.is_smart_components_workflow;
 
           if might_be_historical {
             // Try to cancel as historical schedule request
@@ -553,28 +636,6 @@ impl DataRefManager {
     })
   }
 
-  /// Requests and returns SMART routing components for a BBO exchange.
-  pub fn get_smart_components(&self, bbo_exchange: &str) -> Result<HashMap<i32, (String, char)>, IBKRError> {
-    info!("Requesting SMART components for BBO exchange: {}", bbo_exchange);
-    let req_id = self.message_broker.next_request_id();
-    let server_version = self.message_broker.get_server_version()?;
-    let encoder = Encoder::new(server_version);
-    let request_msg = encoder.encode_request_smart_components(req_id, bbo_exchange)?;
-
-    {
-      let mut states = self.request_states.lock();
-      if states.contains_key(&req_id) { return Err(IBKRError::DuplicateRequestId(req_id)); }
-      states.insert(req_id, DataRefRequestState::default());
-    }
-
-    self.message_broker.send_message(&request_msg)?;
-
-    let timeout = Duration::from_secs(10);
-    self.wait_for_completion(req_id, timeout, |state| {
-      state.smart_components.as_ref().map(|components| Ok(components.clone()))
-    })
-  }
-
   /// Requests and returns details for a specific market rule ID.
   pub fn get_market_rule(&self, market_rule_id: i32) -> Result<MarketRule, IBKRError> {
     info!("Requesting market rule: {}", market_rule_id);
@@ -616,8 +677,6 @@ impl DataRefManager {
     }
     // If req_id not found, it might have already completed or timed out.
   }
-
-
 }
 
 // --- Implement ReferenceDataHandler Trait ---
@@ -825,6 +884,80 @@ impl ReferenceDataHandler for DataRefManager {
     } else {
       warn!("Received historical schedule for unknown or completed request ID: {}", req_id);
     }
+  }
+
+  fn tick_req_params(&self, ticker_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32) {
+    debug!("Handler: Tick Req Params: TickerID={}, BboExchange='{}', MinTick={}, SnapshotPermissions={}",
+           ticker_id, bbo_exchange, min_tick, snapshot_permissions);
+
+    let mut states = self.request_states.lock();
+
+    // Find the SMART components workflow request that's waiting for the exchange mapping
+    for (req_id, state) in states.iter_mut() {
+      if state.is_smart_components_workflow &&
+        state.exchange_mapping_code.is_none() &&
+        state.market_data_req_id == Some(ticker_id) {
+
+          state.exchange_mapping_code = Some(bbo_exchange.to_string());
+          info!("Step 2: Received exchange mapping code '{}' for SMART components workflow (req_id: {})",
+                bbo_exchange, req_id);
+
+          // Automatically continue the workflow: cancel market data and request SMART components
+          let smart_components_req_id = *req_id;
+          drop(states); // Release the lock before making requests
+
+          // Cancel the market data request since we only needed the mapping code
+          if let Ok(server_version) = self.message_broker.get_server_version() {
+            let encoder = Encoder::new(server_version);
+
+            if let Ok(cancel_msg) = encoder.encode_cancel_market_data(ticker_id) {
+              if let Err(e) = self.message_broker.send_message(&cancel_msg) {
+                warn!("Failed to cancel market data request {}: {:?}", ticker_id, e);
+              } else {
+                debug!("Cancelled market data request {}", ticker_id);
+              }
+            }
+
+            // Send SMART components request using the exchange mapping code
+            if let Ok(smart_components_msg) = encoder.encode_request_smart_components(smart_components_req_id, bbo_exchange) {
+              if let Err(e) = self.message_broker.send_message(&smart_components_msg) {
+                error!("Failed to send SMART components request {}: {:?}", smart_components_req_id, e);
+
+                // Set error state since the workflow failed
+                let mut states = self.request_states.lock();
+                if let Some(state) = states.get_mut(&smart_components_req_id) {
+                  state.error_code = Some(-1);
+                  state.error_message = Some(format!("Failed to send SMART components request: {:?}", e));
+                  self.request_cond.notify_all();
+                }
+              } else {
+                info!("Step 3: Sent SMART components request {} with mapping code '{}'", smart_components_req_id, bbo_exchange);
+                // Don't notify yet - wait for smart_components response
+              }
+            } else {
+              error!("Failed to encode SMART components request");
+              let mut states = self.request_states.lock();
+              if let Some(state) = states.get_mut(&smart_components_req_id) {
+                state.error_code = Some(-1);
+                state.error_message = Some("Failed to encode SMART components request".to_string());
+                self.request_cond.notify_all();
+              }
+            }
+          } else {
+            error!("Failed to get server version for SMART components workflow");
+            let mut states = self.request_states.lock();
+            if let Some(state) = states.get_mut(&smart_components_req_id) {
+              state.error_code = Some(-1);
+              state.error_message = Some("Failed to get server version".to_string());
+              self.request_cond.notify_all();
+            }
+          }
+
+          return;
+        }
+    }
+
+    warn!("Received tick req params for ticker_id {} but no matching SMART components workflow found", ticker_id);
   }
 
   /// Handles errors related to reference data requests.

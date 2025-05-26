@@ -285,6 +285,17 @@ pub fn process_mkt_depth_exchanges(handler: &Arc<dyn ReferenceDataHandler>, pars
   Ok(())
 }
 
+/// Process tick req params message
+pub fn process_tick_req_params(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
+  let req_id = parser.read_int()?;
+  let min_tick = parser.read_double()?;
+  let bbo_exchange = parser.read_string()?;
+  let snapshot_permissions = parser.read_int()?;
+
+  log::debug!("Tick Req Params: ID={}, MinTick={}, BBOExch={}, Permissions={}", req_id, min_tick, bbo_exchange, snapshot_permissions);
+  handler.tick_req_params(req_id, min_tick, &bbo_exchange, snapshot_permissions);
+  Ok(())
+}
 
 /// Process smart components message
 pub fn process_smart_components(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {

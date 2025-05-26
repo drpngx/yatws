@@ -3602,21 +3602,7 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn tick_req_params(&self, req_id: i32, min_tick: f64, bbo_exchange: &str, snapshot_permissions: i32) {
-    debug!("Handler: Tick Req Params: ID={}, MinTick={}, BBOExch={}, Permissions={}", req_id, min_tick, bbo_exchange, snapshot_permissions);
-    let mut subs = self.subscriptions.lock();
-    if let Some(MarketStream::TickData(state)) = subs.get_mut(&req_id) {
-      // Store snapshot permissions if this was a snapshot request
-      if state.snapshot {
-        state.snapshot_permissions = Some(snapshot_permissions);
-      }
-      // min_tick and bbo_exchange might be useful context but aren't typically stored as live data.
-    } else {
-      // warn!("Received tick_req_params for unknown or non-tick subscription ID: {}", req_id);
-    }
-  }
 
-  // --- Real Time Bars ---
   fn real_time_bar(&self, req_id: i32, time: i64, open: f64, high: f64, low: f64, close: f64,
                    volume: f64, wap: f64, count: i32) {
     trace!("Handler: Real Time Bar: ID={}, Time={}, O={}, H={}, L={}, C={}", req_id, time, open, high, low, close);
