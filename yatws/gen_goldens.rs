@@ -313,10 +313,11 @@ submit_test!(44, "reference-data", test_cases::reference_data_impl);
 // --- Helper Functions ---
 
 /// Creates a client for live connection, ensuring DB directory exists.
-fn create_live_client(args: &ModeArgs, session: &str) -> Result<IBKRClient> {
+fn create_live_client(args: &ModeArgs, session: &str, force_client0: bool) -> Result<IBKRClient> {
+  let client_id = if force_client0 { 0 } else { args.client_id };
   info!(
     "Creating LIVE client for session '{}' (Host: {}:{}, ClientID: {})",
-    session, args.host, args.port, args.client_id
+    session, args.host, args.port, client_id
   );
   info!("Logging to DB: {:?}", args.db_path);
 
@@ -326,7 +327,7 @@ fn create_live_client(args: &ModeArgs, session: &str) -> Result<IBKRClient> {
   }
 
   let log_config = Some((args.db_path.to_string_lossy().to_string(), session.to_string()));
-  IBKRClient::new(&args.host, args.port, args.client_id, log_config)
+  IBKRClient::new(&args.host, args.port, client_id, log_config)
     .context("Failed to create IBKRClient for live connection")
 }
 
@@ -469,8 +470,9 @@ fn main() -> Result<()> {
         // Apply client creation throttling
         throttle_client_creation(&mut last_client_creation, throttle_duration, is_live);
 
+        let force_client0 = session_name == "cleanup-orders";
         let client_result = if is_live {
-          create_live_client(&mode_args, session_name)
+          create_live_client(&mode_args, session_name, force_client0)
         } else {
           create_replay_client(&mode_args, session_name)
         };
@@ -513,9 +515,10 @@ fn main() -> Result<()> {
       let session_name = test_def.name; // Use the canonical name from definition
       info!("===== Preparing Test: {} ({}) =====", session_name, mode_str);
 
+      let force_client0 = session_name == "cleanup-orders";
       // For single tests, no throttling is needed since there's only one client
       let client_result = if is_live {
-        create_live_client(&mode_args, session_name)
+        create_live_client(&mode_args, session_name, force_client0)
       } else {
         create_replay_client(&mode_args, session_name)
       };
