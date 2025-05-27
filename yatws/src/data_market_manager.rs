@@ -3162,15 +3162,16 @@ impl DataMarketManager {
       |s: &OptionCalculationState| s.result.is_some(),
       request_type_name,
     );
-    // Best effort cancel
-    let cancel_fn = match request_type_name {
-      "ImpliedVolatility" => Self::cancel_calculate_implied_volatility,
-      "OptionPrice" => Self::cancel_calculate_option_price,
-      _ => return Err(IBKRError::InternalError(format!("Unknown option calc type: {}", request_type_name))),
-    };
-    if let Err(e) = cancel_fn(self, req_id) {
-      warn!("Failed to cancel {} request {} after blocking wait: {:?}", request_type_name, req_id, e);
-    }
+    // Do not cancel the request. If you do, as of server 10.30, the next options calculation request
+    // (even with a different req), will be ignored and never return anything.
+    // let cancel_fn = match request_type_name {
+    //   "ImpliedVolatility" => Self::cancel_calculate_implied_volatility,
+    //   "OptionPrice" => Self::cancel_calculate_option_price,
+    //   _ => return Err(IBKRError::InternalError(format!("Unknown option calc type: {}", request_type_name))),
+    // };
+    // if let Err(e) = cancel_fn(self, req_id) {
+    //   warn!("Failed to cancel {} request {} after blocking wait: {:?}", request_type_name, req_id, e);
+    // }
     result_state.and_then(|state| {
       state.result.ok_or_else(|| IBKRError::InternalError(format!("{} result missing for ReqID {}", request_type_name, req_id)))
     })
