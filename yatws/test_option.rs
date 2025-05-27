@@ -21,9 +21,10 @@ pub(super) fn box_spread_yield_impl(client: &IBKRClient, _is_live: bool) -> Resu
   // Define underlyings and parameters - Use Futures now
   let underlyings = [
     ("ES", SecType::Future, "CME"), // S&P E-mini
-    ("RTY", SecType::Future, "CME"), // Russell 2000 E-mini
+    // Broken. Perhaps I need to set the M5 (monthly 2025) local symbol.
+    //("RTY", SecType::Future, "CME"), // Russell 2000 E-mini
   ];
-  let strike_diffs = [100.0, 200.0]; // Adjust strike diffs for futures scale
+  let strike_ratios = [0.05, 0.01]; // Strike ratios to underlying
   let expiry_offsets_days = [30, 60, 90]; // Approx days from today
 
   let today = Utc::now().date_naive();
@@ -54,9 +55,9 @@ pub(super) fn box_spread_yield_impl(client: &IBKRClient, _is_live: bool) -> Resu
     log::info!("Underlying price: {} = {:.2}", symbol, underlying_price);
 
     for target_expiry in &target_expiries {
-      for &strike_diff in &strike_diffs {
-        let target_strike1 = underlying_price - strike_diff / 2.0;
-        let target_strike2 = underlying_price + strike_diff / 2.0;
+      for &strike_ratio in &strike_ratios {
+        let target_strike1 = underlying_price * (1. - 0.5 * strike_ratio);
+        let target_strike2 = underlying_price * (1. + 0.5 * strike_ratio);
 
         info!("Attempting Box for {} Exp~{}, Strikes~{:.2}/{:.2}",
               symbol, target_expiry.format("%Y-%m-%d"), target_strike1, target_strike2);
@@ -164,7 +165,7 @@ pub(super) fn box_spread_yield_impl(client: &IBKRClient, _is_live: bool) -> Resu
             overall_success = false;
           }
           Err(e) => {
-            error!("  Error getting quote for combo: {:?}", e);
+            error!("  Error getting quote for combo {:?}: {:?}", combo_contract, e);
             overall_success = false;
           }
         }
