@@ -228,14 +228,14 @@
 //!      }
 //!    }
 //! ```
-//! 
+//!
 //! ### News Subscription Example
-//! 
+//!
 //! ```rust
 //! use yatws::{IBKRClient, IBKRError, news_subscription::NewsEvent};
 //! use std::time::Duration;
 //! use std::thread;
-//! 
+//!
 //! # fn main() -> Result<(), IBKRError> {
 //! # let client = IBKRClient::new("127.0.0.1", 7497, 103, None)?; // Use a unique client_id
 //! let news_manager = client.data_news();
@@ -333,7 +333,7 @@
 //! let bars = client.data_market().get_historical_data(
 //!     &contract,
 //!     None,                               // End time (None = now)
-//!     DurationUnit::Day(1),               // Duration 
+//!     DurationUnit::Day(1),               // Duration
 //!     BarSize::Hour1,                     // Bar size
 //!     WhatToShow::Trades,                 // What to show
 //!     true,                               // Use RTH
@@ -406,7 +406,7 @@
 //! // Get historical news for a contract
 //! let news = client.data_news().get_historical_news(
 //!     12345,             // Contract ID
-//!     "BZ,DJ",           // Provider codes
+//!     "BZ",              // Provider code
 //!     None,              // Start time (None = default)
 //!     None,              // End time (None = now)
 //!     10,                // Max results

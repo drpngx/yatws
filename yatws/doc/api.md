@@ -1111,13 +1111,13 @@ Requests and returns content of a specific news article. Blocking call.
 -   **Returns**: `NewsArticleData` (type and text).
 -   **Errors**: `IBKRError::Timeout` or other request/send issues.
 
-### `DataNewsManager::get_historical_news(&self, con_id: i32, provider_codes: &str, start_date_time:
+### `DataNewsManager::get_historical_news(&self, con_id: i32, provider_code: &str, start_date_time:
 Option<chrono::DateTime<chrono::Utc>>, end_date_time: Option<chrono::DateTime<chrono::Utc>>, total_results: i32,
 historical_news_options: &[(String, String)]) -> Result<Vec<HistoricalNews>, IBKRError>`
 
 Requests and returns historical news headlines for a contract. Blocking call.
 -   `con_id`: TWS contract ID.
--   `provider_codes`: Comma-separated provider codes.
+-   `provider_code`: Provider code.
 -   `start_date_time`, `end_date_time`: Optional date range.
 -   `total_results`: Max number of headlines.
 -   **Returns**: `Vec<HistoricalNews>`.
@@ -1140,11 +1140,11 @@ Creates a builder for a news bulletin subscription. News bulletins are general n
 - `all_msgs`: If `true`, requests all available historical bulletins upon subscription followed by new ones. If `false`, requests only new bulletins.
 - **Returns**: `NewsSubscriptionBuilder` for configuring and creating the subscription.
 
-### `DataNewsManager::subscribe_historical_news_stream(&self, con_id: i32, provider_codes: &str, total_results: i32) -> HistoricalNewsSubscriptionBuilder`
+### `DataNewsManager::subscribe_historical_news_stream(&self, con_id: i32, provider_code: &str, total_results: i32) -> HistoricalNewsSubscriptionBuilder`
 
 Creates a builder for a historical news subscription.
 - `con_id`: The TWS contract ID of the instrument.
-- `provider_codes`: Comma-separated string of news provider codes to include.
+- `provider_code`: Provider code.
 - `total_results`: The maximum number of headlines to return.
 - **Returns**: `HistoricalNewsSubscriptionBuilder` for configuring and creating the subscription.
 

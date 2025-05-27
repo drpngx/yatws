@@ -33,9 +33,8 @@ pub(super) fn historical_news_impl(client: &IBKRClient, _is_live: bool) -> Resul
     info!("Proceeding with empty provider codes string as no providers were returned.");
   } else {
     info!("Available news providers: {:?}", providers.iter().map(|p| &p.code).collect::<Vec<_>>());
-    info!("Using provider codes: {}", provider_codes);
+    info!("Available provider codes: {}", provider_codes);
   }
-
 
   // 2. Get Contract Details for AAPL to find con_id
   info!("Fetching contract details for AAPL...");
@@ -66,6 +65,11 @@ pub(super) fn historical_news_impl(client: &IBKRClient, _is_live: bool) -> Resul
   let total_results = 10; // Request up to 10 articles
   let historical_news_options = &[]; // No specific options
 
+  // Free:
+  // Briefing.com Analyst Actions (BRFUPDN)
+  // Briefing.com General Market Columns (BRFG)
+  // Dow Jones Newsletters (DJNL)
+  let provider_code = "BRFG";
   info!(
     "Requesting historical news for AAPL (con_id {}), providers [{}], last {} days, max {} results.",
     con_id, provider_codes, 7, total_results
@@ -73,7 +77,7 @@ pub(super) fn historical_news_impl(client: &IBKRClient, _is_live: bool) -> Resul
 
   match news_mgr.get_historical_news(
     con_id,
-    &provider_codes,
+    &provider_code,
     start_date_time,
     end_date_time,
     total_results,
@@ -178,13 +182,13 @@ pub(super) fn subscribe_historical_news_impl(client: &IBKRClient, is_live: bool)
   let con_id = contract_details_list[0].contract.con_id;
   if con_id == 0 { return Err(anyhow!("Invalid con_id (0) for AAPL.")); }
 
-  let provider_codes = "BRFG,DJNL"; // Example provider codes
+  let provider_code = "BRFG"; // Briefing.com.
   let total_results = 5;
 
   info!("Building HistoricalNewsSubscription for AAPL (ConID: {}), Providers: {}, MaxResults: {}...",
-        con_id, provider_codes, total_results);
+        con_id, provider_code, total_results);
 
-  let subscription = news_mgr.subscribe_historical_news_stream(con_id, provider_codes, total_results)
+  let subscription = news_mgr.subscribe_historical_news_stream(con_id, provider_code, total_results)
     .with_start_date_time(Utc::now() - ChronoDuration::days(7)) // Last 7 days
     .with_end_date_time(Utc::now())
     .submit()

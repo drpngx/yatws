@@ -61,9 +61,9 @@
 //!         if let Some(details) = details_list.first() {
 //!             let con_id = details.contract.con_id;
 //!             // Assuming we have provider codes from the previous step
-//!             let provider_codes = "BRFG,BRFUPDN"; // Example provider codes
+//!             let provider_code = "BRFG"; // Briefing.com Analyst Actions
 //!
-//!             match news_mgr.get_historical_news(con_id, provider_codes, None, None, 10, &[]) {
+//!             match news_mgr.get_historical_news(con_id, provider_code, None, None, 10, &[]) {
 //!                 Ok(articles) => {
 //!                     println!("\nHistorical News for AAPL (con_id {}):", con_id);
 //!                     for article_info in articles.iter().take(3) { // Print first 3
@@ -381,7 +381,7 @@ impl DataNewsManager {
   ///
   /// # Arguments
   /// * `con_id` - The TWS contract ID of the instrument.
-  /// * `provider_codes` - A comma-separated string of news provider codes to include (e.g., "BRFG,RTRS,DJNL").
+  /// * `provider_code` - The provider code, e.g. BRFG. Use `get_news_providers` for the list.
   /// * `start_date_time` - Optional `DateTime<Utc>` for the start of the period. If `None`, TWS defaults.
   /// * `end_date_time` - Optional `DateTime<Utc>` for the end of the period. If `None`, TWS defaults (usually current time).
   /// * `total_results` - The maximum number of headlines to return.
@@ -405,12 +405,12 @@ impl DataNewsManager {
   /// # let contract_spec = Contract::stock("AAPL");
   /// # let contract_details_list = ref_data_mgr.get_contract_details(&contract_spec)?;
   /// # let con_id = contract_details_list[0].contract.con_id;
-  /// let provider_codes = "BRFG,DJNL"; // Example
+  /// let provider_code = "BRFG"; // Briefing.com Analyst Actions
   /// let start_time = Some(Utc::now() - ChronoDuration::days(7));
   /// let end_time = Some(Utc::now());
   /// let articles = news_mgr.get_historical_news(
   ///     con_id,
-  ///     provider_codes,
+  ///     provider_code,
   ///     start_time,
   ///     end_time,
   ///     10, // Max 10 results
@@ -425,13 +425,13 @@ impl DataNewsManager {
   pub fn get_historical_news(
     &self,
     con_id: i32,
-    provider_codes: &str,
+    provider_code: &str,
     start_date_time: Option<chrono::DateTime<chrono::Utc>>,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>,
     total_results: i32,
     historical_news_options: &[(String, String)],
   ) -> Result<Vec<HistoricalNews>, IBKRError> {
-    info!("Requesting historical news: ConID={}, Providers={}", con_id, provider_codes);
+    info!("Requesting historical news: ConID={}, Provider={}", con_id, provider_code);
     if !self.historical_news_limiter.try_acquire() {
       return Err(IBKRError::RateLimited("Historical news request limit exceeded".to_string()));
     }
@@ -440,7 +440,7 @@ impl DataNewsManager {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
     let request_msg = encoder.encode_request_historical_news(
-      req_id, con_id, provider_codes, start_date_time, end_date_time, total_results, historical_news_options
+      req_id, con_id, provider_code, start_date_time, end_date_time, total_results, historical_news_options
     )?;
 
     {
@@ -468,7 +468,7 @@ impl DataNewsManager {
     &self,
     req_id: i32,
     con_id: i32,
-    provider_codes: &str,
+    provider_code: &str,
     start_date_time: Option<chrono::DateTime<chrono::Utc>>,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>,
     total_results: i32,
@@ -482,7 +482,7 @@ impl DataNewsManager {
     let server_version = self.message_broker.get_server_version()?;
     let encoder = Encoder::new(server_version);
     let request_msg = encoder.encode_request_historical_news(
-      req_id, con_id, provider_codes, start_date_time, end_date_time, total_results, historical_news_options
+      req_id, con_id, provider_code, start_date_time, end_date_time, total_results, historical_news_options
     )?;
 
     {
@@ -502,10 +502,10 @@ impl DataNewsManager {
   pub fn subscribe_historical_news_stream(
     &self,
     con_id: i32,
-    provider_codes: &str,
+    provider_code: &str,
     total_results: i32,
   ) -> HistoricalNewsSubscriptionBuilder {
-    HistoricalNewsSubscriptionBuilder::new(self.self_weak.clone(), con_id, provider_codes, total_results)
+    HistoricalNewsSubscriptionBuilder::new(self.self_weak.clone(), con_id, provider_code, total_results)
   }
 
   // --- Streaming Calls (Non-blocking) ---
