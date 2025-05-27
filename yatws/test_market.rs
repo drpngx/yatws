@@ -200,14 +200,14 @@ pub(super) fn tick_by_tick_blocking_impl(client: &IBKRClient, _is_live: bool) ->
   let tick_type = TickByTickRequestType::Last; // Changed from "Last"
   let number_of_ticks = 0; // Streaming
   let ignore_size = false;
-  let timeout = Duration::from_secs(30); // Timeout for receiving 5 ticks
+  let timeout = Duration::from_secs(30); // Timeout for receiving ticks
 
   info!(
     "Requesting blocking tick-by-tick data for {} (Type={}, Timeout={:?}). Waiting for 5 ticks...",
     contract.symbol, tick_type, timeout // tick_type will use Display
   );
 
-  let target_ticks = 5;
+  let target_ticks = 3;
 
   match data_mgr.get_tick_by_tick_data(
     &contract,

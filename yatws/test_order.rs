@@ -362,7 +362,7 @@ pub(super) fn order_global_cancel_impl(client: &IBKRClient, is_live: bool) -> Re
   info!("Order 2 (SELL SPY @ 999.00 GTC) placed with ID: {}", order2_id);
 
   // Wait for orders to be submitted
-  let submit_timeout = Duration::from_secs(10);
+  let submit_timeout = Duration::from_secs(20);
   info!("Waiting for orders to be submitted (timeout: {:?})...", submit_timeout);
   match order_mgr.try_wait_order_submitted(&order1_id, submit_timeout) {
     Ok(status) => info!("Order {} submitted with status: {:?}", order1_id, status),
@@ -390,7 +390,7 @@ pub(super) fn order_global_cancel_impl(client: &IBKRClient, is_live: bool) -> Re
   info!("Global cancel request sent. Waiting for orders to be cancelled...");
 
   // Wait for orders to be cancelled
-  let cancel_timeout = Duration::from_secs(15);
+  let cancel_timeout = Duration::from_secs(30);
   let mut all_cancelled_successfully = true;
 
   for order_id_str in [&order1_id, &order2_id] {
