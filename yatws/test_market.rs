@@ -6,7 +6,7 @@ use chrono::{Utc, Duration as ChronoDuration};
 use yatws::{
   IBKRError,
   IBKRClient,
-  contract::{Contract, WhatToShow},
+  contract::{Contract, WhatToShow, SecType},
   data::{MarketDataType, TickType, GenericTickType, TickByTickRequestType, DurationUnit, TimePeriodUnit},
 };
 
@@ -248,7 +248,14 @@ pub(super) fn tick_by_tick_blocking_impl(client: &IBKRClient, _is_live: bool) ->
 pub(super) fn market_depth_blocking_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
   info!("--- Testing Blocking Market Depth Request (wait for 1 Bid/1 Ask level) ---");
   let data_mgr = client.data_market();
-  let contract = Contract::stock("IBM"); // Use IBM stock
+  // FX market depth is free.
+  let contract = Contract {
+    symbol: "EUR".to_string(),
+    exchange: "IDEALPRO".to_string(),
+    sec_type: SecType::Forex,
+    currency: "GBP".to_string(),
+    ..Default::default()
+  };
   let num_rows = 5; // Request 5 levels
   let is_smart_depth = false; // Use regular depth
   let mkt_depth_options = &[];
