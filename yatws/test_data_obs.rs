@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use log::{error, warn, info};
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
+use chrono::Utc;
 use yatws::{
   IBKRClient,
   contract::{Contract, WhatToShow, BarSize, SecType},
@@ -561,7 +562,7 @@ pub(super) fn observe_historical_ticks_impl(client: &IBKRClient, _is_live: bool)
   let (req_id, observer_id) = data_mgr.request_observe_historical_ticks(
     &contract,
     None, // start_date_time
-    None, // end_date_time
+    Some(Utc::now()),  // end_date_time is required.
     10, // number_of_ticks (10 most recent)
     WhatToShow::Trades, // TRADES will give us "Last" ticks
     false, // use_rth
