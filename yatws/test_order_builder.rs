@@ -1367,15 +1367,9 @@ fn test_specific_validation_scenarios(client: &IBKRClient) -> Vec<TestResult> {
       .limit(2.5)
       .build()?;
 
-    // We expect and error: invert the condition of Ok.
-    match client.orders().check_what_if_order(&contract, &order, timeout)
-      .map(|order_state| (contract, order, order_state)) {
-        Ok(state) => Err(IBKRError::InvalidOrder(format!("Invalid success selling naked call: {:?}", state))),
-        Err(IBKRError::ApiError(code, msg)) =>
-          if code == 460 { Ok((Contract::default(), OrderRequest::default(), OrderState::default())) } else {
-            Err(IBKRError::InvalidOrder(format!("Unexpected API error: {}, {}", code, msg))) },
-        Err(e) => Err(e),
-      }
+    // Naked call sell is enabled in this account.
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
   }));
 
   // Test commission calculation
