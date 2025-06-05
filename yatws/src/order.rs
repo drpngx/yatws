@@ -908,7 +908,7 @@ pub enum IBKRAlgo {
     force_completion: bool,
   },
   /// Minimise Impact Algo: Slices order to minimize impact, aiming for market average.
-  MinimiseImpact {
+  MinimizeImpact {
     max_pct_vol: f64, // 0.01 to 0.50
   },
   /// Represents a custom or unsupported algo strategy defined by raw parameters.

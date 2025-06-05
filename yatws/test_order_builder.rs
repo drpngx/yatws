@@ -877,7 +877,7 @@ fn test_ibkr_algorithms() -> Vec<TestResult> {
     OrderBuilder::new(OrderSide::Buy, 4000.0)
       .for_stock("AAPL")
       .limit(150.0)
-      .with_ibkr_algo(IBKRAlgo::MinimiseImpact {
+      .with_ibkr_algo(IBKRAlgo::MinimizeImpact {
         max_pct_vol: 0.08,
       })
       .build()
@@ -1347,6 +1347,116 @@ fn test_what_if_orders_with_server_validation(client: &IBKRClient) -> Vec<TestRe
             Err(IBKRError::InvalidOrder(format!("Unexpected API error: {}, {}", code, msg))) },
         Err(e) => Err(e),
       }
+  }));
+
+  results.push(test_what_if_order_server("Arrival Price What-If", || {
+    let start_time = chrono::Utc::now() + ChronoDuration::hours(1);
+    let end_time = start_time + ChronoDuration::hours(3);
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 3000.0)
+      .for_stock("AAPL")
+      .limit(150.0)
+      .with_ibkr_algo(IBKRAlgo::ArrivalPrice {
+        max_pct_vol: 0.15,
+        risk_aversion: RiskAversion::Neutral,
+        start_time: Some(start_time),
+        end_time: Some(end_time),
+        allow_past_end_time: false,
+        force_completion: false,
+      })
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  results.push(test_what_if_order_server("Dark Ice What-If", || {
+    let start_time = chrono::Utc::now() + ChronoDuration::hours(1);
+    let end_time = start_time + ChronoDuration::hours(4);
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 1000.0)
+      .for_stock("AAPL")
+      .limit(150.0)
+      .with_ibkr_algo(IBKRAlgo::DarkIce {
+        display_size: 100,
+        start_time: Some(start_time),
+        end_time: Some(end_time),
+        allow_past_end_time: false,
+      })
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  results.push(test_what_if_order_server("Percentage of Volume What-If", || {
+    let start_time = chrono::Utc::now() + ChronoDuration::hours(1);
+    let end_time = start_time + ChronoDuration::hours(6);
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 2000.0)
+      .for_stock("AAPL")
+      .limit(150.0)
+      .with_ibkr_algo(IBKRAlgo::PercentageOfVolume {
+        pct_vol: 0.05,
+        start_time: Some(start_time),
+        end_time: Some(end_time),
+        no_take_liq: false,
+      })
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  results.push(test_what_if_order_server("Accumulate/Distribute What-If", || {
+    let active_start = chrono::Utc::now() + ChronoDuration::hours(1);
+    let active_end = active_start + ChronoDuration::hours(6);
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 5000.0)
+      .for_stock("AAPL")
+      .limit(150.0)
+      .with_ibkr_algo(IBKRAlgo::AccumulateDistribute {
+        component_size: 10,
+        time_between_orders: 1,
+        randomize_time_20pct: true,
+        randomize_size_55pct: true,
+        give_up: Some(30), // Give up after 30 minutes
+        catch_up_in_time: true,
+        wait_for_fill: false,
+        active_time_start: Some(active_start),
+        active_time_end: Some(active_end),
+      })
+      .build()?;
+
+    log::info!("AD order: {:?}", order);
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  results.push(test_what_if_order_server("Balance Impact Risk What-If", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 3000.0)
+      .for_stock("AAPL")
+      .limit(150.0)
+      .with_ibkr_algo(IBKRAlgo::BalanceImpactRisk {
+        max_pct_vol: 0.12,
+        risk_aversion: RiskAversion::Aggressive,
+        force_completion: true,
+      })
+      .build()?;
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
+  }));
+
+  results.push(test_what_if_order_server("Minimize Impact What-If", || {
+    let (contract, order) = OrderBuilder::new(OrderSide::Buy, 4000.0)
+      .for_stock("AAPL")
+      .limit(150.0)
+      .with_ibkr_algo(IBKRAlgo::MinimizeImpact {
+        max_pct_vol: 0.2,
+      })
+      .build()?;
+
+    log::info!("Min impact order: {:?}", order);
+
+    client.orders().check_what_if_order(&contract, &order, timeout)
+      .map(|order_state| (contract, order, order_state))
   }));
 
   results

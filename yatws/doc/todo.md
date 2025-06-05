@@ -1,7 +1,6 @@
 # Test
-- failure paths
-- same client_id failure path
-- news and fin
+- the error mux should keep a hash of requests and we should unify the order id and req id space.
+- positions hashtable with options
 
 # features
 - account multi

@@ -1325,7 +1325,7 @@ pub enum IBKRAlgo {
   TimeVariantPctVol { start_pct_vol: f64, end_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, no_take_liq: bool },
   VWAP { max_pct_vol: f64, start_time: Option<DateTime<Utc>>, end_time: Option<DateTime<Utc>>, allow_past_end_time: bool, no_take_liq: bool, speed_up: bool },
   BalanceImpactRisk { max_pct_vol: f64, risk_aversion: RiskAversion, force_completion: bool },
-  MinimiseImpact { max_pct_vol: f64 },
+  MinimizeImpact { max_pct_vol: f64 },
   Custom { strategy: String, params: Vec<(String, String)> }, // Escape hatch
 }
 

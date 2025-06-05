@@ -1171,6 +1171,10 @@ impl OrderBuilder {
         // The dash format automatically implies UTC, so no "UTC" suffix should be added.
         dt.format("%Y%m%d-%H:%M:%S").to_string()
       };
+      let format_time_for_algo = |dt: DateTime<Utc>| -> String {
+        // The server says: The correct format is hh:mm:ss. E.g.: 15:00:00 in UTC. No date should be specified, current date is assumed.
+        dt.format("%H:%M:%S").to_string()
+      };
       match algo_enum_instance {
         crate::order::IBKRAlgo::Adaptive { priority } => {
           final_order.algo_strategy = Some("Adaptive".to_string());
@@ -1219,8 +1223,8 @@ impl OrderBuilder {
           if let Some(gu) = give_up { p.push(("giveUp".to_string(), gu.to_string())); }
           p.push(("catchUp".to_string(), if catch_up_in_time { "1".to_string() } else { "0".to_string() }));
           p.push(("waitForFill".to_string(), if wait_for_fill { "1".to_string() } else { "0".to_string() }));
-          if let Some(st_dt) = active_time_start { p.push(("activeTimeStart".to_string(), format_datetime_for_algo(st_dt, true))); } // AD uses YYYYMMDD-HH:MM:SS
-          if let Some(et_dt) = active_time_end { p.push(("activeTimeEnd".to_string(), format_datetime_for_algo(et_dt, true))); } // AD uses YYYYMMDD-HH:MM:SS
+          if let Some(st_dt) = active_time_start { p.push(("activeTimeStart".to_string(), format_time_for_algo(st_dt))); }
+          if let Some(et_dt) = active_time_end { p.push(("activeTimeEnd".to_string(), format_time_for_algo(et_dt))); }
           final_order.algo_strategy = Some("AD".to_string());
           final_order.algo_params = p;
         }
@@ -1310,8 +1314,8 @@ impl OrderBuilder {
           final_order.algo_strategy = Some("BalanceImpactRisk".to_string());
           final_order.algo_params = p;
         }
-        crate::order::IBKRAlgo::MinimiseImpact { max_pct_vol } => {
-          if !(0.01..=0.5).contains(&max_pct_vol) { return Err(IBKRError::InvalidOrder("MinimiseImpact maxPctVol must be between 0.01 and 0.50".into())); }
+        crate::order::IBKRAlgo::MinimizeImpact { max_pct_vol } => {
+          if !(0.1..=0.5).contains(&max_pct_vol) { return Err(IBKRError::InvalidOrder("MinimizeImpact maxPctVol must be between 0.1 and 0.5".into())); }
           final_order.algo_strategy = Some("MinImpact".to_string());
           final_order.algo_params = vec![("maxPctVol".to_string(), max_pct_vol.to_string())];
         }

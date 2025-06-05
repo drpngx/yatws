@@ -8,7 +8,7 @@ YATWS provides a modern Rust implementation for interacting with Interactive Bro
 
 This library was born out of the need to place orders in rapid succession in response to market events, which is not easily accomplished with existing Rust crates. It takes about 3ms to place an order with this library. While order management was the primary focus, other interfaces (market data, account information, etc.) have been implemented for completeness.
 
-**Current Status**: Early stage but production-ready. The API has been used to trade millions of dollars in volume.
+**Current Status**: Early stage but US equity trading is production-ready. The API has been used to trade millions of dollars in volume.
 
 ## Features
 
@@ -221,7 +221,7 @@ fn main() -> Result<(), IBKRError> {
         name: "AAPL-Observer".to_string(),
         tick_count: Arc::new(Mutex::new(0)),
     };
-    
+
     // Request streaming data and associate it with the observer
     let (req_id, _observer_id) = market_mgr.request_observe_market_data(
         &contract,
@@ -238,7 +238,7 @@ fn main() -> Result<(), IBKRError> {
 
     market_mgr.cancel_market_data(req_id)?; // Cancel the stream
     println!("Cancelled market data for AAPL.");
-    
+
     Ok(())
 }
 ```
