@@ -1,12 +1,12 @@
 [package]
 name = "yatws"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Patrick Nguyen <pub+yatws@drpng.com>"]
 description = "Yet Another TWS (Interactive Brokers TWS API) Implementation"
 license = "MIT"
 repository = "https://github.com/drpngx/yatws"
-readme = "../README.md"
+readme = "README.md"
 keywords = ["finance", "trading", "interactive-brokers", "tws"]
 categories = ["api-bindings", "finance"]
 
