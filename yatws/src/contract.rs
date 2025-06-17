@@ -1,8 +1,10 @@
 // yatws/src/contract.rs
 // Contract data structures for the IBKR API
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, NaiveDate, Datelike};
+
 use std::fmt;
+use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use crate::base::IBKRError;
 use std::str::FromStr;
@@ -81,8 +83,8 @@ pub struct ScannerInfo {
   pub moody_rating_below: Option<String>,
   pub sp_rating_above: Option<String>,
   pub sp_rating_below: Option<String>,
-  pub maturity_date_above: Option<String>, // Format: YYYYMMDD
-  pub maturity_date_below: Option<String>, // Format: YYYYMMDD
+  pub maturity_date_above: Option<NaiveDate>,
+  pub maturity_date_below: Option<NaiveDate>,
   pub coupon_rate_above: Option<f64>,
   pub coupon_rate_below: Option<f64>,
   pub exclude_convertible: bool,
@@ -190,13 +192,55 @@ pub struct DeltaNeutralContract {
   pub price: f64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YearMonth {
+  pub year: i32,
+  pub month: u32
+}
+
+impl Ord for YearMonth {
+  fn cmp(&self, other: &Self) -> Ordering {
+    match self.year.cmp(&other.year) {
+      Ordering::Equal => self.month.cmp(&other.month),
+      ord => ord,
+    }
+  }
+}
+
+impl PartialOrd for YearMonth {
+  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    Some(self.cmp(other))
+  }
+}
+
+impl fmt::Display for YearMonth {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{:04}{:02}", self.year, self.month)
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DateOrMonth {
+  Date(NaiveDate),
+  Month(YearMonth),
+}
+
+impl fmt::Display for DateOrMonth {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      DateOrMonth::Date(date) => write!(f, "{:04}{:02}{:02}", date.year(), date.month(), date.day()),
+      DateOrMonth::Month(month) => write!(f, "{}", month),
+    }
+  }
+}
+
 #[derive(Debug, Clone)]
 pub struct Contract {
   pub con_id: i32,
   pub symbol: String,
   pub sec_type: SecType,
-  pub last_trade_date_or_contract_month: Option<String>,
-  pub last_trade_date: Option<String>,
+  pub last_trade_date_or_contract_month: Option<DateOrMonth>,
+  pub last_trade_date: Option<NaiveDate>,
   pub strike: Option<f64>,
   pub right: Option<OptionRight>,
   pub multiplier: Option<String>,
@@ -254,7 +298,7 @@ impl Contract {
   /// Create a new stock option contract
   pub fn option(
     symbol: &str,
-    expiry: &str, // YYYYMMDD
+    expiry: &NaiveDate,
     strike: f64,
     right: OptionRight,
     exchange: &str,
@@ -264,7 +308,7 @@ impl Contract {
       con_id: 0,
       symbol: symbol.to_string(),
       sec_type: SecType::Option,
-      last_trade_date_or_contract_month: Some(expiry.to_string()),
+      last_trade_date_or_contract_month: Some(DateOrMonth::Date(expiry.clone())),
       exchange: exchange.to_string(),
       currency: currency.to_string(),
       strike: Some(strike),
@@ -288,7 +332,7 @@ impl Contract {
   /// Create a new futures option contract
   pub fn futures_option(
     symbol: &str,
-    expiry: &str, // YYYYMMDD
+    expiry: &DateOrMonth,
     strike: f64,
     right: OptionRight,
     exchange: &str,
@@ -299,7 +343,7 @@ impl Contract {
       con_id: 0,
       symbol: symbol.to_string(),
       sec_type: SecType::FutureOption, // FOP
-      last_trade_date_or_contract_month: Some(expiry.to_string()),
+      last_trade_date_or_contract_month: Some(expiry.clone()),
       exchange: exchange.to_string(),
       currency: currency.to_string(),
       strike: Some(strike),
@@ -347,11 +391,11 @@ impl Contract {
       }
 
       if let Some(date) = &self.last_trade_date_or_contract_month {
-        app(&mut sb, date);
+        app(&mut sb, &date.to_string());
       }
 
       if let Some(date) = &self.last_trade_date {
-        app(&mut sb, date);
+        app(&mut sb, &date.format("%Y%m").to_string());
       }
 
       if let Some(strike) = &self.strike {
@@ -535,9 +579,9 @@ pub struct ContractDetails {
   pub underlying_con_id: i32,
   pub underlying_symbol: String,
   pub underlying_sec_type: Option<SecType>,
-  pub real_expiration_date: String,
+  pub real_expiration_date: Option<NaiveDate>,
   pub long_name: String,
-  pub contract_month: String,
+  pub contract_month: Option<YearMonth>,
   pub industry: String,
   pub category: String,
   pub subcategory: String,
@@ -584,11 +628,11 @@ pub struct IneligibilityReason {
 #[derive(Debug, Clone)]
 pub struct BondDetails {
   pub cusip: String,
-  pub maturity: String,
-  pub issue_date: String,
+  pub maturity: Option<NaiveDate>,
+  pub issue_date: Option<NaiveDate>,
   pub coupon: f64,
-  pub next_option_date: Option<DateTime<Utc>>,
-  pub next_option_type: Option<String>,
+  pub next_option_date: Option<NaiveDate>,
+  pub next_option_type: Option<OptionRight>,
   pub next_option_partial: bool,
   pub callable: bool,
   pub puttable: bool,
@@ -614,9 +658,9 @@ impl Default for ContractDetails {
       underlying_con_id: 0,
       underlying_symbol: String::new(),
       underlying_sec_type: None,
-      real_expiration_date: String::new(),
+      real_expiration_date: None,
       long_name: String::new(),
-      contract_month: String::new(),
+      contract_month: None,
       industry: String::new(),
       category: String::new(),
       subcategory: String::new(),
@@ -658,8 +702,8 @@ impl Default for BondDetails {
   fn default() -> Self {
     BondDetails {
       cusip: String::new(),
-      maturity: String::new(),
-      issue_date: String::new(),
+      maturity: None,
+      issue_date: None,
       coupon: 0.0,
       next_option_date: None,
       next_option_type: None,

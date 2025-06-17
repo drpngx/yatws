@@ -1,4 +1,4 @@
-use crate::contract::{Contract, SecType, OptionRight, ComboLeg};
+use crate::contract::{Contract, SecType, OptionRight, ComboLeg, DateOrMonth};
 use crate::order::{OrderRequest, OrderSide, OrderType, TimeInForce};
 use crate::base::IBKRError;
 use chrono::{DateTime, Utc, NaiveDate, Datelike, Weekday};
@@ -214,7 +214,7 @@ impl OrderBuilder {
   pub fn for_option(mut self, symbol: &str, expiry: NaiveDate, strike: f64, right: OptionRight) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::Option;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
+    self.contract.last_trade_date_or_contract_month = Some(DateOrMonth::Date(expiry));
     self.contract.strike = Some(strike);
     self.contract.right = Some(right);
     self.contract.multiplier = Some("100".to_string()); // Default US
@@ -225,7 +225,7 @@ impl OrderBuilder {
   pub fn for_future(mut self, symbol: &str, expiry: NaiveDate) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::Future;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
+    self.contract.last_trade_date_or_contract_month = Some(DateOrMonth::Date(expiry));
     self.is_combo = false;
     self
   }
@@ -270,7 +270,7 @@ impl OrderBuilder {
   pub fn for_future_option(mut self, symbol: &str, expiry: NaiveDate, strike: f64, right: OptionRight) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::FutureOption;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
+    self.contract.last_trade_date_or_contract_month = Some(DateOrMonth::Date(expiry));
     self.contract.strike = Some(strike);
     self.contract.right = Some(right);
     // Exchange, Currency, Multiplier likely needed via .with_ methods
@@ -290,7 +290,7 @@ impl OrderBuilder {
   pub fn for_index_option(mut self, symbol: &str, expiry: NaiveDate, strike: f64, right: OptionRight) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::IndexOption;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
+    self.contract.last_trade_date_or_contract_month = Some(DateOrMonth::Date(expiry));
     self.contract.strike = Some(strike);
     self.contract.right = Some(right);
     // Exchange, Currency, Multiplier likely needed via .with_ methods
@@ -301,7 +301,7 @@ impl OrderBuilder {
   pub fn for_forward(mut self, symbol: &str, expiry: NaiveDate) -> Self {
     self.contract.symbol = symbol.to_string();
     self.contract.sec_type = SecType::Forward;
-    self.contract.last_trade_date_or_contract_month = Some(expiry.format("%Y%m%d").to_string());
+    self.contract.last_trade_date_or_contract_month = Some(DateOrMonth::Date(expiry));
     // Exchange, Currency likely needed via .with_ methods
     self.is_combo = false;
     self

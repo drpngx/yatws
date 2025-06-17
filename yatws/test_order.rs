@@ -8,7 +8,7 @@ use yatws::{
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
   OrderBuilder,
-  contract::{Contract, SecType, OptionRight},
+  contract::{Contract, SecType, OptionRight, DateOrMonth},
 };
 
 pub(super) fn order_market_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
@@ -441,7 +441,7 @@ pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> 
   option_search_contract.sec_type = SecType::Option;
   option_search_contract.currency = "USD".to_string();
   option_search_contract.exchange = "SMART".to_string();
-  option_search_contract.last_trade_date_or_contract_month = Some(OrderBuilder::next_monthly_option_expiry().format("%Y%m%d").to_string());
+  option_search_contract.last_trade_date_or_contract_month = Some(DateOrMonth::Date(OrderBuilder::next_monthly_option_expiry()));
   option_search_contract.right = Some(OptionRight::Call);
 
   let option_details_list = ref_data_mgr.get_contract_details(&option_search_contract)
@@ -468,7 +468,7 @@ pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> 
 
   info!("Selected lowest strike call option: ConID={}, Symbol={}, Expiry={}, Strike={}, Right={:?}",
         option_contract.con_id, option_contract.symbol,
-        option_contract.last_trade_date_or_contract_month.as_deref().unwrap_or("N/A"),
+        option_contract.last_trade_date_or_contract_month.clone().map(|x| x.to_string()).unwrap_or("N/A".to_string()),
         option_contract.strike.unwrap_or(0.0), option_contract.right);
 
   // 4. Buy 2 option contracts at market price

@@ -9,7 +9,7 @@ use crate::protocol_dec_parser::FieldParser;
 use crate::contract::{Contract, SecType, OptionRight}; // Keep imports needed for parsing
 use crate::account::Execution;
 use crate::order::OrderSide;
-use crate::protocol_dec_parser::parse_tws_date_time;
+use crate::protocol_dec_parser::{parse_tws_date_time, parse_tws_date_or_month, parse_opt_tws_date_or_month};
 
 /// Process account value message
 pub fn process_account_value(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
@@ -50,7 +50,7 @@ pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut F
   contract.sec_type = SecType::from_str(&sec_type_str).unwrap_or(SecType::Stock);
   let expiry = parser.read_string()?;
   if !expiry.is_empty() {
-    contract.last_trade_date_or_contract_month = Some(expiry);
+    contract.last_trade_date_or_contract_month = Some(parse_tws_date_or_month(&expiry)?);
   }
   let strike = parser.read_double()?;
   if strike > 0.0 { // Use > 0.0 check as per typical TWS API examples
@@ -176,7 +176,7 @@ pub fn process_position(handler: &Arc<dyn AccountHandler>, parser: &mut FieldPar
   contract.sec_type = SecType::from_str(&sec_type_str).unwrap_or(SecType::Stock);
   let expiry = parser.read_string()?;
   if !expiry.is_empty() {
-    contract.last_trade_date_or_contract_month = Some(expiry);
+    contract.last_trade_date_or_contract_month = Some(parse_tws_date_or_month(&expiry)?);
   }
   let strike = parser.read_double()?;
   if strike > 0.0 {
@@ -407,7 +407,7 @@ pub fn process_execution_data(
   contract.symbol = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Symbol: {}", e)))?;
   contract.sec_type = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract SecType Str: {}", e)))?
     .parse().unwrap_or(SecType::Stock);
-  contract.last_trade_date_or_contract_month = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract LastTradeDate: {}", e)))?;
+  contract.last_trade_date_or_contract_month = parse_opt_tws_date_or_month(parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract LastTradeDate: {}", e)))?)?;
   contract.strike = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Strike: {}", e)))?;
   contract.right = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Right Str: {}", e)))?.parse().ok();
   if msg_version >= 9 {

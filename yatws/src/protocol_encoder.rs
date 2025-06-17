@@ -878,7 +878,7 @@ impl Encoder {
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     let right_str = contract.right.map(|r| r.to_string());
     self.write_optional_str_to_cursor(&mut cursor, right_str.as_deref())?;
@@ -1457,7 +1457,7 @@ impl Encoder {
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_double_to_cursor(&mut cursor, contract.strike.unwrap_or(0.0))?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     if self.server_version >= 15 {
@@ -1591,7 +1591,7 @@ impl Encoder {
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().as_ref().map(|x| x.to_string()).as_deref())?;
 
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
@@ -1677,7 +1677,7 @@ impl Encoder {
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     if version >= 2 {
@@ -1759,7 +1759,7 @@ impl Encoder {
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
@@ -1885,8 +1885,8 @@ info.".to_string()));
     self.write_optional_str_to_cursor(&mut cursor, info.moody_rating_below.as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, info.sp_rating_above.as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, info.sp_rating_below.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, info.maturity_date_above.as_deref())?;
-    self.write_optional_str_to_cursor(&mut cursor, info.maturity_date_below.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, info.maturity_date_above.map(|x| x.format("%Y%m").to_string()).as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, info.maturity_date_below.map(|x| x.format("%Y%m").to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, info.coupon_rate_above)?;
     self.write_optional_double_to_cursor(&mut cursor, info.coupon_rate_below)?;
     self.write_optional_str_to_cursor(&mut cursor, Some(if info.exclude_convertible { "1" } else { "0" }))?;
@@ -2104,7 +2104,7 @@ info.".to_string()));
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
@@ -2171,7 +2171,7 @@ info.".to_string()));
     self.write_int_to_cursor(&mut cursor, contract.con_id)?;
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
@@ -2246,7 +2246,7 @@ info.".to_string()));
     }
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     if self.server_version >= 15 {
@@ -2579,7 +2579,7 @@ info.".to_string()));
     self.write_int_to_cursor(&mut cursor, contract.con_id)?;
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;
@@ -2633,7 +2633,7 @@ info.".to_string()));
     self.write_int_to_cursor(&mut cursor, 0)?; // conId - Always 0 for these calculation requests
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     self.write_str_to_cursor(&mut cursor, "")?; // multiplier - Always "" for these calculation requests
@@ -2695,7 +2695,7 @@ info.".to_string()));
     self.write_int_to_cursor(&mut cursor, 0)?; // conId - Always 0 for these calculation requests
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     self.write_str_to_cursor(&mut cursor, "")?; // multiplier - Always "" for these calculation requests
@@ -2789,7 +2789,7 @@ info.".to_string()));
     self.write_int_to_cursor(&mut cursor, contract.con_id)?;
     self.write_str_to_cursor(&mut cursor, &contract.symbol)?;
     self.write_str_to_cursor(&mut cursor, &contract.sec_type.to_string())?;
-    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_deref())?;
+    self.write_optional_str_to_cursor(&mut cursor, contract.last_trade_date_or_contract_month.as_ref().map(|x| x.to_string()).as_deref())?;
     self.write_optional_double_to_cursor(&mut cursor, contract.strike)?;
     self.write_optional_str_to_cursor(&mut cursor, contract.right.map(|r| r.to_string()).as_deref())?;
     self.write_optional_str_to_cursor(&mut cursor, contract.multiplier.as_deref())?;

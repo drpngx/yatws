@@ -2,13 +2,13 @@
 use std::sync::Arc;
 use std::str::FromStr;
 use crate::base::IBKRError;
-use crate::protocol_dec_parser::FieldParser;
+use crate::protocol_dec_parser::{FieldParser, parse_opt_tws_date_or_month};
 use crate::contract::{Contract, OptionRight, SecType, DeltaNeutralContract, ComboLeg}; // Added DeltaNeutralContract, ComboLeg
 use crate::order::{OrderState, OrderStatus, OrderType, OrderSide, TimeInForce, OrderRequest}; // Added OrderState, OrderStatus, OrderUpdates
 use crate::min_server_ver::min_server_ver;
 use log::{debug, warn}; // Added warn
 use crate::handler::OrderHandler;
-use crate::protocol_dec_parser::parse_tws_date_time;
+use crate::protocol_dec_parser::{parse_tws_date_time, parse_tws_date_or_month};
 
 // --- Helper to parse OrderStatus string ---
 fn parse_order_status(status_str: &str) -> OrderStatus {
@@ -64,7 +64,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
     self.contract.sec_type = SecType::from_str(&sec_type_str)
       .map_err(|e| IBKRError::ParseError(format!("Invalid secType '{}': {}", sec_type_str, e)))?;
     self.contract.last_trade_date_or_contract_month =
-      Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      parse_opt_tws_date_or_month(self.parser.read_string_opt()?)?;
     self.contract.strike = self.parser.read_double_max()?; // Treat 0.0 as valid, MAX as None
     let right_str = self.parser.read_string()?;
     if !right_str.is_empty() && right_str != "?" {

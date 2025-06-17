@@ -1,7 +1,7 @@
 // Builder for common options strategies with enhanced exchange handling
 
 use crate::base::IBKRError;
-use crate::contract::{Contract, SecType, OptionRight, ComboLeg};
+use crate::contract::{Contract, SecType, OptionRight, ComboLeg, DateOrMonth};
 use crate::data_ref_manager::{DataRefManager, SecDefOptParamsResult};
 use crate::order::{OrderRequest, OrderSide, OrderType, TimeInForce};
 use chrono::NaiveDate;
@@ -585,15 +585,15 @@ impl OptionsStrategyBuilder {
   /// Fetches and caches the specific option contract details
   fn fetch_option_contract(
     &mut self,
-    expiry_date: NaiveDate,
+    expiry: DateOrMonth,
     strike: f64,
     right: OptionRight,
   ) -> Result<&Contract, IBKRError> {
-    let expiry_str = expiry_date.format("%Y%m%d").to_string();
     let strike_bits = strike.to_bits();
 
     // First try with the selected exchange
     let primary_exchange = self.resolve_option_exchange()?;
+    let expiry_str = expiry.to_string();
     let primary_cache_key = (expiry_str.clone(), strike_bits, right, primary_exchange.clone());
 
     if !self.option_contract_cache.contains_key(&primary_cache_key) {
@@ -606,7 +606,7 @@ impl OptionsStrategyBuilder {
       } else {
         // Try to fetch with the primary exchange
         match self.try_fetch_option_contract_for_exchange(
-          &expiry_str, strike, right, &primary_exchange
+          &expiry, strike, right, &primary_exchange
         ) {
           Ok(contract) => {
             self.option_contract_cache.insert(primary_cache_key.clone(), contract);
@@ -631,7 +631,7 @@ impl OptionsStrategyBuilder {
             expiry_str, strike, right
           );
 
-          match self.try_fetch_option_contract_for_exchange(&expiry_str, strike, right, "SMART") {
+          match self.try_fetch_option_contract_for_exchange(&expiry, strike, right, "SMART") {
             Ok(contract) => {
               self.option_contract_cache.insert(smart_cache_key.clone(), contract);
               // Update the selected exchange to SMART for consistency
@@ -728,14 +728,14 @@ impl OptionsStrategyBuilder {
 
   fn try_fetch_option_contract_for_exchange(
     &self,
-    expiry_str: &str,
+    expiry: &DateOrMonth,
     strike: f64,
     right: OptionRight,
     exchange: &str,
   ) -> Result<Contract, IBKRError> {
     info!(
       "Fetching option contract: Exp={}, Strike={}, Right={}, Exchange={}",
-      expiry_str, strike, right, exchange
+      expiry, strike, right, exchange
     );
 
     let option_sec_type = match self.underlying_sec_type {
@@ -747,7 +747,7 @@ impl OptionsStrategyBuilder {
     let option_contract_spec = Contract {
       symbol: self.underlying_symbol.clone(),
       sec_type: option_sec_type,
-      last_trade_date_or_contract_month: Some(expiry_str.to_string()),
+      last_trade_date_or_contract_month: Some(expiry.clone()),
       strike: Some(strike),
       right: Some(right),
       exchange: exchange.to_string(),
@@ -760,7 +760,7 @@ impl OptionsStrategyBuilder {
     if details_list.is_empty() {
       return Err(IBKRError::InvalidContract(format!(
         "No contract details found for option: Exp={}, Strike={}, Right={}, Exchange={}",
-        expiry_str, strike, right, exchange
+        expiry, strike, right, exchange
       )));
     }
 
@@ -1763,7 +1763,7 @@ impl OptionsStrategyBuilder {
 
     for leg_def in leg_definitions.iter() {
       let option_contract = self.fetch_option_contract(
-        leg_def.expiry,
+        DateOrMonth::Date(leg_def.expiry),
         leg_def.strike,
         leg_def.right
       )?;

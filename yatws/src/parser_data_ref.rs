@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use crate::handler::ReferenceDataHandler;
 use crate::base::IBKRError;
-use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time};
+use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time, parse_tws_date_or_month, parse_tws_date, parse_opt_tws_month, parse_opt_tws_date};
 use crate::contract::{
   BondDetails, Contract, ContractDetails, SecType, OptionRight, SoftDollarTier, FamilyCode,
   ContractDescription, DepthMktDataDescription, PriceIncrement,
@@ -28,13 +28,13 @@ fn read_last_trade_date(parser: &mut FieldParser, contract_details: &mut Contrac
 
     if !parts.is_empty() {
       if is_bond {
-        contract_details.bond_details.as_mut().unwrap().maturity = parts[0].to_string();
+        contract_details.bond_details.as_mut().unwrap().maturity = Some(parse_tws_date(&parts[0])?);
       } else {
-        contract_details.contract.last_trade_date_or_contract_month = Some(parts[0].to_string());
+        contract_details.contract.last_trade_date_or_contract_month = Some(parse_tws_date_or_month(&parts[0])?);
       }
     }
     if parts.len() > 1 {
-      contract_details.contract.last_trade_date = Some(parts[1].to_string());
+      contract_details.contract.last_trade_date = Some(parse_tws_date(&parts[1])?);
     }
     if is_bond && parts.len() > 2 {
       contract_details.time_zone_id = parts[2].to_string();
@@ -63,7 +63,7 @@ pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parse
   contract_details.bond_details.as_mut().unwrap().cusip = parser.read_string()?;
   contract_details.bond_details.as_mut().unwrap().coupon = parser.read_double()?;
   read_last_trade_date(parser, &mut contract_details, true)?;
-  contract_details.bond_details.as_mut().unwrap().issue_date = parser.read_string()?;
+  contract_details.bond_details.as_mut().unwrap().issue_date = Some(parse_tws_date(&parser.read_string()?)?);
   contract_details.bond_details.as_mut().unwrap().ratings = parser.read_string()?;
   contract_details.bond_details.as_mut().unwrap().bond_type = parser.read_string()?;
   contract_details.bond_details.as_mut().unwrap().coupon_type = parser.read_string()?;
@@ -84,8 +84,8 @@ pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parse
   contract_details.valid_exchanges = parser.read_string()?;
   if version >= 2 {
     let dt = parser.read_string()?;
-    contract_details.bond_details.as_mut().unwrap().next_option_date = Some(parse_tws_date_time(&dt)?);
-    contract_details.bond_details.as_mut().unwrap().next_option_type = Some(parser.read_string()?);
+    contract_details.bond_details.as_mut().unwrap().next_option_date = Some(parse_tws_date(&dt)?);
+    contract_details.bond_details.as_mut().unwrap().next_option_type = Some(OptionRight::from_str(&parser.read_string()?)?);
     contract_details.bond_details.as_mut().unwrap().next_option_partial = parser.read_bool()?;
     contract_details.bond_details.as_mut().unwrap().notes = parser.read_string()?;
   }
@@ -370,7 +370,7 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
   contract_details.contract.sec_type = SecType::from_str(&parser.read_string()?).unwrap_or(SecType::Stock);
   read_last_trade_date(parser, &mut contract_details, false)?;
   if server_version >= min_server_ver::LAST_TRADE_DATE {
-    contract_details.contract.last_trade_date = parser.read_string_opt()?;
+    contract_details.contract.last_trade_date = parse_opt_tws_date(parser.read_string_opt()?)?;
   }
   contract_details.contract.strike = Some(parser.read_double()?);
   let opt_right = parser.read_string()?;
@@ -399,7 +399,7 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
     contract_details.contract.primary_exchange = parser.read_string_opt()?;
   }
   if version >= 6 {
-    contract_details.contract_month = parser.read_string()?;
+    contract_details.contract_month = parse_opt_tws_month(parser.read_string_opt()?)?;
     contract_details.industry = parser.read_string()?;
     contract_details.category = parser.read_string()?;
     contract_details.subcategory = parser.read_string()?;
@@ -436,7 +436,7 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
     contract_details.market_rule_ids = parser.read_string()?;
   }
   if server_version >= min_server_ver::REAL_EXPIRATION_DATE {
-    contract_details.real_expiration_date = parser.read_string()?;
+    contract_details.real_expiration_date = parse_opt_tws_date(parser.read_string_opt()?)?;
   }
   if server_version >= min_server_ver::STOCK_TYPE {
     contract_details.stock_type = parser.read_string()?;

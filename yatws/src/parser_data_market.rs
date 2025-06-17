@@ -4,7 +4,7 @@ use chrono::{Utc, TimeZone};
 use std::convert::TryFrom;
 use crate::handler::MarketDataHandler;
 use crate::base::IBKRError;
-use crate::protocol_dec_parser::FieldParser;
+use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time, parse_opt_tws_date_or_month, parse_tws_date};
 use crate::contract::{ContractDetails, OptionRight, Bar, SecType};
 use crate::data::{TickType, TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataType, TickOptionComputationData}; // Added TickType
 use crate::min_server_ver::min_server_ver;
@@ -583,7 +583,7 @@ pub fn process_scanner_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
     contract_details.contract.con_id = parser.read_int()?;
     contract_details.contract.symbol = parser.read_string()?;
     contract_details.contract.sec_type = SecType::from_str(&parser.read_string()?).map_err(|e| IBKRError::ParseError(e.to_string()))?;
-    contract_details.contract.last_trade_date_or_contract_month = parser.read_string_opt()?;
+    contract_details.contract.last_trade_date_or_contract_month = parse_opt_tws_date_or_month(parser.read_string_opt()?)?;
     contract_details.contract.strike = parser.read_double_max()?;
     let opt_right_str = parser.read_string()?;
     if !opt_right_str.is_empty() {

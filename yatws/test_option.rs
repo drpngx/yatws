@@ -8,7 +8,7 @@ use yatws::{
   IBKRError,
   IBKRClient,
   OptionsStrategyBuilder,
-  contract::{Contract, SecType, OptionRight},
+  contract::{Contract, SecType, OptionRight, DateOrMonth},
   data::{MarketDataType, TickOptionComputationData},
   data_ref_manager::DataRefManager,
 };
@@ -46,7 +46,7 @@ pub(super) fn box_spread_yield_impl(client: &IBKRClient, _is_live: bool) -> Resu
     let futs: Vec<_> = data_ref.get_contract_details(&uc)?.into_iter().map(|d| d.contract_month).collect();
     log::info!("Futures: {:?}", futs);
     assert!(!futs.is_empty(), "No contracts found for future symbol: {}", symbol);
-    uc.last_trade_date_or_contract_month = futs.into_iter().min();
+    uc.last_trade_date_or_contract_month = futs.into_iter().min().unwrap().map(|x| DateOrMonth::Month(x));
     // No last trade, use ask for now, assuming that the spreads are tight.
     let underlying_price = data_market.get_quote(&uc, Some(MarketDataType::Delayed), Duration::from_secs(10))?.1.unwrap();
     if underlying_price <= 0.0 {
@@ -95,7 +95,7 @@ pub(super) fn box_spread_yield_impl(client: &IBKRClient, _is_live: bool) -> Resu
         // This requires parsing the combo legs or relying on the builder's internal state (which isn't exposed)
         // Let's re-extract from combo legs for robustness
         let mut strikes = Vec::new();
-        let mut expiry_str = None;
+        let mut expiry = None;
         for leg in &combo_contract.combo_legs {
           // Fetch full contract details for the leg to get strike/expiry
           // This is inefficient but necessary if builder doesn't expose details
@@ -104,7 +104,7 @@ pub(super) fn box_spread_yield_impl(client: &IBKRClient, _is_live: bool) -> Resu
             Ok(details_list) if !details_list.is_empty() => {
               let leg_details = &details_list[0].contract;
               if let Some(s) = leg_details.strike { strikes.push(s); }
-              if expiry_str.is_none() { expiry_str = leg_details.last_trade_date_or_contract_month.clone(); }
+              if expiry.is_none() { expiry = leg_details.last_trade_date_or_contract_month.clone(); }
             },
             Ok(_) => { error!("Leg contract details not found for conId {}", leg.con_id); overall_success = false; break; },
             Err(e) => { error!("Error fetching leg details for conId {}: {:?}", leg.con_id, e); overall_success = false; break; },
@@ -123,13 +123,18 @@ pub(super) fn box_spread_yield_impl(client: &IBKRClient, _is_live: bool) -> Resu
         let actual_strike2 = strikes[1];
         let actual_strike_diff = actual_strike2 - actual_strike1;
 
-        let actual_expiry_date = match expiry_str.as_deref().and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok()) {
-          Some(date) => date,
-          None => {
-            error!("Could not determine expiry date from combo legs.");
+        let actual_expiry_date = if let Some(expiry) = expiry {
+          if let DateOrMonth::Date(date) = expiry {
+            date
+          } else {
+            error!("Could not determine expiry date from combo legs expiry: {}.", expiry);
             overall_success = false;
             continue;
           }
+        } else {
+          error!("Could not determine expiry date from combo legs expiry (None).");
+          overall_success = false;
+          continue;
         };
 
         info!("  Actual Box: Exp={}, Strikes={:.2}/{:.2} (Diff={:.2})",
@@ -219,21 +224,20 @@ pub(super) fn option_calculations_impl(client: &IBKRClient, _is_live: bool) -> R
   let days_to_friday = (chrono::Weekday::Fri.number_from_monday() + 7 - first_of_next_month.weekday().number_from_monday()) % 7;
   let first_friday = first_of_next_month + ChronoDuration::days(days_to_friday as i64);
   let target_expiry_date = first_friday + ChronoDuration::weeks(2); // 3rd Friday
-  let expiry_str = target_expiry_date.format("%Y%m%d").to_string();
 
   let target_strike_raw = under_price * 1.10;
   // Round to nearest $2.50 increment for typical AAPL options, or $5 for higher prices
   let strike_increment = if target_strike_raw < 200.0 { 2.5 } else { 5.0 };
   let strike_price = (target_strike_raw / strike_increment).round() * strike_increment;
 
-  info!("Targeting AAPL Call Option: Expiry={}, Strike={:.2}", expiry_str, strike_price);
+  info!("Targeting AAPL Call Option: Expiry={}, Strike={:.2}", target_expiry_date, strike_price);
 
-  let option_contract_spec = Contract::option("AAPL", &expiry_str, strike_price, OptionRight::Call, "SMART", "USD");
+  let option_contract_spec = Contract::option("AAPL", &target_expiry_date, strike_price, OptionRight::Call, "SMART", "USD");
 
   // Get full contract details to ensure it's valid and get con_id
   info!("Fetching contract details for the target option...");
   let option_details_list = ref_data_mgr.get_contract_details(&option_contract_spec)
-    .context(format!("Failed to get contract details for AAPL option {} C{}", expiry_str, strike_price))?;
+    .context(format!("Failed to get contract details for AAPL option {} C{}", target_expiry_date, strike_price))?;
 
   if option_details_list.is_empty() {
     return Err(anyhow!("No contract details found for the specified AAPL option. Check expiry/strike or market data subscription."));

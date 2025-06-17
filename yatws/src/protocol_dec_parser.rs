@@ -1,6 +1,7 @@
 use crate::base::IBKRError;
+use crate::contract::{DateOrMonth, YearMonth};
 
-use chrono::{DateTime, Utc, TimeZone, NaiveDateTime};
+use chrono::{DateTime, Utc, TimeZone, NaiveDateTime, NaiveDate};
 use chrono_tz::Tz;
 use std::str::FromStr;
 
@@ -308,4 +309,73 @@ impl<'a> FieldParser<'a> {
       self.fields.len() - self.current_field
     }
   }
+}
+
+
+/// Parse a TWS date or month. It must be either YYYYMM (month) or date (YYYYMMDD).
+pub fn parse_tws_date_or_month(time_str: &str) -> Result<DateOrMonth, IBKRError> {
+  if time_str.len() == 8 {
+    // YYYYMMDD
+    NaiveDate::parse_from_str(time_str, "%Y%m%d")
+      .map(DateOrMonth::Date)
+      .map_err(|e| IBKRError::ParseError(format!("Date parse error: {}", e)))
+  } else if time_str.len() == 6 {
+    // YYYYMM
+    let year = time_str[0..4].parse::<i32>().map_err(|e| IBKRError::ParseError(format!("Year parse error: {}", e)))?;
+    let month = time_str[4..6].parse::<u32>().map_err(|e| IBKRError::ParseError(format!("Month parse error: {}", e)))?;
+    if !(1..=12).contains(&month) {
+      return Err(IBKRError::ParseError(format!("Month must be 1..12, got {}", month)));
+    }
+    Ok(DateOrMonth::Month(YearMonth { year, month }))
+  } else {
+    Err(IBKRError::ParseError(format!("Input must be YYYYMM or YYYYMMDD, got {}", time_str)))
+  }
+}
+
+/// Parse from an optional non-empty string.
+///
+/// If the string is defined, it must be a valid `DateOrMonth`.
+pub fn parse_opt_tws_date_or_month(time_opt_str: Option<String>) -> Result<Option<DateOrMonth>, IBKRError> {
+  time_opt_str.map(|x| parse_tws_date_or_month(&x)).transpose()
+}
+
+/// Parses a TWS date string in "YYYYMMDD" format into a NaiveDate.
+/// Returns an error if the input does not match the expected format or is invalid.
+pub fn parse_tws_date(date_str: &str) -> Result<NaiveDate, IBKRError> {
+  if date_str.len() != 8 {
+    return Err(IBKRError::ParseError(format!(
+      "Expected format YYYYMMDD, got '{}'", date_str
+    )));
+  }
+  NaiveDate::parse_from_str(date_str, "%Y%m%d")
+    .map_err(|e| IBKRError::ParseError(format!("Date parse error: {}", e)))
+}
+
+pub fn parse_opt_tws_date(date_opt_str: Option<String>) -> Result<Option<NaiveDate>, IBKRError> {
+  date_opt_str.map(|x| parse_tws_date(&x)).transpose()
+}
+
+/// Parses a TWS year-month string in "YYYYMM" format into a YearMonth.
+/// Returns an error if the input does not match the expected format or is invalid.
+pub fn parse_tws_month(ym_str: &str) -> Result<YearMonth, IBKRError> {
+  if ym_str.len() != 6 {
+    return Err(IBKRError::ParseError(format!(
+      "Expected format YYYYMM, got '{}'", ym_str
+    )));
+  }
+  let year = ym_str[0..4].parse::<i32>()
+    .map_err(|e| IBKRError::ParseError(format!("Year parse error: {}", e)))?;
+  let month = ym_str[4..6].parse::<u32>()
+    .map_err(|e| IBKRError::ParseError(format!("Month parse error: {}", e)))?;
+  if !(1..=12).contains(&month) {
+    return Err(IBKRError::ParseError(format!(
+      "Month must be 1..12, got '{}'", month
+    )));
+  }
+  Ok(YearMonth { year, month })
+}
+
+/// Parses an Option<String> TWS year-month string in "YYYYMM" format into Option<YearMonth>.
+pub fn parse_opt_tws_month(ym_opt_str: Option<String>) -> Result<Option<YearMonth>, IBKRError> {
+  ym_opt_str.map(|x| parse_tws_month(&x)).transpose()
 }
