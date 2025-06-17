@@ -142,10 +142,12 @@ impl<'a> FieldParser<'a> {
   #[allow(dead_code)]
   pub fn num(&self) -> usize { self.fields.len() }
 
-  /// Read a string field
+  /// Read a string field, accepting non-strictly UTF strings.
   pub fn read_string(&mut self) -> Result<String, IBKRError> {
     if self.current_field >= self.fields.len() {
-      return Err(IBKRError::ParseError("Unexpected end of message".to_string()));
+      return Err(IBKRError::ParseError(
+        "Unexpected end of message".to_string(),
+      ));
     }
 
     let (start, end) = self.fields[self.current_field];
@@ -154,12 +156,20 @@ impl<'a> FieldParser<'a> {
     if start >= end {
       return Ok(String::new());
     }
+    let bytes = &self.data[start..end];
+    let mut result = String::new();
 
-    std::str::from_utf8(&self.data[start..end])
-      .map(|s| s.to_string())
-      .map_err(|e| IBKRError::ParseError(format!("Failed to parse string: {}", e)))
+    for &byte in bytes {
+      if byte == 0 {
+        break;
+      }
+      result.push(byte as char);
+    }
+
+    Ok(result)
   }
 
+  /// Read an optional string field, accepting non-strictly UTF strings.
   pub fn read_string_opt(&mut self) -> Result<Option<String>, IBKRError> {
     if self.current_field >= self.fields.len() {
       return Err(IBKRError::ParseError("Unexpected end of message".to_string()));
@@ -172,9 +182,17 @@ impl<'a> FieldParser<'a> {
       return Ok(None);
     }
 
-    Ok(Some(std::str::from_utf8(&self.data[start..end])
-       .map(|s| s.to_string())
-       .map_err(|e| IBKRError::ParseError(format!("Failed to parse string: {}", e)))?))
+    let bytes = &self.data[start..end];
+    let mut result = String::new();
+
+    for &byte in bytes {
+      if byte == 0 {
+        break;
+      }
+      result.push(byte as char);
+    }
+
+    Ok(result)
   }
 
   /// Read an integer field
