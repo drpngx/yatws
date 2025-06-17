@@ -890,7 +890,7 @@ pub struct MarketRule {
 pub struct HistoricalSession {
   pub start_date_time: DateTime<Utc>,
   pub end_date_time: DateTime<Utc>,
-  pub ref_date: Option<DateTime<Utc>>,
+  pub ref_date: Option<NaiveDate>,
 }
 
 #[derive(Debug, Clone, Default)]

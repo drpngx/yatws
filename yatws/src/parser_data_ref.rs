@@ -345,7 +345,7 @@ pub fn process_historical_schedule(handler: &Arc<dyn ReferenceDataHandler>, pars
     sessions.push(HistoricalSession {
       start_date_time: parse_tws_date_time(&parser.read_string()?)?,
       end_date_time: parse_tws_date_time(&parser.read_string()?)?,
-      ref_date: parse_opt_tws_date_time(parser.read_string_opt()?)?,
+      ref_date: parse_opt_tws_date(parser.read_string_opt()?)?,
     });
   }
   debug!("Historical Schedule: ReqID={}, Start={}, End={}, TZ={}, Sessions={}", req_id, start_date_time, end_date_time, time_zone, sessions.len());
