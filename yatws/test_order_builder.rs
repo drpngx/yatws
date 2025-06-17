@@ -878,7 +878,7 @@ fn test_ibkr_algorithms() -> Vec<TestResult> {
       .for_stock("AAPL")
       .limit(150.0)
       .with_ibkr_algo(IBKRAlgo::MinimizeImpact {
-        max_pct_vol: 0.08,
+        max_pct_vol: 0.12,
       })
       .build()
   }));
