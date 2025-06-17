@@ -33,43 +33,60 @@ use std::str::FromStr;
 pub fn parse_tws_date_time(time_str: &str) -> Result<DateTime<Utc>, IBKRError> {
   let trimmed = time_str.trim();
   if trimmed.is_empty() {
-    return Err(IBKRError::ParseError("Cannot parse empty date/time string".to_string()));
+    return Err(IBKRError::ParseError(
+      "Cannot parse empty date/time string".to_string(),
+    ));
   }
 
   // Try parsing formats with explicit timezones first
   // These look like "DATETIME TZID"
   if let Some(space_pos) = trimmed.rfind(|c: char| c.is_whitespace()) {
     let potential_dt_part = &trimmed[..space_pos];
-    let potential_tz_part = &trimmed[space_pos..].trim(); // Trim whitespace around TZ
+    let potential_tz_part = &trimmed[space_pos..].trim();
 
     // Check if the part after the last space looks like a timezone
     if potential_tz_part.contains('/') || potential_tz_part.to_uppercase() == "UTC" {
       match Tz::from_str(potential_tz_part) {
         Ok(tz) => {
           // Try parsing the datetime part with space or hyphen separator
+          // **FIX**: Clean up potential double spaces in the date/time part before parsing.
+          let cleaned_dt_part = potential_dt_part.replace("  ", " ");
           let dt_format_space = "%Y%m%d %H:%M:%S";
           let dt_format_hyphen = "%Y%m%d-%H:%M:%S";
 
-          let naive_dt = NaiveDateTime::parse_from_str(potential_dt_part.replace("  ", " ").as_str(), dt_format_space)
-            .or_else(|_| NaiveDateTime::parse_from_str(potential_dt_part, dt_format_hyphen));
+          let naive_dt = NaiveDateTime::parse_from_str(&cleaned_dt_part, dt_format_space)
+            .or_else(|_| NaiveDateTime::parse_from_str(&cleaned_dt_part, dt_format_hyphen));
 
           match naive_dt {
             Ok(ndt) => {
               // Successfully parsed NaiveDateTime and Tz
-              return tz.from_local_datetime(&ndt)
+              return tz
+                .from_local_datetime(&ndt)
                 .single() // Handle ambiguity/non-existence
                 .map(|dt_with_tz| dt_with_tz.with_timezone(&Utc)) // Convert to UTC
-                .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for timezone '{}'", ndt, tz)));
-            },
+                .ok_or_else(|| {
+                  IBKRError::ParseError(format!(
+                    "Ambiguous or invalid time '{}' for timezone '{}'",
+                    ndt, tz
+                  ))
+                });
+            }
             Err(_) => {
               // Timezone looked valid, but datetime part failed. Fall through to other formats.
-              log::trace!("Potential TZ '{}' found, but DT part '{}' failed parsing. Trying other formats.", potential_tz_part, potential_dt_part);
+              log::trace!(
+                "Potential TZ '{}' found, but DT part '{}' failed parsing. Trying other formats.",
+                potential_tz_part,
+                potential_dt_part
+              );
             }
           }
-        },
+        }
         Err(_) => {
           // String after space didn't parse as a valid Tz. Fall through.
-          log::trace!("Part after space '{}' is not a valid chrono-tz timezone. Trying other formats.", potential_tz_part);
+          log::trace!(
+            "Part after space '{}' is not a valid chrono-tz timezone. Trying other formats.",
+            potential_tz_part
+          );
         }
       }
     }
@@ -78,25 +95,37 @@ pub fn parse_tws_date_time(time_str: &str) -> Result<DateTime<Utc>, IBKRError> {
   // Try parsing "YYYYMMDD-HH:MM:SS" (Assumed UTC)
   if let Ok(naive_dt) = NaiveDateTime::parse_from_str(trimmed, "%Y%m%d-%H:%M:%S") {
     log::trace!("Parsed '{}' as YYYYMMDD-HH:MM:SS (UTC)", trimmed);
-    return Utc.from_local_datetime(&naive_dt)
-      .single()
-      .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for UTC conversion", naive_dt)));
+    return Utc.from_local_datetime(&naive_dt).single().ok_or_else(|| {
+      IBKRError::ParseError(format!(
+        "Ambiguous or invalid time '{}' for UTC conversion",
+        naive_dt
+      ))
+    });
   }
 
   // Try parsing "YYYYMMDD HH:MM:SS" (potentially double space)
   // **ASSUMING UTC** (Ideally Login TZ, but that's hard)
   let cleaned_for_space = trimmed.replace("  ", " ");
   if let Ok(naive_dt) = NaiveDateTime::parse_from_str(&cleaned_for_space, "%Y%m%d %H:%M:%S") {
-    log::warn!("Parsed '{}' as YYYYMMDD HH:MM:SS, assuming UTC (ideally Login TZ)", trimmed);
-    return Utc.from_local_datetime(&naive_dt)
-      .single()
-      .ok_or_else(|| IBKRError::ParseError(format!("Ambiguous or invalid time '{}' for UTC conversion", naive_dt)));
+    log::warn!(
+      "Parsed '{}' as YYYYMMDD HH:MM:SS, assuming UTC (ideally Login TZ)",
+      trimmed
+    );
+    return Utc.from_local_datetime(&naive_dt).single().ok_or_else(|| {
+      IBKRError::ParseError(format!(
+        "Ambiguous or invalid time '{}' for UTC conversion",
+        naive_dt
+      ))
+    });
   }
 
   // Add other formats here if needed (e.g., epoch seconds)
 
   // If all known formats fail
-  Err(IBKRError::ParseError(format!("Failed to parse TWS date/time string '{}' using known formats", time_str)))
+  Err(IBKRError::ParseError(format!(
+    "Failed to parse TWS date/time string '{}' using known formats",
+    time_str
+  )))
 }
 
 pub fn parse_opt_tws_date_time(time_opt_str: Option<String>) -> Result<Option<DateTime<Utc>>, IBKRError> {

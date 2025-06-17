@@ -1,4 +1,5 @@
 # Test
+- tidy up the `keep_up_to_date` test with error conditions and verify that the time stamp stays in the past
 - update doc of interface
 - test DateOrMonth for options/futures query
 - test if a future can be defined solely by the month (place order)

@@ -335,7 +335,7 @@ impl MarketDataObserver for TickDataInternalObserver {
   // fn on_tick_option_computation(&self, req_id: i32, data: TickOptionComputationData) { if req_id != self.state.req_id { return; } self.state.push_event(TickDataEvent::OptionComputation(data)); }
   fn on_tick_snapshot_end(&self, req_id: i32) { if req_id != self.state.req_id { return; } self.state.push_event(TickDataEvent::SnapshotEnd); self.state.mark_stream_completed(); self.state.active.store(false, Ordering::SeqCst); } // Snapshot is one-shot
   fn on_market_data_type(&self, req_id: i32, market_data_type: MarketDataType) { if req_id != self.state.req_id { return; } self.state.push_event(TickDataEvent::MarketDataTypeSet(market_data_type)); }
-  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(TickDataEvent::Error(e.clone())); self.state.set_error(e); }
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.set_error(e.clone()); self.state.push_event(TickDataEvent::Error(e)); }
 }
 
 // --- RealTimeBarSubscription ---
@@ -549,14 +549,14 @@ impl HistoricalDataSubscriptionBuilder {
     let manager = self.manager_weak.upgrade().ok_or(IBKRError::NotConnected)?;
     let req_id = manager.next_request_id();
     let state = Arc::new(SubscriptionState::<HistoricalDataEvent, DataMarketManager>::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
-    let observer = HistoricalDataInternalObserver { state: Arc::clone(&state) };
+    let observer = HistoricalDataInternalObserver { state: Arc::clone(&state), keep_up_to_date: self.params.keep_up_to_date };
     let observer_id = manager.observe_historical_data(observer);
     state.set_observer_id(observer_id);
     let mdt_to_set = self.params.market_data_type.unwrap_or(MarketDataType::RealTime);
     if manager.set_market_data_type_if_needed(mdt_to_set).is_err() {
       warn!("Failed to set market data type to {:?} for hist_data req_id {}, proceeding.", mdt_to_set, req_id);
     }
-    manager.internal_request_historical_data( req_id, &self.contract, self.params.end_date_time, &self.params.duration.to_string(), &self.params.bar_size_setting.to_string(), &self.params.what_to_show.to_string(), self.params.use_rth, self.params.format_date, self.params.keep_up_to_date, &self.params.chart_options, mdt_to_set)?;
+    manager.internal_request_historical_data( req_id, &self.contract, self.params.end_date_time, &self.params.duration.to_string(), &self.params.bar_size_setting.to_string(), &self.params.what_to_show.to_string(), self.params.use_rth, self.params.format_date, self.params.keep_up_to_date, &self.params.chart_options, mdt_to_set )?;
     Ok(HistoricalDataSubscription { state })
   }
 }
@@ -592,12 +592,22 @@ impl MarketDataIterator<HistoricalDataEvent> for HistoricalDataIterator {
   fn try_next(&mut self, timeout: Duration) -> Option<HistoricalDataEvent> { self.inner.try_next(timeout) }
   fn collect_available(&mut self) -> Vec<HistoricalDataEvent> { self.inner.collect_available() }
 }
-struct HistoricalDataInternalObserver { state: Arc<SubscriptionState<HistoricalDataEvent, DataMarketManager>> }
+struct HistoricalDataInternalObserver {
+  state: Arc<SubscriptionState<HistoricalDataEvent, DataMarketManager>>,
+  keep_up_to_date: bool,
+}
 impl HistoricalDataObserver for HistoricalDataInternalObserver {
   fn on_historical_data(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::Bar(bar.clone())); }
   fn on_historical_data_update(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::UpdateBar(bar.clone())); }
-  fn on_historical_data_end(&self, req_id: i32, start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>>) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::Complete { start_date, end_date }); self.state.mark_completed_and_inactive(); }
-  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(HistoricalDataEvent::Error(e.clone())); self.state.set_error(e); }
+  fn on_historical_data_end(&self, req_id: i32, start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>>) {
+    if req_id != self.state.req_id { return; }
+    info!("Historical data end for req_id {}. keep_up_to_date: {}", req_id, self.keep_up_to_date);
+    self.state.push_event(HistoricalDataEvent::Complete { start_date, end_date });
+    if !self.keep_up_to_date {
+      self.state.mark_completed_and_inactive();
+    }
+  }
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.set_error(e.clone()); self.state.push_event(HistoricalDataEvent::Error(e)); }
 }
 
 // --- Phase 4: Multiple Subscription Support ---

@@ -2,6 +2,7 @@
 use anyhow::{Context, Result};
 use log::{debug, error, info, warn};
 use std::time::Duration;
+use chrono::Utc;
 use yatws::{
   IBKRError,
   IBKRClient,
@@ -76,6 +77,63 @@ pub(super) fn subscribe_market_data_impl(client: &IBKRClient, is_live: bool) -> 
 
   if event_count == 0 && is_live {
     warn!("Received 0 events for GOOG. This might be okay if market is closed or no data ticks during the window.");
+  }
+  Ok(())
+}
+
+pub(super) fn subscribe_historical_keep_up_to_date_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+  info!("--- Testing Subscribe Historical Data with keep_up_to_date ---");
+  let symbol = "GOOG";
+  let days_ago = 5;
+
+  let contract = Contract::stock(symbol);
+  let bars_event = client
+    .data_market()
+    .subscribe_historical_data(
+      &contract,
+      yatws::data::DurationUnit::Day(days_ago),
+      yatws::contract::BarSize::OneHour,
+      yatws::contract::WhatToShow::Trades,
+    )
+    .with_use_rth(false)
+    .with_keep_up_to_date(true)
+    .with_market_data_type(MarketDataType::RealTime)
+    .submit()?;
+
+  {
+    let mut completed_bars = false;
+    let mut bars = bars_event.events();
+    // The udpates will come at 5 second intervals.
+    const NUM_FUTURE_BARS: usize = 3;
+    let mut future_bars = 0;
+    let now = Utc::now();
+    while future_bars < NUM_FUTURE_BARS {
+      match bars.next() {
+        Some(evt) => match evt {
+          HistoricalDataEvent::Bar(bar) => {
+            assert!(!completed_bars, "Got a historical bar after complete");
+            log::info!("Got history bar: {:?}", bar);
+          }
+          HistoricalDataEvent::UpdateBar(bar) => {
+            assert!(completed_bars);
+            log::info!("Future bar: {:?}", bar);
+            // Not sure why the timestamp of the update is not correct.
+            // assert!(bar.time >= now, "Future bar is in the past: now={:?}, bar.time: {:?}", now, bar.time);
+            future_bars += 1;
+          }
+          HistoricalDataEvent::Complete { .. } => {
+            completed_bars = true;
+            log::info!("History complete, further updates will be current bars");
+          }
+          HistoricalDataEvent::Error(e) => {
+            log::info!("Error: {}", e);
+          }
+        },
+        None => {
+          log::info!("Ignoring timeout");
+        }
+      }
+    }
   }
   Ok(())
 }

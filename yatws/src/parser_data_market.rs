@@ -375,13 +375,17 @@ pub fn process_historical_data_update(handler: &Arc<dyn MarketDataHandler>, pars
   let volume = parser.read_decimal_max()?.unwrap_or(0.0);
 
   // Parse timestamp (expecting epoch seconds for updates)
-  let time = date_str.parse::<i64>()
-    .map(|epoch| Utc.timestamp_opt(epoch, 0).single().unwrap_or(Utc::now()))
+  let time = crate::protocol_dec_parser::parse_tws_date_time(&date_str)
+    .or_else(|_| {
+      // Try parsing as epoch seconds if primary format fails
+      date_str.parse::<i64>().map(|epoch| {
+        Utc.timestamp_opt(epoch, 0).single().unwrap_or(Utc::now()) // Handle potential errors/ambiguity
+      })
+    })
     .unwrap_or_else(|e| {
       log::warn!("Failed to parse historical update timestamp '{}' for ReqID {}: {}. Using current time.", date_str, req_id, e);
       Utc::now() // Fallback
     });
-
 
   let bar = Bar {
     time,
