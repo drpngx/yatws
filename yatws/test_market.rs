@@ -574,7 +574,7 @@ pub(super) fn historical_schedule_impl(client: &IBKRClient, _is_live: bool) -> R
         // Log details of the first few sessions
         for (i, session) in schedule_result.sessions.iter().enumerate().take(3) {
           info!(
-            "    Session {}: RefDate={}, Start={}, End={}",
+            "    Session {}: RefDate={:?}, Start={}, End={}",
             i + 1,
             session.ref_date,
             session.start_date_time,

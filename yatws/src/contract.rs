@@ -882,9 +882,9 @@ pub struct MarketRule {
 /// Represents a session in the historical data schedule.
 #[derive(Debug, Clone, Default)]
 pub struct HistoricalSession {
-  pub start_date_time: String, // Consider parsing to DateTime<Tz> if needed
-  pub end_date_time: String,   // Consider parsing to DateTime<Tz> if needed
-  pub ref_date: String,        // Consider parsing to Date if needed
+  pub start_date_time: DateTime<Utc>,
+  pub end_date_time: DateTime<Utc>,
+  pub ref_date: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Default)]

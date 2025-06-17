@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use crate::handler::ReferenceDataHandler;
 use crate::base::IBKRError;
-use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time, parse_tws_date_or_month, parse_tws_date, parse_opt_tws_month, parse_opt_tws_date};
+use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time, parse_opt_tws_date_time, parse_tws_date_or_month, parse_tws_date, parse_opt_tws_month, parse_opt_tws_date};
 use crate::contract::{
   BondDetails, Contract, ContractDetails, SecType, OptionRight, SoftDollarTier, FamilyCode,
   ContractDescription, DepthMktDataDescription, PriceIncrement,
@@ -343,9 +343,9 @@ pub fn process_historical_schedule(handler: &Arc<dyn ReferenceDataHandler>, pars
   let mut sessions = Vec::with_capacity(sessions_count as usize);
   for _ in 0..sessions_count {
     sessions.push(HistoricalSession {
-      start_date_time: parser.read_string()?,
-      end_date_time: parser.read_string()?,
-      ref_date: parser.read_string()?,
+      start_date_time: parse_tws_date_time(&parser.read_string()?)?,
+      end_date_time: parse_tws_date_time(&parser.read_string()?)?,
+      ref_date: parse_opt_tws_date_time(parser.read_string_opt()?)?,
     });
   }
   debug!("Historical Schedule: ReqID={}, Start={}, End={}, TZ={}, Sessions={}", req_id, start_date_time, end_date_time, time_zone, sessions.len());

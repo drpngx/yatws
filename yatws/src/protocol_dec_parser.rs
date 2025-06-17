@@ -99,6 +99,10 @@ pub fn parse_tws_date_time(time_str: &str) -> Result<DateTime<Utc>, IBKRError> {
   Err(IBKRError::ParseError(format!("Failed to parse TWS date/time string '{}' using known formats", time_str)))
 }
 
+pub fn parse_opt_tws_date_time(time_opt_str: Option<String>) -> Result<Option<DateTime<Utc>>, IBKRError> {
+  time_opt_str.map(|x| parse_tws_date_time(&x)).transpose()
+}
+
 pub struct FieldParser<'a> {
   data: &'a [u8],
   fields: Vec<(usize, usize)>, // (start, end) indices for each field
