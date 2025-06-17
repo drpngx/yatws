@@ -192,7 +192,7 @@ impl<'a> FieldParser<'a> {
       result.push(byte as char);
     }
 
-    Ok(result)
+    Ok(if result.is_empty() { None } else { Some(result) })
   }
 
   /// Read an integer field
