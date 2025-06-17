@@ -5,7 +5,7 @@ use std::convert::TryFrom;
 use std::fmt; // Add this
 use std::str::FromStr; // Add this
 use num_enum::TryFromPrimitive;
-
+use chrono::{DateTime, Utc};
 
 /// Enum representing the different types of market data ticks.
 /// Based on `https://interactivebrokers.github.io/tws-api/tick_types.html`.
@@ -632,8 +632,8 @@ pub struct HistoricalDataRequestState {
   pub req_id: i32,
   pub contract: Contract,
   pub bars: Vec<Bar>,
-  pub start_date: String, // Received in end message
-  pub end_date: String,   // Received in end message
+  pub start_date: Option<DateTime<Utc>>,
+  pub end_date: Option<DateTime<Utc>>,
   pub end_received: bool,
   pub update_received: bool, // Flag if real-time updates come after initial load
   pub requested_market_data_type: MarketDataType, // Track the type requested
@@ -647,8 +647,8 @@ impl Default for HistoricalDataRequestState {
       req_id: 0,
       contract: Contract::default(),
       bars: Vec::new(),
-      start_date: String::new(),
-      end_date: String::new(),
+      start_date: None,
+      end_date: None,
       end_received: false,
       update_received: false,
       requested_market_data_type: MarketDataType::RealTime, // Default

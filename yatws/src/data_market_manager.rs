@@ -91,7 +91,7 @@ use crate::protocol_decoder::ClientErrorCode;
 use crate::base::IBKRError::Timeout;
 use crate::min_server_ver::min_server_ver;
 use parking_lot::{Condvar, Mutex};
-use chrono::{Utc, TimeZone};
+use chrono::{Utc, TimeZone, DateTime};
 use std::collections::HashMap;
 use std::sync::{Arc, Weak, atomic::{AtomicUsize, Ordering}}; // Added Weak
 use std::time::Duration;
@@ -3089,7 +3089,7 @@ impl DataMarketManager {
     impl<Obs: HistoricalDataObserver + Send + Sync> HistoricalDataObserver for FilteredObserver<Obs> {
       fn on_historical_data(&self, req_id: i32, bar: &Bar) { if req_id == self.req_id { self.inner.on_historical_data(req_id, bar); } }
       fn on_historical_data_update(&self, req_id: i32, bar: &Bar) { if req_id == self.req_id { self.inner.on_historical_data_update(req_id, bar); } }
-      fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) { if req_id == self.req_id { self.inner.on_historical_data_end(req_id, start_date, end_date); } }
+      fn on_historical_data_end(&self, req_id: i32, start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>>) { if req_id == self.req_id { self.inner.on_historical_data_end(req_id, start_date, end_date); } }
       fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
         if req_id == self.req_id { self.inner.on_error(req_id, error_code, error_message); }
       }
@@ -3689,12 +3689,12 @@ impl MarketDataHandler for DataMarketManager {
     }
   }
 
-  fn historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) {
-    debug!("Handler: Historical Data End: ID={}, Start={}, End={}", req_id, start_date, end_date);
+  fn historical_data_end(&self, req_id: i32, start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>>) {
+    debug!("Handler: Historical Data End: ID={}, Start={:?}, End={:?}", req_id, start_date, end_date);
     let mut subs = self.subscriptions.lock();
     if let Some(MarketStream::HistoricalData(state)) = subs.get_mut(&req_id) {
-      state.start_date = start_date.to_string();
-      state.end_date = end_date.to_string();
+      state.start_date = start_date;
+      state.end_date = end_date;
       state.end_received = true;
       info!("Historical data end received for request {}. Notifying waiter.", req_id);
 

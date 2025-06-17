@@ -533,7 +533,7 @@ impl MarketDepthObserver for MarketDepthInternalObserver {
 #[derive(Debug, Clone)]
 pub struct HistoricalDataParams { pub end_date_time: Option<DateTime<Utc>>, pub duration: DurationUnit, pub bar_size_setting: BarSize, pub what_to_show: WhatToShow, pub use_rth: bool, pub format_date: i32, pub keep_up_to_date: bool, pub market_data_type: Option<MarketDataType>, pub chart_options: Vec<(String, String)> }
 #[derive(Debug, Clone)]
-pub enum HistoricalDataEvent { Bar(Bar), UpdateBar(Bar), Complete { start_date: String, end_date: String }, Error(IBKRError), }
+pub enum HistoricalDataEvent { Bar(Bar), UpdateBar(Bar), Complete { start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>> }, Error(IBKRError), }
 #[derive(Debug)]
 pub struct HistoricalDataSubscription { state: Arc<SubscriptionState<HistoricalDataEvent, DataMarketManager>> }
 pub struct HistoricalDataSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: HistoricalDataParams }
@@ -596,7 +596,7 @@ struct HistoricalDataInternalObserver { state: Arc<SubscriptionState<HistoricalD
 impl HistoricalDataObserver for HistoricalDataInternalObserver {
   fn on_historical_data(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::Bar(bar.clone())); }
   fn on_historical_data_update(&self, req_id: i32, bar: &Bar) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::UpdateBar(bar.clone())); }
-  fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::Complete { start_date: start_date.to_string(), end_date: end_date.to_string() }); self.state.mark_completed_and_inactive(); }
+  fn on_historical_data_end(&self, req_id: i32, start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>>) { if req_id != self.state.req_id { return; } self.state.push_event(HistoricalDataEvent::Complete { start_date, end_date }); self.state.mark_completed_and_inactive(); }
   fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(HistoricalDataEvent::Error(e.clone())); self.state.set_error(e); }
 }
 

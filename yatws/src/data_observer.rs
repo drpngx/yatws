@@ -5,6 +5,8 @@ use crate::data::{
   TickType, TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataType,
 };
 
+use chrono::{DateTime, Utc};
+
 /// Unique identifier for a registered observer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObserverId(pub usize);
@@ -104,7 +106,7 @@ pub trait HistoricalDataObserver: Send + Sync {
   /// Called when a historical data update bar is received (if `keep_up_to_date` was true).
   fn on_historical_data_update(&self, req_id: i32, bar: &Bar) {}
   /// Called when historical data transmission is complete.
-  fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) {}
+  fn on_historical_data_end(&self, req_id: i32, start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>>) {}
   /// Called when an error occurs related to this observer's data type.
   fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }

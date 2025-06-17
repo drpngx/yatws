@@ -2,6 +2,7 @@
 // Handlers for events parsed from the server.
 use std::collections::HashMap;
 use std::sync::Arc;
+use chrono::{DateTime, Utc};
 use crate::order::{OrderRequest, OrderStatus, OrderState};
 use crate::account::Execution;
 use crate::contract::{
@@ -216,7 +217,7 @@ pub trait MarketDataHandler: Send + Sync {
   // --- Historical Data ---
   fn historical_data(&self, req_id: i32, bar: &Bar);
   fn historical_data_update(&self, req_id: i32, bar: &Bar);
-  fn historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str);
+  fn historical_data_end(&self, req_id: i32, start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>>);
   fn historical_ticks(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool); // time, price, size
   fn historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool); // time, attrib, priceBid, priceAsk, sizeBid, sizeAsk
   fn historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool); // time, attrib, price, size, exchange, specialConditions

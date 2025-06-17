@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use log::{error, warn, info};
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use yatws::{
   IBKRClient,
   contract::{Contract, WhatToShow, BarSize, SecType},
@@ -392,8 +392,8 @@ pub(super) fn observe_historical_data_impl(client: &IBKRClient, _is_live: bool) 
             bar.open, bar.high, bar.low, bar.close, bar.volume);
     }
 
-    fn on_historical_data_end(&self, req_id: i32, start_date: &str, end_date: &str) {
-      info!("[{}] Historical Data End: ReqID={}, Start={}, End={}",
+    fn on_historical_data_end(&self, req_id: i32, start_date: Option<DateTime<Utc>>, end_date: Option<DateTime<Utc>>) {
+      info!("[{}] Historical Data End: ReqID={}, Start={:?}, End={:?}",
             self.name, req_id, start_date, end_date);
       // Mark as completed
       {

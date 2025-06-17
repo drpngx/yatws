@@ -4,7 +4,7 @@ use chrono::{Utc, TimeZone};
 use std::convert::TryFrom;
 use crate::handler::MarketDataHandler;
 use crate::base::IBKRError;
-use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time, parse_opt_tws_date_or_month, parse_tws_date};
+use crate::protocol_dec_parser::{FieldParser, parse_opt_tws_date_time, parse_opt_tws_date_or_month};
 use crate::contract::{ContractDetails, OptionRight, Bar, SecType};
 use crate::data::{TickType, TickAttrib, TickAttribLast, TickAttribBidAsk, MarketDataType, TickOptionComputationData}; // Added TickType
 use crate::min_server_ver::min_server_ver;
@@ -102,8 +102,8 @@ pub fn process_historical_data(handler: &Arc<dyn MarketDataHandler>, parser: &mu
 
   let req_id = parser.read_int()?;
 
-  let start_date_str = parser.read_string()?; // Consume if present (version >= 2)
-  let end_date_str = parser.read_string()?; // Consume if present (version >= 2)
+  let start_date_str = parser.read_string_opt()?; // Consume if present (version >= 2)
+  let end_date_str = parser.read_string_opt()?; // Consume if present (version >= 2)
 
   let item_count = parser.read_int()?;
   log::trace!("Historical Data: ReqID={}, ItemCount={}", req_id, item_count);
@@ -151,7 +151,9 @@ pub fn process_historical_data(handler: &Arc<dyn MarketDataHandler>, parser: &mu
     handler.historical_data(req_id, &bar);
   }
 
-  handler.historical_data_end(req_id, &start_date_str, &end_date_str);
+  handler.historical_data_end(req_id,
+                              parse_opt_tws_date_time(start_date_str)?,
+                              parse_opt_tws_date_time(end_date_str)?);
 
   Ok(())
 }
