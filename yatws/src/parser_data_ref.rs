@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use crate::handler::ReferenceDataHandler;
 use crate::base::IBKRError;
-use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time, parse_opt_tws_date_time, parse_tws_date_or_month, parse_tws_date, parse_opt_tws_month, parse_opt_tws_date};
+use crate::protocol_dec_parser::{FieldParser, parse_tws_date_time, parse_opt_tws_date_time, parse_tws_date_or_month, parse_tws_date, parse_opt_tws_month, parse_opt_tws_date, parse_tws_time};
 use crate::contract::{
   BondDetails, Contract, ContractDetails, SecType, OptionRight, SoftDollarTier, FamilyCode,
   ContractDescription, DepthMktDataDescription, PriceIncrement,
@@ -34,7 +34,7 @@ fn read_last_trade_date(parser: &mut FieldParser, contract_details: &mut Contrac
       }
     }
     if parts.len() > 1 {
-      contract_details.contract.last_trade_date = Some(parse_tws_date(&parts[1])?);
+      contract_details.contract.last_trade_time = Some(parse_tws_time(&parts[1])?);
     }
     if is_bond && parts.len() > 2 {
       contract_details.time_zone_id = parts[2].to_string();

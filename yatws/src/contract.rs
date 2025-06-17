@@ -1,7 +1,7 @@
 // yatws/src/contract.rs
 // Contract data structures for the IBKR API
 
-use chrono::{DateTime, Utc, NaiveDate, Datelike};
+use chrono::{DateTime, Utc, NaiveDate, Datelike, NaiveTime};
 
 use std::fmt;
 use std::cmp::Ordering;
@@ -241,6 +241,7 @@ pub struct Contract {
   pub sec_type: SecType,
   pub last_trade_date_or_contract_month: Option<DateOrMonth>,
   pub last_trade_date: Option<NaiveDate>,
+  pub last_trade_time: Option<NaiveTime>,
   pub strike: Option<f64>,
   pub right: Option<OptionRight>,
   pub multiplier: Option<String>,
@@ -277,6 +278,7 @@ impl Contract {
       exchange: exchange.to_string(),
       currency: currency.to_string(),
       last_trade_date_or_contract_month: None,
+      last_trade_time: None,
       last_trade_date: None,
       strike: None,
       right: None,
@@ -314,6 +316,7 @@ impl Contract {
       strike: Some(strike),
       right: Some(right),
       multiplier: Some("100".to_string()), // Default for US options
+      last_trade_time: None,
       last_trade_date: None,
       primary_exchange: None,
       local_symbol: None,
@@ -349,6 +352,7 @@ impl Contract {
       strike: Some(strike),
       right: Some(right),
       multiplier: Some(multiplier.to_string()), // Use provided multiplier
+      last_trade_time: None,
       last_trade_date: None,
       primary_exchange: None,
       local_symbol: None,
@@ -394,8 +398,8 @@ impl Contract {
         app(&mut sb, &date.to_string());
       }
 
-      if let Some(date) = &self.last_trade_date {
-        app(&mut sb, &date.format("%Y%m").to_string());
+      if let Some(time) = &self.last_trade_time {
+        app(&mut sb, &time.format("%H:%M:%S").to_string());
       }
 
       if let Some(strike) = &self.strike {
@@ -420,6 +424,7 @@ impl Default for Contract {
       symbol: String::new(),
       sec_type: SecType::Stock,
       last_trade_date_or_contract_month: None,
+      last_trade_time: None,
       last_trade_date: None,
       strike: None,
       right: None,
@@ -467,6 +472,7 @@ impl PartialEq for Contract {
 
       if self.last_trade_date_or_contract_month != other.last_trade_date_or_contract_month ||
         self.last_trade_date != other.last_trade_date ||
+        self.last_trade_time != other.last_trade_time ||
         self.right != other.right ||
         self.multiplier != other.multiplier ||
         self.local_symbol != other.local_symbol ||

@@ -1,7 +1,7 @@
 use crate::base::IBKRError;
 use crate::contract::{DateOrMonth, YearMonth};
 
-use chrono::{DateTime, Utc, TimeZone, NaiveDateTime, NaiveDate};
+use chrono::{DateTime, Utc, TimeZone, NaiveDateTime, NaiveDate, NaiveTime};
 use chrono_tz::Tz;
 use std::str::FromStr;
 
@@ -352,7 +352,7 @@ pub fn parse_tws_date(date_str: &str) -> Result<NaiveDate, IBKRError> {
     )));
   }
   NaiveDate::parse_from_str(date_str, "%Y%m%d")
-    .map_err(|e| IBKRError::ParseError(format!("Date parse error: {}", e)))
+    .map_err(|e| IBKRError::ParseError(format!("Date parse error: {} in `{}`", e, date_str)))
 }
 
 pub fn parse_opt_tws_date(date_opt_str: Option<String>) -> Result<Option<NaiveDate>, IBKRError> {
@@ -368,9 +368,9 @@ pub fn parse_tws_month(ym_str: &str) -> Result<YearMonth, IBKRError> {
     )));
   }
   let year = ym_str[0..4].parse::<i32>()
-    .map_err(|e| IBKRError::ParseError(format!("Year parse error: {}", e)))?;
+    .map_err(|e| IBKRError::ParseError(format!("Year parse error: {}: `{}`", e, &ym_str[0..4])))?;
   let month = ym_str[4..6].parse::<u32>()
-    .map_err(|e| IBKRError::ParseError(format!("Month parse error: {}", e)))?;
+    .map_err(|e| IBKRError::ParseError(format!("Month parse error: {}: `{}`", e, &ym_str[4..6])))?;
   if !(1..=12).contains(&month) {
     return Err(IBKRError::ParseError(format!(
       "Month must be 1..12, got '{}'", month
@@ -382,4 +382,21 @@ pub fn parse_tws_month(ym_str: &str) -> Result<YearMonth, IBKRError> {
 /// Parses an Option<String> TWS year-month string in "YYYYMM" format into Option<YearMonth>.
 pub fn parse_opt_tws_month(ym_opt_str: Option<String>) -> Result<Option<YearMonth>, IBKRError> {
   ym_opt_str.map(|x| parse_tws_month(&x)).transpose()
+}
+
+/// Parses a TWS year-month string in "YYYYMM" format into a YearMonth.
+/// Returns an error if the input does not match the expected format or is invalid.
+pub fn parse_tws_time(time_str: &str) -> Result<NaiveTime, IBKRError> {
+  if time_str.len() != 8 {
+    return Err(IBKRError::ParseError(format!(
+      "Expected format HH:MM:SS, got '{}'", time_str
+    )));
+  }
+  NaiveTime::parse_from_str(time_str, "%H:%M:%S")
+    .map_err(|e| IBKRError::ParseError(format!("Failed to parse time: {} in `{}`", e, time_str)))
+}
+
+#[allow(dead_code)]
+pub fn parse_opt_tws_time(time_opt_str: Option<String>) -> Result<Option<NaiveTime>, IBKRError> {
+  time_opt_str.map(|x| parse_tws_time(&x)).transpose()
 }
