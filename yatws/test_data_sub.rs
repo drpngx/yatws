@@ -84,18 +84,18 @@ pub(super) fn subscribe_market_data_impl(client: &IBKRClient, is_live: bool) -> 
 pub(super) fn subscribe_historical_keep_up_to_date_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
   info!("--- Testing Subscribe Historical Data with keep_up_to_date ---");
   let symbol = "GOOG";
-  let days_ago = 5;
+  let seconds_ago = 180;
 
   let contract = Contract::stock(symbol);
   let bars_event = client
     .data_market()
     .subscribe_historical_data(
       &contract,
-      yatws::data::DurationUnit::Day(days_ago),
-      yatws::contract::BarSize::OneHour,
+      yatws::data::DurationUnit::Second(seconds_ago),
+      yatws::contract::BarSize::FifteenSeconds,
       yatws::contract::WhatToShow::Trades,
     )
-    .with_use_rth(false)
+    .with_use_rth(true)
     .with_keep_up_to_date(true)
     .with_market_data_type(MarketDataType::RealTime)
     .submit()?;
@@ -103,11 +103,20 @@ pub(super) fn subscribe_historical_keep_up_to_date_impl(client: &IBKRClient, _is
   {
     let mut completed_bars = false;
     let mut bars = bars_event.events();
-    // The udpates will come at 5 second intervals.
-    const NUM_FUTURE_BARS: usize = 3;
-    let mut future_bars = 0;
+    // The udpates will come at 5 second intervals. We are asking for 15 seconds bars.
+    // So, if we ask for 16 bars, we will get:
+    //  - a complete signal to show that we are done with the past
+    //  - at most 3 updates for the current bar, and
+    //  - at least 12 updates in the future.
+    // This is only true if the stock actually trades in all bars, otherwise the bar may not
+    // close. There is no marker for a complete bar, you have to figure it out when the time changes.
+    const NUM_BAR_UPDATES: usize = 16;
+    const MIN_NUM_FUTURE_BAR_UPDATES: usize = 12;
+    let mut bar_updates = 0;
+    let mut future_bar_updates = 0;
+    let mut num_complete_signals = 0;
     let now = Utc::now();
-    while future_bars < NUM_FUTURE_BARS {
+    while bar_updates < NUM_BAR_UPDATES {
       match bars.next() {
         Some(evt) => match evt {
           HistoricalDataEvent::Bar(bar) => {
@@ -117,12 +126,20 @@ pub(super) fn subscribe_historical_keep_up_to_date_impl(client: &IBKRClient, _is
           HistoricalDataEvent::UpdateBar(bar) => {
             assert!(completed_bars);
             log::info!("Future bar: {:?}", bar);
-            // Not sure why the timestamp of the update is not correct.
-            // assert!(bar.time >= now, "Future bar is in the past: now={:?}, bar.time: {:?}", now, bar.time);
-            future_bars += 1;
+            bar_updates += 1;
+            if bar.time < now {
+              // We are completing the first bar.
+              assert!(num_complete_signals == 1, "Bar time in the past but we have received a Complete: bar.time = {}", bar.time);
+            } else {
+              future_bar_updates += 1;
+            }
           }
           HistoricalDataEvent::Complete { .. } => {
+            if completed_bars {
+              log::error!("Something is wrong: multiple Complete signals");
+            }
             completed_bars = true;
+            num_complete_signals += 1;
             log::info!("History complete, further updates will be current bars");
           }
           HistoricalDataEvent::Error(e) => {
@@ -134,7 +151,23 @@ pub(super) fn subscribe_historical_keep_up_to_date_impl(client: &IBKRClient, _is
         }
       }
     }
+
+    let mut err = String::new();
+    if future_bar_updates < MIN_NUM_FUTURE_BAR_UPDATES {
+      err.push_str(&format!("Not enough future updates: expected {}, got: {}",
+                            MIN_NUM_FUTURE_BAR_UPDATES, future_bar_updates));
+    }
+    if num_complete_signals > 1 {
+      if !err.is_empty() {
+        err.push_str("\n");
+      }
+      err.push_str(&format!("Too many Completed events: {}", num_complete_signals));
+    }
+    if !err.is_empty() {
+      return Err(anyhow::anyhow!(err));
+    }
   }
+
   Ok(())
 }
 
