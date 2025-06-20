@@ -11,7 +11,7 @@
 - **Connection**: 127.0.0.1:4002 (Client ID: 101)
 - **Tests Passed**: 44
 - **Tests Failed**: 0
-- **Total Tests**: 44
+- **Total Tests**: 45
 
 ## Detailed Test Results
 
@@ -61,6 +61,7 @@
 | contract-details | ✅ PASS | 0.262s | - |
 | option-chain-params | ✅ PASS | 0.430s | - |
 | reference-data | ✅ PASS | 8.167s | - |
+| subscribe-historical-keep-up-to-date | ✅ PASS | 71.852s | - |
 
 ---
 *Report generated on 2025-06-17 18:06:26 UTC*

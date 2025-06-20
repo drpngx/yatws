@@ -475,15 +475,15 @@ Starts building an order with essential action and quantity. Initializes default
 ### Contract Methods
 
 -   `for_stock(symbol: &str) -> Self`
--   `for_option(symbol: &str, expiry: &str, strike: f64, right: OptionRight) -> Self`
--   `for_future(symbol: &str, expiry: &str) -> Self`
+-   `for_option(symbol: &str, expiry: &DateOrMonth, strike: f64, right: OptionRight) -> Self`
+-   `for_future(symbol: &str, expiry: &DateOrMonth) -> Self`
 -   `for_forex(pair: &str) -> Self`
 -   `for_continuous_future(symbol: &str) -> Self`
 -   `for_bond(symbol: &str) -> Self`
--   `for_future_option(symbol: &str, expiry: &str, strike: f64, right: OptionRight) -> Self`
+-   `for_future_option(symbol: &str, expiry: &DateOrMonth, strike: f64, right: OptionRight) -> Self`
 -   `for_warrant(symbol: &str) -> Self`
--   `for_index_option(symbol: &str, expiry: &str, strike: f64, right: OptionRight) -> Self`
--   `for_forward(symbol: &str, expiry: &str) -> Self`
+-   `for_index_option(symbol: &str, expiry: &DateOrMonth, strike: f64, right: OptionRight) -> Self`
+-   `for_forward(symbol: &str, expiry: &DateOrMonth) -> Self`
 -   `for_index(symbol: &str) -> Self`
 -   `for_bill(symbol: &str) -> Self`
 -   `for_fund(symbol: &str) -> Self`

@@ -30,7 +30,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-yatws = "0.1.0"  # Replace with actual version
+yatws = "0.1.2"  # Replace with actual version
 ```
 
 ## Architecture
@@ -225,7 +225,7 @@ fn main() -> Result<(), IBKRError> {
     // Request streaming data and associate it with the observer
     let (req_id, _observer_id) = market_mgr.request_observe_market_data(
         &contract,
-        &[], // Empty generic_tick_list for default ticks
+        &[GenericTickType::MiscellaneousStats], // Empty generic_tick_list for default ticks
         false, // snapshot = false for streaming
         false, // regulatory_snapshot
         &[],   // mkt_data_options

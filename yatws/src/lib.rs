@@ -117,7 +117,7 @@
 //! // Start a streaming request
 //! let req_id = client.data_market().request_market_data(
 //!     &contract,
-//!     "100,101,104",  // Tick types
+//!     &[],  // Tick types
 //!     false,         // Not a snapshot
 //!     false,         // Not regulatory
 //!     &[],           // No options
