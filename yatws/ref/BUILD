@@ -79,3 +79,9 @@ py_binary(
     srcs = ["smart_components.py"],
     deps = ["//:ibapi"],
 )
+
+py_binary(
+    name = "stop_limit_order",
+    srcs = ["stop_limit_order.py"],
+    deps = ["//:ibapi"],
+)

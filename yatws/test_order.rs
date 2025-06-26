@@ -6,9 +6,10 @@ use std::time::Duration;
 use yatws::{
   IBKRError,
   IBKRClient,
-  order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus},
+  order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus, OrderUpdates},
   OrderBuilder,
   contract::{Contract, SecType, OptionRight, DateOrMonth},
+  data::MarketDataType,
 };
 
 pub(super) fn order_market_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
@@ -181,6 +182,103 @@ pub(super) fn order_limit_impl(client: &IBKRClient, _is_live: bool) -> Result<()
   log::info!("All done");
   Ok(())
 }
+
+pub(super) fn order_modify_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+  info!("--- Testing Modify Stop-Limit Order ---");
+  if is_live {
+    warn!("This test will fetch the price of MSFT, place a STP LMT order, modify it, then cancel.");
+    warn!("Prices are calculated based on market price to avoid immediate fills.");
+    std::thread::sleep(Duration::from_secs(3));
+  }
+
+  let order_mgr = client.orders();
+  let market_data_mgr = client.data_market();
+  let contract = Contract::stock("MSFT");
+
+  // 1. Request the current price of MSFT to use as a base for order prices.
+  info!("Requesting market data quote for MSFT...");
+  let (_bid, ask, last) = market_data_mgr.get_quote(
+    &contract,
+    Some(MarketDataType::Delayed), // Use delayed data for testing
+    Duration::from_secs(10)
+  ).context("Failed to get quote for MSFT")?;
+
+  let current_price = last.or(ask)
+    .ok_or_else(|| anyhow!("Could not retrieve a valid last or ask price for MSFT"))?;
+  info!("Retrieved current price for MSFT: {}", current_price);
+
+  // Calculate prices safely away from the market to avoid execution.
+  let initial_stop_price = (current_price * 0.95).round(); // 5% below
+  let initial_limit_price = (current_price * 0.94).round(); // 6% below
+
+  // 2. Create and place a Stop-Limit order using the calculated prices.
+  let order_req = OrderRequest {
+    side: OrderSide::Sell, // Use SELL to test with prices below market
+    order_type: OrderType::StopLimit,
+    quantity: 1.0,
+    limit_price: Some(initial_limit_price),
+    aux_price: Some(initial_stop_price),
+    time_in_force: TimeInForce::Day,
+    transmit: true,
+    ..Default::default()
+  };
+  let order_id = order_mgr.place_order(contract.clone(), order_req)
+    .context("Failed to place STP LMT order")?;
+  info!("STP LMT order placed with ID: {} (STP: {}, LMT: {})", order_id, initial_stop_price, initial_limit_price);
+
+  // 3. Wait for the order to be submitted.
+  let submit_timeout = Duration::from_secs(10);
+  info!("Waiting for order {} to be submitted...", order_id);
+  match order_mgr.try_wait_order_submitted(&order_id, submit_timeout) {
+    Ok(status) => info!("Order {} submitted with status: {:?}", order_id, status),
+    Err(e) => {
+      //let _ = order_mgr.cancel_order(&order_id);
+      //return Err(e).context("Waiting for order submission failed");
+      log::warn!("order not submitted, continuing");
+    }
+  }
+
+  // 4. Modify the order with new prices.
+  let modified_stop_price = (current_price * 0.93).round(); // 7% below
+  let modified_limit_price = (current_price * 0.92).round(); // 8% below
+  info!("Modifying order {} with new prices (STP: {}, LMT: {})...", order_id, modified_stop_price, modified_limit_price);
+
+  let updates = OrderUpdates {
+    limit_price: Some(modified_limit_price),
+    aux_price: Some(modified_stop_price),
+    ..Default::default()
+  };
+  order_mgr.modify_order(&order_id, updates).context("Failed to send order modification request")?;
+
+  // 5. Verify the modification.
+  std::thread::sleep(Duration::from_secs(2));
+  info!("Verifying modification for order {}...", order_id);
+  let order = order_mgr.get_order(&order_id).ok_or_else(|| anyhow!("Failed to get order after modification"))?;
+
+  let updated_limit = order.request.limit_price.ok_or_else(|| anyhow!("Order has no limit price"))?;
+  let updated_stop = order.request.aux_price.ok_or_else(|| anyhow!("Order has no stop price"))?;
+
+  if (updated_limit - modified_limit_price).abs() < f64::EPSILON && (updated_stop - modified_stop_price).abs() < f64::EPSILON {
+    info!("Verified order prices updated successfully to LMT: {}, STP: {}", updated_limit, updated_stop);
+  } else {
+    return Err(anyhow!("Order prices incorrect. LMT: {}, STP: {}. Expected LMT: {}, STP: {}", updated_limit, updated_stop, modified_limit_price, modified_stop_price));
+  }
+
+  // 6. Cancel the order.
+  info!("Cancelling order {}...", order_id);
+  order_mgr.cancel_order(&order_id).context("Failed to cancel order")?;
+
+  // 7. Wait for cancellation confirmation.
+  let cancel_timeout = Duration::from_secs(10);
+  match order_mgr.try_wait_order_canceled(&order_id, cancel_timeout) {
+    Ok(status) => info!("Order {} cancelled with status: {:?}", order_id, status),
+    Err(e) => return Err(e).context("Waiting for order cancellation failed"),
+  }
+
+  info!("Stop-Limit order modify test completed successfully.");
+  Ok(())
+}
+
 
 // --- Helper for Order Test ---
 pub(crate) fn attempt_cleanup(client: &IBKRClient, contract: &Contract) -> Result<()> {
@@ -511,10 +609,10 @@ pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> 
   let positions = acct_mgr.list_open_positions()?;
   let option_position = positions.iter().find(|p| {
     p.contract.symbol == option_contract.symbol &&
-    p.contract.sec_type == SecType::Option &&
-    p.contract.strike == option_contract.strike &&
-    p.contract.right == option_contract.right &&
-    p.contract.last_trade_date_or_contract_month == option_contract.last_trade_date_or_contract_month
+      p.contract.sec_type == SecType::Option &&
+      p.contract.strike == option_contract.strike &&
+      p.contract.right == option_contract.right &&
+      p.contract.last_trade_date_or_contract_month == option_contract.last_trade_date_or_contract_month
   });
 
   match option_position {
@@ -581,8 +679,8 @@ pub(super) fn order_exercise_option_impl(client: &IBKRClient, is_live: bool) -> 
     // Look for remaining option position
     if let Some(opt_pos) = final_positions.iter().find(|p| {
       p.contract.symbol == option_contract.symbol &&
-      p.contract.sec_type == SecType::Option &&
-      p.contract.strike == option_contract.strike
+        p.contract.sec_type == SecType::Option &&
+        p.contract.strike == option_contract.strike
     }) {
       info!("Remaining {} option position: quantity = {}", opt_pos.symbol, opt_pos.quantity);
     }

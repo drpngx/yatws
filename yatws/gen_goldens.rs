@@ -308,6 +308,7 @@ submit_test!(42, "contract-details", test_cases::contract_details_impl);
 submit_test!(43, "option-chain-params", test_cases::option_chain_params_impl);
 submit_test!(44, "reference-data", test_cases::reference_data_impl);
 submit_test!(45, "subscribe-historical-keep-up-to-date", test_cases::subscribe_historical_keep_up_to_date_impl);
+submit_test!(45, "order-modify", test_cases::order_modify_impl);
 // Add more tests here: submit_test!(45, "new-test-name", test_cases::new_test_impl);
 // submit_test!(46, "wsh-events", test_cases::wsh_events_impl);
 

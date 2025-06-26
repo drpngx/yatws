@@ -88,8 +88,8 @@ use crate::min_server_ver::min_server_ver; // Added for REQ_GLOBAL_CANCEL
 /// and interaction patterns.
 pub struct OrderManager {
   message_broker: Arc<MessageBroker>,
-  // Map: client_order_id (String) -> Order struct
-  order_book: RwLock<HashMap<String, Arc<RwLock<Order>>>>,
+  // Map: client_order_id (String) -> Order struct. We keep the original order and updates separately.
+  order_book: RwLock<HashMap<String, Arc<RwLock<(Order, Order)>>>>,
   // Map: perm_id (i32) -> client_order_id (String) for quick lookup from status updates
   perm_id_map: RwLock<HashMap<i32, String>>,
   observers: RwLock<Vec<Box<dyn OrderObserver + Send + Sync>>>,
@@ -269,7 +269,7 @@ impl OrderManager {
       updated_at: now,
     };
 
-    let order_arc = Arc::new(RwLock::new(order));
+    let order_arc = Arc::new(RwLock::new((order.clone(), order)));
 
     // Add to order book *before* sending
     {
@@ -289,7 +289,7 @@ impl OrderManager {
     // Prepare and send message
     let encoder = Encoder::new(self.message_broker.get_server_version()?);
     // Pass the *cloned request* from the Order struct to the encoder
-    let place_msg = encoder.encode_place_order(order_id_int, &contract, &order_arc.read().request)?;
+    let place_msg = encoder.encode_place_order(order_id_int, &contract, &order_arc.read().0.request)?;
     self.message_broker.send_message(&place_msg)?;
 
     info!("Place order request sent for ID: {}", order_id_str);
@@ -345,8 +345,8 @@ impl OrderManager {
       let book = self.order_book.read();
       if let Some(order_arc) = book.get(order_id) {
         let order = order_arc.read();
-        if order.state.is_terminal() {
-          warn!("Attempting to cancel order {} which is already in terminal state {:?}", order_id, order.state.status);
+        if order.1.state.is_terminal() {
+          warn!("Attempting to cancel order {} which is already in terminal state {:?}", order_id, order.1.state.status);
           return Ok(false); // Indicate no action taken as it's already terminal
         }
       } else {
@@ -412,7 +412,7 @@ impl OrderManager {
   /// # Ok(())
   /// # }
   /// ```
-  pub fn modify_order(&self, order_id: &str, updates: OrderUpdates) -> Result<Arc<RwLock<Order>>, IBKRError> {
+  pub fn modify_order(&self, order_id: &str, updates: OrderUpdates) -> Result<(), IBKRError> {
     info!("Modifying order ID: {} with updates: {:?}", order_id, updates);
     let order_id_int = order_id.parse::<i32>()
       .map_err(|_| IBKRError::InvalidOrder(format!("Invalid order ID format: {}", order_id)))?;
@@ -427,16 +427,16 @@ impl OrderManager {
     // Check if the order is already in a terminal state before attempting modification
     {
       let order = order_arc.read();
-      if order.state.is_terminal() {
-        error!("Cannot modify order {} because it is in a terminal state: {:?}", order_id, order.state.status);
-        return Err(IBKRError::InvalidOrder(format!("Order {} is terminal ({:?}) and cannot be modified", order_id, order.state.status)));
+      if order.1.state.is_terminal() {
+        error!("Cannot modify order {} because it is in a terminal state: {:?}", order_id, order.1.state.status);
+        return Err(IBKRError::InvalidOrder(format!("Order {} is terminal ({:?}) and cannot be modified", order_id, order.1.state.status)));
       }
     }
 
     // Create a *new* OrderRequest based on the *original* request, applying updates
     let mut modified_request = {
       let order = order_arc.read();
-      order.request.clone() // Clone the original request
+      order.0.request.clone() // Clone the original request
     };
 
     // Apply updates
@@ -481,22 +481,24 @@ impl OrderManager {
 
     if !changed {
       warn!("No changes detected for modifying order ID: {}", order_id);
-      return Ok(order_arc); // Return original if no changes
+      return Ok(()); // Return original if no changes
     }
 
     // Get the contract from the existing order
     let contract = {
-      order_arc.read().contract.clone()
+      order_arc.read().0.contract.clone()
     };
 
     // Prepare and send message with the *same order ID* but *modified request*
     let encoder = Encoder::new(self.message_broker.get_server_version()?);
     let modify_msg = encoder.encode_place_order(order_id_int, &contract, &modified_request)?;
-    self.message_broker.send_message(&modify_msg)?;
-
-    info!("Modify order request sent for ID: {}", order_id);
-    // We don't update the local OrderRequest immediately. We wait for OrderStatus updates.
-    Ok(order_arc)
+    {
+      let mut order = order_arc.write();
+      self.message_broker.send_message(&modify_msg)?;
+      order.0.request = modified_request;
+      info!("Modify order request sent for ID: {}", order_id);
+    }
+    Ok(())
   }
 
   /// Sends a global cancel request to TWS.
@@ -776,7 +778,7 @@ impl OrderManager {
     // where TWS responds immediately before we start waiting
     let initial_state_check = {
       let book = self.order_book.read();
-      book.get(order_id).map(|order_arc| order_arc.read().state.clone())
+      book.get(order_id).map(|order_arc| order_arc.read().1.state.clone())
     };
 
     match initial_state_check {
@@ -804,7 +806,7 @@ impl OrderManager {
       // --- Check current state ---
       let current_order_state = {
         let book = self.order_book.read();
-        book.get(order_id).map(|order_arc| order_arc.read().state.clone())
+        book.get(order_id).map(|order_arc| order_arc.read().1.state.clone())
       };
 
       match current_order_state {
@@ -834,7 +836,7 @@ impl OrderManager {
         // Final check after timeout
         let final_state = {
           let book = self.order_book.read();
-          book.get(order_id).map(|o| o.read().state.clone())
+          book.get(order_id).map(|o| o.read().1.state.clone())
         };
         match final_state {
           Some(state) if state.error.is_some() => return Err(state.error.unwrap()),
@@ -908,7 +910,7 @@ impl OrderManager {
         book.get(order_id)
           .map(|order_arc| {
             let order = order_arc.read();
-            (order.state.status, order.state.error.clone()) // Clone status and potential error
+            (order.1.state.status, order.1.state.error.clone()) // Clone status and potential error
           })
       };
 
@@ -950,7 +952,7 @@ impl OrderManager {
           // Re-check status one last time *after* timeout determined, before returning error
           let final_state_after_timeout = {
             let book = self.order_book.read();
-            book.get(order_id).map(|o| (o.read().state.status, o.read().state.error.clone()))
+            book.get(order_id).map(|o| (o.read().1.state.status, o.read().1.state.error.clone()))
           };
           match final_state_after_timeout {
             Some((_status, Some(err))) => return Err(err), // Return error if found
@@ -1041,7 +1043,7 @@ impl OrderManager {
   /// of the current state.
   pub fn get_order(&self, order_id: &str) -> Option<Order> {
     let book = self.order_book.read();
-    book.get(order_id).map(|order_arc| order_arc.read().clone())
+    book.get(order_id).map(|order_arc| order_arc.read().1.clone())
   }
 
   /// Retrieves a list of all orders currently known to the `OrderManager`.
@@ -1050,7 +1052,7 @@ impl OrderManager {
   /// The returned `Order` objects are clones of their current state.
   pub fn get_all_orders(&self) -> Vec<Order> {
     let book = self.order_book.read();
-    book.values().map(|order_arc| order_arc.read().clone()).collect()
+    book.values().map(|order_arc| order_arc.read().1.clone()).collect()
   }
 
   /// Retrieves a list of all orders currently known to the `OrderManager`.
@@ -1061,8 +1063,8 @@ impl OrderManager {
     let book = self.order_book.read();
     book.values()
       .map(|order_arc| order_arc.read()) // Get read guard
-      .filter(|order| order.state.is_terminal()) // Use is_terminal() helper
-      .map(|order_guard| order_guard.clone()) // Clone the Order data
+      .filter(|order| order.1.state.is_terminal()) // Use is_terminal() helper
+      .map(|order_guard| order_guard.1.clone()) // Clone the Order data
       .collect()
   }
 
@@ -1075,8 +1077,8 @@ impl OrderManager {
     let book = self.order_book.read();
     book.values()
       .map(|order_arc| order_arc.read()) // Get read guard
-      .filter(|order| !order.state.is_terminal()) // Use is_terminal() helper
-      .map(|order_guard| order_guard.clone()) // Clone the Order data
+      .filter(|order| !order.1.state.is_terminal()) // Use is_terminal() helper
+      .map(|order_guard| order_guard.1.clone()) // Clone the Order data
       .collect()
   }
 
@@ -1232,7 +1234,7 @@ impl OrderHandler for OrderManager {
 
     if let Some(order_arc) = order_arc {
       let order_updated = { // Scope for write lock
-        let mut order = order_arc.write(); // Lock the specific order for writing
+        let order = &mut order_arc.write().1; // Lock the specific order for writing
 
         let previous_status = order.state.status;
 
@@ -1309,38 +1311,38 @@ impl OrderHandler for OrderManager {
 
         // Update contract, request, and state from the openOrder message
         // This overwrites local state with potentially more accurate TWS state.
-        order.contract = contract.clone();
-        order.request = order_request.clone();
+        order.1.contract = contract.clone();
+        order.1.request = order_request.clone();
 
         // Merge state: Trust openOrder for static info (margins, commission, warning)
         // but keep dynamic info (status, filled, remaining, avg_price, last_price, why_held)
         // from potentially more recent orderStatus messages unless the openOrder status
         // is itself terminal.
         let current_dynamic_state = (
-          order.state.status,
-          order.state.filled_quantity,
-          order.state.remaining_quantity,
-          order.state.average_fill_price,
-          order.state.last_fill_price,
-          order.state.why_held.clone(),
+          order.1.state.status,
+          order.1.state.filled_quantity,
+          order.1.state.remaining_quantity,
+          order.1.state.average_fill_price,
+          order.1.state.last_fill_price,
+          order.1.state.why_held.clone(),
         );
-        let previous_status = order.state.status;
+        let previous_status = order.1.state.status;
 
         // Overwrite the entire state first
-        order.state = order_state.clone();
+        order.1.state = order_state.clone();
 
         // Restore dynamic fields if the new status is not terminal and the old ones were set
-        if !order.state.status.is_terminal() {
-          order.state.status = current_dynamic_state.0; // Keep potentially newer status
-          order.state.filled_quantity = current_dynamic_state.1;
-          order.state.remaining_quantity = current_dynamic_state.2;
-          order.state.average_fill_price = current_dynamic_state.3;
-          order.state.last_fill_price = current_dynamic_state.4;
-          order.state.why_held = current_dynamic_state.5;
+        if !order.1.state.status.is_terminal() {
+          order.1.state.status = current_dynamic_state.0; // Keep potentially newer status
+          order.1.state.filled_quantity = current_dynamic_state.1;
+          order.1.state.remaining_quantity = current_dynamic_state.2;
+          order.1.state.average_fill_price = current_dynamic_state.3;
+          order.1.state.last_fill_price = current_dynamic_state.4;
+          order.1.state.why_held = current_dynamic_state.5;
         }
 
         // Update permId mapping if available (unlikely in openOrder unless it's the first msg)
-        if let Some(perm_id) = order.perm_id { // Assuming permId might be parsed into OrderState by parser
+        if let Some(perm_id) = order.1.perm_id { // Assuming permId might be parsed into OrderState by parser
           let mut p_map = self.perm_id_map.write();
           if !p_map.contains_key(&perm_id) {
             p_map.insert(perm_id, order_id_str.clone());
@@ -1348,11 +1350,11 @@ impl OrderHandler for OrderManager {
           }
         }
 
-        order.updated_at = now;
-        order.state.error = None; // Clear error on receiving open order update
+        order.1.updated_at = now;
+        order.1.state.error = None; // Clear error on receiving open order update
 
-        debug!("Merged openOrder state for {}: {:?} -> {:?}", order_id_str, previous_status, order.state.status);
-        updated_order_clone = order.clone(); // Clone *before* dropping lock
+        debug!("Merged openOrder state for {}: {:?} -> {:?}", order_id_str, previous_status, order.1.state.status);
+        updated_order_clone = order.1.clone(); // Clone *before* dropping lock
       } // Drop write lock on specific order
 
       // Notify
@@ -1374,7 +1376,7 @@ impl OrderHandler for OrderManager {
         created_at: now, // Treat 'now' as creation time locally
         updated_at: now,
       };
-      let new_order_arc = Arc::new(RwLock::new(new_order));
+      let new_order_arc = Arc::new(RwLock::new((new_order.clone(), new_order)));
       order_book.insert(order_id_str.clone(), new_order_arc.clone());
 
       // Ensure condvar exists for this new order
@@ -1396,7 +1398,7 @@ impl OrderHandler for OrderManager {
       drop(order_book); // Drop write lock on book
 
       // Notify
-      self.notify_observers_update(&new_order_clone);
+      self.notify_observers_update(&new_order_clone.1);
       self.notify_waiters(&order_id_str);
     }
   }
@@ -1444,13 +1446,13 @@ impl OrderHandler for OrderManager {
         // Mark order as errored. Often implies cancellation or rejection.
         // Setting to Cancelled might be presumptive; maybe add an Error status?
         // For now, setting to Cancelled and storing the error is common practice.
-        let previous_status = order.state.status;
-        if !order.state.status.is_terminal() {
-          order.state.status = OrderStatus::ApiCancelled;
+        let previous_status = order.1.state.status;
+        if !order.1.state.status.is_terminal() {
+          order.1.state.status = OrderStatus::ApiCancelled;
         }
-        order.state.error = Some(ibkr_error.clone());
-        order.updated_at = Utc::now();
-        debug!("Marked order {} with error: {:?} -> {:?}", order_id_str, previous_status, order.state.status);
+        order.1.state.error = Some(ibkr_error.clone());
+        order.1.updated_at = Utc::now();
+        debug!("Marked order {} with error: {:?} -> {:?}", order_id_str, previous_status, order.1.state.status);
       } // release lock
 
       self.notify_observers_error(&order_id_str, &ibkr_error); // Notify observers
@@ -1487,15 +1489,15 @@ impl OrderHandler for OrderManager {
       // but perm_id received via orderStatus is usually more useful.
       // Check if the client ID matches what we expect, though TWS might report
       // the binding regardless of which client placed it.
-      if order.client_id.is_none() {
-        order.client_id = Some(api_client_id);
+      if order.1.client_id.is_none() {
+        order.1.client_id = Some(api_client_id);
         debug!("Set client ID for order {} from orderBound", api_order_id_str);
-      } else if order.client_id != Some(api_client_id) {
+      } else if order.1.client_id != Some(api_client_id) {
         warn!("orderBound received for order {} but ApiClientId {} differs from stored ClientId {:?}",
-              api_order_id_str, api_client_id, order.client_id);
+              api_order_id_str, api_client_id, order.1.client_id);
       }
       // No state change or notification usually needed for orderBound itself.
-      order.updated_at = Utc::now(); // Update timestamp
+      order.1.updated_at = Utc::now(); // Update timestamp
     } else {
       warn!("Received orderBound for unknown ApiOrderId: {}", api_order_id_str);
       // Potentially create a placeholder order entry if tracking external orders is needed?
