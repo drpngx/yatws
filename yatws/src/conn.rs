@@ -372,7 +372,7 @@ mod socket {
       // Only tokio::TcpStream has keepalive.
       {
         let sock_ref = SockRef::from(&stream);
-        let keepalive = TcpKeepalive::new()
+       let mut keepalive = TcpKeepalive::new()
           .with_time(Duration::from_secs(60))       // Time before sending first keepalive probe
           .with_interval(Duration::from_secs(20));   // Interval between keepalive probes
 
