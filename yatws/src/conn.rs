@@ -374,8 +374,49 @@ mod socket {
         let sock_ref = SockRef::from(&stream);
         let keepalive = TcpKeepalive::new()
           .with_time(Duration::from_secs(60))       // Time before sending first keepalive probe
-          .with_interval(Duration::from_secs(20))   // Interval between keepalive probes
-          .with_retries(32);                        // Number of failed probes before dropping the connection
+          .with_interval(Duration::from_secs(20));   // Interval between keepalive probes
+
+          #[cfg(all(
+            feature = "all",
+            any(
+                target_os = "android",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "visionos",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "netbsd",
+                target_os = "tvos",
+                target_os = "watchos",
+                target_os = "cygwin",
+            )
+        ))]
+        #[cfg_attr(
+            docsrs,
+            doc(cfg(all(
+                feature = "all",
+                any(
+                    target_os = "android",
+                    target_os = "dragonfly",
+                    target_os = "freebsd",
+                    target_os = "fuchsia",
+                    target_os = "illumos",
+                    target_os = "ios",
+                    target_os = "visionos",
+                    target_os = "linux",
+                    target_os = "macos",
+                    target_os = "netbsd",
+                    target_os = "tvos",
+                    target_os = "watchos",
+                )
+            )))
+        )]
+        {
+          keepalive = keepalive.with_retries(32);  // Number of failed probes before dropping the connection
+        }
         sock_ref.set_tcp_keepalive(&keepalive).unwrap_or_else(|e| log::warn!("Failed to set keepalive: {:?}", e));
       }
 
