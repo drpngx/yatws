@@ -413,8 +413,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
           .filter(|s| s != "NONE");
       } else {
         // msg_version >= 12
-        self.request.delta_neutral_order_type =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "NONE");
+        self.request.delta_neutral_order_type = self.parser.read_string_opt()?;  // As per reference, we can have Some("None").
         self.request.delta_neutral_aux_price = self.parser.read_double_max()?;
 
         // Use .as_deref() for cleaner check on Option<String>
@@ -433,7 +432,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
         if self.msg_version >= 31 && self.request.delta_neutral_order_type.as_deref().is_some() {
           if read_open_order_attribs {
             self.request.delta_neutral_open_close =
-              Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+              Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
           }
           self.request.delta_neutral_short_sale = read_bool_from_int(self.parser)?;
           self.request.delta_neutral_short_sale_slot = self.parser.read_int_max()?;
