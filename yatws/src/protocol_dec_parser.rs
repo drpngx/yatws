@@ -118,6 +118,20 @@ pub fn parse_tws_date_time(time_str: &str) -> Result<DateTime<Utc>, IBKRError> {
       ))
     });
   }
+  if let Ok(naive_dt) = NaiveDate::parse_from_str(&cleaned_for_space, "%Y%m%d") {
+    log::warn!(
+        "Parsed '{}' as YYYYMMDD, assuming UTC (ideally Login TZ)",
+        trimmed
+    );
+    if let Some(naive_dt) = naive_dt.and_hms_opt(0, 0, 0) {
+        return Utc.from_local_datetime(&naive_dt).single().ok_or_else(|| {
+            IBKRError::ParseError(format!(
+                "Ambiguous or invalid time '{}' for UTC conversion",
+                naive_dt
+            ))
+        });
+    }
+}
 
   // Add other formats here if needed (e.g., epoch seconds)
 
