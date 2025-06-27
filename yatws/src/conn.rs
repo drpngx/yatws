@@ -372,7 +372,7 @@ mod socket {
       // Only tokio::TcpStream has keepalive.
       {
         let sock_ref = SockRef::from(&stream);
-       let mut keepalive = TcpKeepalive::new()
+       let keepalive = TcpKeepalive::new()
           .with_time(Duration::from_secs(60))       // Time before sending first keepalive probe
           .with_interval(Duration::from_secs(20));   // Interval between keepalive probes
 
@@ -390,7 +390,7 @@ mod socket {
               target_os = "tvos",
               target_os = "watchos",
               target_os = "cygwin",
-          )]
+          ))]
         {
           keepalive = keepalive.with_retries(32);  // Number of failed probes before dropping the connection
         }
