@@ -10,9 +10,9 @@ use log::debug;
 
 /// Process news article message
 pub fn process_news_article(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?; // Version unused currently
-  let req_id = parser.read_int()?;
-  let article_type = parser.read_int()?;
+  let _version = parser.read_int(false)?; // Version unused currently
+  let req_id = parser.read_int(false)?;
+  let article_type = parser.read_int(false)?;
   let article_text = parser.read_string()?;
   debug!("News Article: ReqID={}, Type={}", req_id, article_type);
   handler.news_article(req_id, article_type, &article_text);
@@ -21,7 +21,7 @@ pub fn process_news_article(handler: &Arc<dyn NewsDataHandler>, parser: &mut Fie
 
 /// Process news providers message
 pub fn process_news_providers(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let num_providers = parser.read_int()?;
+  let num_providers = parser.read_int(false)?;
   let mut providers = Vec::with_capacity(num_providers as usize);
   for _ in 0..num_providers {
     providers.push(NewsProvider {
@@ -36,7 +36,7 @@ pub fn process_news_providers(handler: &Arc<dyn NewsDataHandler>, parser: &mut F
 
 /// Process historical news message
 pub fn process_historical_news(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
   let time = parser.read_string()?;
   let provider_code = parser.read_string()?;
   let article_id = parser.read_string()?;
@@ -48,8 +48,8 @@ pub fn process_historical_news(handler: &Arc<dyn NewsDataHandler>, parser: &mut 
 
 /// Process historical news end message
 pub fn process_historical_news_end(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let has_more = parser.read_bool()?;
+  let req_id = parser.read_int(false)?;
+  let has_more = parser.read_bool(false)?;
   debug!("Historical News End: ReqID={}, HasMore={}", req_id, has_more);
   handler.historical_news_end(req_id, has_more);
   Ok(())
@@ -57,9 +57,9 @@ pub fn process_historical_news_end(handler: &Arc<dyn NewsDataHandler>, parser: &
 
 /// Process news bulletins message
 pub fn process_news_bulletins(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?; // Version unused currently
-  let msg_id = parser.read_int()?;
-  let msg_type = parser.read_int()?;
+  let _version = parser.read_int(false)?; // Version unused currently
+  let msg_id = parser.read_int(false)?;
+  let msg_type = parser.read_int(false)?;
   let news_message = parser.read_string()?;
   let origin_exch = parser.read_string()?;
   debug!("News Bulletin: ID={}, Type={}, Origin={}", msg_id, msg_type, origin_exch);
@@ -68,7 +68,7 @@ pub fn process_news_bulletins(handler: &Arc<dyn NewsDataHandler>, parser: &mut F
 }
 
 pub fn process_tick_news(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?; // Ticker ID maps to Req ID
+  let req_id = parser.read_int(false)?; // Ticker ID maps to Req ID
   let time_stamp = parser.read_i64()?;
   let provider_code = parser.read_string()?;
   let article_id = parser.read_string()?;

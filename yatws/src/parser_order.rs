@@ -31,7 +31,7 @@ fn parse_order_status(status_str: &str) -> OrderStatus {
 
 // Helper to read bool from int (0 or 1)
 fn read_bool_from_int(parser: &mut FieldParser) -> Result<bool, IBKRError> {
-  Ok(parser.read_int()? == 1)
+  Ok(parser.read_int(false)? == 1)
 }
 
 struct OrderDecoder<'a, 'p> {
@@ -57,7 +57,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_contract_fields(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 17 {
-      self.contract.con_id = self.parser.read_int()?;
+      self.contract.con_id = self.parser.read_int(false)?;
     }
     self.contract.symbol = self.parser.read_string()?;
     let sec_type_str = self.parser.read_string()?;
@@ -65,7 +65,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       .map_err(|e| IBKRError::ParseError(format!("Invalid secType '{}': {}", sec_type_str, e)))?;
     self.contract.last_trade_date_or_contract_month =
       parse_opt_tws_date_or_month(self.parser.read_string_opt()?)?;
-    self.contract.strike = self.parser.read_double_max()?; // Treat 0.0 as valid, MAX as None
+    self.contract.strike = self.parser.read_double_max(false)?; // Treat 0.0 as valid, MAX as None
     let right_str = self.parser.read_string()?;
     if !right_str.is_empty() && right_str != "?" {
       self.contract.right = OptionRight::from_str(&right_str).ok(); // Use ok() to ignore parse errors for right
@@ -109,18 +109,18 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       // Old versions might not use MAX_VALUE sentinel. Need API documentation confirmation.
       // Reading as double and filtering 0.0 might be incorrect if 0 is a valid price.
       // Let's consistently use read_double_max, assuming TWS sends MAX_VALUE appropriately even for older versions.
-      self.parser.read_double_max()?
+      self.parser.read_double_max(false)?
     } else {
-      self.parser.read_double_max()?
+      self.parser.read_double_max(false)?
     };
     Ok(())
   }
 
   fn read_aux_price(&mut self) -> Result<(), IBKRError> {
     self.request.aux_price = if self.msg_version < 30 {
-      self.parser.read_double_max()?
+      self.parser.read_double_max(false)?
     } else {
-      self.parser.read_double_max()?
+      self.parser.read_double_max(false)?
     };
     Ok(())
   }
@@ -156,7 +156,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   }
 
   fn read_origin(&mut self) -> Result<(), IBKRError> {
-    self.request.origin = self.parser.read_int()?; // 0=Customer, 1=Firm
+    self.request.origin = self.parser.read_int(false)?; // 0=Customer, 1=Firm
     Ok(())
   }
 
@@ -167,14 +167,14 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_client_id(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 3 {
-      let _client_id = self.parser.read_int()?; // Parsed, but not stored here (handled by orderStatus in Rust model)
+      let _client_id = self.parser.read_int(false)?; // Parsed, but not stored here (handled by orderStatus in Rust model)
     }
     Ok(())
   }
 
   fn read_perm_id(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 4 {
-      let _perm_id = self.parser.read_int()?; // Parsed, but not stored here (handled by orderStatus in Rust model)
+      let _perm_id = self.parser.read_int(false)?; // Parsed, but not stored here (handled by orderStatus in Rust model)
     }
     Ok(())
   }
@@ -194,7 +194,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_hidden(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 4 {
-      self.request.hidden = self.parser.read_int()? == 1;
+      self.request.hidden = self.parser.read_int(false)? == 1;
     }
     Ok(())
   }
@@ -202,7 +202,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   fn read_discretionary_amount(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 4 {
       // Java reads double, 0.0 is default. Let's read and filter 0.0.
-      self.request.discretionary_amt = self.parser.read_double().ok().filter(|&p| p != 0.0);
+      self.request.discretionary_amt = self.parser.read_double(false).ok().filter(|&p| p != 0.0);
     }
     Ok(())
   }
@@ -258,7 +258,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_percent_offset(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.percent_offset = self.parser.read_double_max()?;
+      self.request.percent_offset = self.parser.read_double_max(true)?;
     }
     Ok(())
   }
@@ -272,13 +272,13 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_short_sale_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.short_sale_slot = self.parser.read_int().ok().filter(|&s| s > 0); // 0=Unset, 1=Retail, 2=Institutional
+      self.request.short_sale_slot = self.parser.read_int(false).ok().filter(|&s| s > 0); // 0=Unset, 1=Retail, 2=Institutional
       self.request.designated_location = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
       if self.server_version == 51 {
         // Quirky version check from Java
-        let _exempt_code = self.parser.read_int()?;
+        let _exempt_code = self.parser.read_int(false)?;
       } else if self.msg_version >= 23 {
-        self.request.exempt_code = self.parser.read_int().ok().filter(|&e| e != -1); // -1 is usually unset
+        self.request.exempt_code = self.parser.read_int(false).ok().filter(|&e| e != -1); // -1 is usually unset
       }
     }
     Ok(())
@@ -286,16 +286,16 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_auction_strategy(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.auction_strategy = self.parser.read_int().ok().filter(|&a| a > 0); // 0=Unset
+      self.request.auction_strategy = self.parser.read_int(false).ok().filter(|&a| a > 0); // 0=Unset
     }
     Ok(())
   }
 
   fn read_box_order_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.starting_price = self.parser.read_double_max()?;
-      self.request.stock_ref_price = self.parser.read_double_max()?;
-      self.request.delta = self.parser.read_double_max()?;
+      self.request.starting_price = self.parser.read_double_max(true)?;
+      self.request.stock_ref_price = self.parser.read_double_max(true)?;
+      self.request.delta = self.parser.read_double_max(true)?;
     }
     Ok(())
   }
@@ -306,8 +306,8 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       // Avoid reading them here if they overlap to prevent double reads/errors.
       if self.server_version != 26 {
         // Only read here if not the special VOL case handled later
-        self.request.stock_range_lower = self.parser.read_double_max()?;
-        self.request.stock_range_upper = self.parser.read_double_max()?;
+        self.request.stock_range_lower = self.parser.read_double_max(true)?;
+        self.request.stock_range_upper = self.parser.read_double_max(true)?;
       }
     }
     Ok(())
@@ -315,7 +315,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_display_size(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.display_size = self.parser.read_int_max()?;
+      self.request.display_size = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
@@ -354,14 +354,14 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_min_qty(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.min_quantity = self.parser.read_int_max()?;
+      self.request.min_quantity = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
 
   fn read_oca_type(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.oca_type = self.parser.read_int().ok().filter(|&o| o > 0); // 0=Unset
+      self.request.oca_type = self.parser.read_int(false).ok().filter(|&o| o > 0); // 0=Unset
     }
     Ok(())
   }
@@ -382,7 +382,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_nbbo_price_cap(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      let _ = self.parser.read_double_max()?; // skip deprecated
+      let _ = self.parser.read_double_max(true)?; // skip deprecated
     }
     Ok(())
   }
@@ -390,35 +390,35 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   fn read_parent_id(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 10 {
       self.request.parent_id =
-        self.parser.read_int().ok().map(|id| id as i64).filter(|&id| id != 0);
+        self.parser.read_int(false).ok().map(|id| id as i64).filter(|&id| id != 0);
     }
     Ok(())
   }
 
   fn read_trigger_method(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 10 {
-      self.request.trigger_method = self.parser.read_int().ok().filter(|&t| t >= 0); // 0=Default
+      self.request.trigger_method = self.parser.read_int(false).ok().filter(|&t| t >= 0); // 0=Default
     }
     Ok(())
   }
 
   fn read_vol_order_params(&mut self, read_open_order_attribs: bool) -> Result<(), IBKRError> {
     if self.msg_version >= 11 {
-      self.request.volatility = self.parser.read_double_max()?;
-      self.request.volatility_type = self.parser.read_int_max()?;
+      self.request.volatility = self.parser.read_double_max(true)?;
+      self.request.volatility_type = self.parser.read_int_max(false)?;
       if self.msg_version == 11 {
-        let received_int = self.parser.read_int()?;
+        let received_int = self.parser.read_int(false)?;
         self.request.delta_neutral_order_type =
           Some(if received_int == 0 { "NONE".to_string() } else { "MKT".to_string() })
           .filter(|s| s != "NONE");
       } else {
         // msg_version >= 12
         self.request.delta_neutral_order_type = self.parser.read_string_opt()?;  // As per reference, we can have Some("None").
-        self.request.delta_neutral_aux_price = self.parser.read_double_max()?;
+        self.request.delta_neutral_aux_price = self.parser.read_double_max(true)?;
 
         // Use .as_deref() for cleaner check on Option<String>
         if self.msg_version >= 27 && self.request.delta_neutral_order_type.as_deref().is_some() {
-          self.request.delta_neutral_con_id = self.parser.read_int_max()?;
+          self.request.delta_neutral_con_id = self.parser.read_int_max(false)?;
           if read_open_order_attribs {
             self.request.delta_neutral_settling_firm =
               Some(self.parser.read_string()?).filter(|s| !s.is_empty());
@@ -435,37 +435,37 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
               Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
           }
           self.request.delta_neutral_short_sale = read_bool_from_int(self.parser)?;
-          self.request.delta_neutral_short_sale_slot = self.parser.read_int_max()?;
+          self.request.delta_neutral_short_sale_slot = self.parser.read_int_max(false)?;
           self.request.delta_neutral_designated_location =
             Some(self.parser.read_string()?).filter(|s| !s.is_empty());
         }
       }
-      self.request.continuous_update = self.parser.read_int_max()?;
+      self.request.continuous_update = self.parser.read_int_max(false)?;
       if self.server_version == 26 {
         // Quirky version check from Java for specific VOL fields
         // These override the ones potentially read in read_peg_to_stk_or_vol_order_params
-        self.request.stock_range_lower = self.parser.read_double().ok().filter(|&p| p != 0.0); // Java reads double directly
-        self.request.stock_range_upper = self.parser.read_double().ok().filter(|&p| p != 0.0); // Java reads double directly
+        self.request.stock_range_lower = self.parser.read_double(false).ok().filter(|&p| p != 0.0); // Java reads double directly
+        self.request.stock_range_upper = self.parser.read_double(false).ok().filter(|&p| p != 0.0); // Java reads double directly
       }
-      self.request.reference_price_type = self.parser.read_int_max()?;
+      self.request.reference_price_type = self.parser.read_int_max(false)?;
     }
     Ok(())
   }
 
   fn read_trail_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 13 {
-      self.request.trailing_stop_price = self.parser.read_double_max()?;
+      self.request.trailing_stop_price = self.parser.read_double_max(true)?;
     }
     if self.msg_version >= 30 {
-      self.request.trailing_percent = self.parser.read_double_max()?;
+      self.request.trailing_percent = self.parser.read_double_max(true)?;
     }
     Ok(())
   }
 
   fn read_basis_points(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 14 {
-      self.request.basis_points = self.parser.read_double_max()?;
-      self.request.basis_points_type = self.parser.read_int_max()?;
+      self.request.basis_points = self.parser.read_double_max(true)?;
+      self.request.basis_points_type = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
@@ -476,19 +476,19 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
     }
 
     if self.msg_version >= 29 {
-      let combo_legs_count = self.parser.read_int()?;
+      let combo_legs_count = self.parser.read_int(false)?;
       if combo_legs_count > 0 {
         let mut legs = Vec::with_capacity(combo_legs_count as usize);
         for _ in 0..combo_legs_count {
           let leg = ComboLeg {
-            con_id:              self.parser.read_int()?,
-            ratio:               self.parser.read_int()?,
+            con_id:              self.parser.read_int(false)?,
+            ratio:               self.parser.read_int(false)?,
             action:              self.parser.read_string()?,
             exchange:            self.parser.read_string()?,
-            open_close:          self.parser.read_int()?,
-            short_sale_slot:     self.parser.read_int()?,
+            open_close:          self.parser.read_int(false)?,
+            short_sale_slot:     self.parser.read_int(false)?,
             designated_location: self.parser.read_string()?,
-            exempt_code:         self.parser.read_int()?,
+            exempt_code:         self.parser.read_int(false)?,
             price:               None, // Price is read below into request.order_combo_legs
           };
           legs.push(leg);
@@ -498,11 +498,11 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
         self.contract.combo_legs = Vec::new(); // Ensure empty if count is 0
       }
 
-      let order_combo_legs_count = self.parser.read_int()?;
+      let order_combo_legs_count = self.parser.read_int(false)?;
       if order_combo_legs_count > 0 {
         let mut order_legs = Vec::with_capacity(order_combo_legs_count as usize);
         for _ in 0..order_combo_legs_count {
-          order_legs.push(self.parser.read_double_max()?); // Read optional leg price
+          order_legs.push(self.parser.read_double_max(true)?); // Read optional leg price
         }
         self.request.order_combo_legs = order_legs;
       } else {
@@ -514,7 +514,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_smart_combo_routing_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 26 {
-      let params_count = self.parser.read_int()?;
+      let params_count = self.parser.read_int(false)?;
       if params_count > 0 {
         let mut params = Vec::with_capacity(params_count as usize);
         for _ in 0..params_count {
@@ -533,25 +533,25 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   fn read_scale_order_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 15 {
       if self.msg_version >= 20 {
-        self.request.scale_init_level_size = self.parser.read_int_max()?;
-        self.request.scale_subs_level_size = self.parser.read_int_max()?;
+        self.request.scale_init_level_size = self.parser.read_int_max(true)?;
+        self.request.scale_subs_level_size = self.parser.read_int_max(true)?;
       } else {
-        let _not_supp_scale_num_components = self.parser.read_int_max()?; // Read but ignore old field
-        self.request.scale_init_level_size = self.parser.read_int_max()?;
+        let _not_supp_scale_num_components = self.parser.read_int_max(true)?; // Read but ignore old field
+        self.request.scale_init_level_size = self.parser.read_int_max(true)?;
         self.request.scale_subs_level_size = None; // Ensure this is None if only init size was sent
       }
-      self.request.scale_price_increment = self.parser.read_double_max()?;
+      self.request.scale_price_increment = self.parser.read_double_max(true)?;
     }
 
     // Check scale_price_increment > 0 and != MAX, Java logic is slightly different (checks > 0 and != MAX).
     // Our read_double_max returns None for MAX, so is_some() covers the != MAX part. Check > 0 separately.
     if self.msg_version >= 28 && self.request.scale_price_increment.map_or(false, |p| p > 0.0) {
-      self.request.scale_price_adjust_value = self.parser.read_double_max()?;
-      self.request.scale_price_adjust_interval = self.parser.read_int_max()?;
-      self.request.scale_profit_offset = self.parser.read_double_max()?;
+      self.request.scale_price_adjust_value = self.parser.read_double_max(true)?;
+      self.request.scale_price_adjust_interval = self.parser.read_int_max(true)?;
+      self.request.scale_profit_offset = self.parser.read_double_max(true)?;
       self.request.scale_auto_reset = read_bool_from_int(self.parser)?;
-      self.request.scale_init_position = self.parser.read_int_max()?;
-      self.request.scale_init_fill_qty = self.parser.read_int_max()?;
+      self.request.scale_init_position = self.parser.read_int_max(true)?;
+      self.request.scale_init_fill_qty = self.parser.read_int_max(true)?;
       self.request.scale_random_percent = read_bool_from_int(self.parser)?;
     } else if self.msg_version >= 28 {
       // If scale params shouldn't be read, ensure they are None
@@ -607,9 +607,9 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
     if self.msg_version >= 20 {
       if read_bool_from_int(self.parser)? {
         let dn = DeltaNeutralContract {
-          con_id: self.parser.read_int()?,
-          delta:  self.parser.read_double()?,
-          price:  self.parser.read_double()?,
+          con_id: self.parser.read_int(false)?,
+          delta:  self.parser.read_double(false)?,
+          price:  self.parser.read_double(false)?,
         };
         self.contract.delta_neutral_contract = Some(dn);
       } else {
@@ -623,7 +623,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
     if self.msg_version >= 21 {
       self.request.algo_strategy = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
       if self.request.algo_strategy.is_some() {
-        let algo_params_count = self.parser.read_int()?;
+        let algo_params_count = self.parser.read_int(false)?;
         if algo_params_count > 0 {
           let mut params = Vec::with_capacity(algo_params_count as usize);
           for _ in 0..algo_params_count {
@@ -681,9 +681,9 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       self.state.equity_with_loan_after =
         Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
 
-      self.state.commission = self.parser.read_double_max()?;
-      self.state.min_commission = self.parser.read_double_max()?;
-      self.state.max_commission = self.parser.read_double_max()?;
+      self.state.commission = self.parser.read_double_max(true)?;
+      self.state.min_commission = self.parser.read_double_max(true)?;
+      self.state.max_commission = self.parser.read_double_max(true)?;
       self.state.commission_currency = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
       self.state.warning_text = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
     }
@@ -713,10 +713,10 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       );
 
       if is_peg_bench {
-        self.request.reference_contract_id = self.parser.read_int_max()?;
+        self.request.reference_contract_id = self.parser.read_int_max(false)?;
         self.request.is_pegged_change_amount_decrease = read_bool_from_int(self.parser)?;
-        self.request.pegged_change_amount = self.parser.read_double_max()?;
-        self.request.reference_change_amount = self.parser.read_double_max()?;
+        self.request.pegged_change_amount = self.parser.read_double_max(false)?;
+        self.request.reference_change_amount = self.parser.read_double_max(false)?;
         self.request.reference_exchange_id =
           Some(self.parser.read_string()?).filter(|s| !s.is_empty());
       } else {
@@ -740,14 +740,14 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_conditions(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::PEGGED_TO_BENCHMARK {
-      let conditions_count = self.parser.read_int()?;
+      let conditions_count = self.parser.read_int(false)?;
       if conditions_count > 0 {
         let mut conditions_data = Vec::with_capacity(conditions_count as usize);
         for _i in 0..conditions_count {
           // --- Simplified condition reading ---
           // Read type, then skip a fixed number of fields as a placeholder.
           // This is HIGHLY UNRELIABLE. A proper implementation needs detailed logic per type.
-          let cond_type_int = self.parser.read_int()?;
+          let cond_type_int = self.parser.read_int(false)?;
           let cond_str = format!("Condition type {}: Fields skipped", cond_type_int);
           conditions_data.push(cond_str);
 
@@ -787,12 +787,12 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       } else {
         self.request.adjusted_order_type = None;
       }
-      self.request.trigger_price = self.parser.read_double_max()?;
+      self.request.trigger_price = self.parser.read_double_max(false)?;
       self.read_stop_price_and_lmt_price_offset()?; // Read related TRAIL params adjusted here
-      self.request.adjusted_stop_price = self.parser.read_double_max()?;
-      self.request.adjusted_stop_limit_price = self.parser.read_double_max()?;
-      self.request.adjusted_trailing_amount = self.parser.read_double_max()?;
-      self.request.adjustable_trailing_unit = self.parser.read_int_max()?;
+      self.request.adjusted_stop_price = self.parser.read_double_max(false)?;
+      self.request.adjusted_stop_limit_price = self.parser.read_double_max(false)?;
+      self.request.adjusted_trailing_amount = self.parser.read_double_max(false)?;
+      self.request.adjustable_trailing_unit = self.parser.read_int_max(false)?;
     }
     Ok(())
   }
@@ -800,8 +800,8 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   // Helper called by read_adjusted_order_params
   fn read_stop_price_and_lmt_price_offset(&mut self) -> Result<(), IBKRError> {
     // These fields are part of the adjusted order parameters block
-    self.request.trailing_stop_price = self.parser.read_double_max()?; // Adjusted TRAIL stop price
-    self.request.lmt_price_offset = self.parser.read_double_max()?;
+    self.request.trailing_stop_price = self.parser.read_double_max(false)?; // Adjusted TRAIL stop price
+    self.request.lmt_price_offset = self.parser.read_double_max(false)?;
     Ok(())
   }
 
@@ -822,7 +822,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_cash_qty(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::CASH_QTY {
-      self.request.cash_qty = self.parser.read_double_max()?;
+      self.request.cash_qty = self.parser.read_double_max(false)?;
     }
     Ok(())
   }
@@ -850,7 +850,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_use_price_mgmt_algo(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::PRICE_MGMT_ALGO {
-      let val = self.parser.read_int()?; // Read as int
+      let val = self.parser.read_int(false)?; // Read as int
       self.request.use_price_mgmt_algo = match val {
         0 => Some(false),
         1 => Some(true),
@@ -862,14 +862,14 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_duration(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::DURATION {
-      self.request.duration = self.parser.read_int_max()?;
+      self.request.duration = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
 
   fn read_post_to_ats(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::POST_TO_ATS {
-      self.request.post_to_ats = self.parser.read_int_max()?;
+      self.request.post_to_ats = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
@@ -884,11 +884,11 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_peg_best_peg_mid_order_attributes(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::PEGBEST_PEGMID_OFFSETS {
-      self.request.min_trade_qty = self.parser.read_int_max()?;
-      self.request.min_compete_size = self.parser.read_int_max()?;
-      self.request.compete_against_best_offset = self.parser.read_double_max()?;
-      self.request.mid_offset_at_whole = self.parser.read_double_max()?;
-      self.request.mid_offset_at_half = self.parser.read_double_max()?;
+      self.request.min_trade_qty = self.parser.read_int_max(true)?;
+      self.request.min_compete_size = self.parser.read_int_max(true)?;
+      self.request.compete_against_best_offset = self.parser.read_double_max(true)?;
+      self.request.mid_offset_at_whole = self.parser.read_double_max(true)?;
+      self.request.mid_offset_at_half = self.parser.read_double_max(true)?;
     }
     Ok(())
   }
@@ -937,8 +937,8 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 }
 
 pub fn process_next_valid_id(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?; // Version is typically 1
-  let id = parser.read_int()?;
+  let _version = parser.read_int(false)?; // Version is typically 1
+  let id = parser.read_int(false)?;
   debug!("Parsed Next valid ID: {}", id);
   handler.next_valid_id(id); // Call handler
   Ok(())
@@ -947,7 +947,7 @@ pub fn process_next_valid_id(handler: &Arc<dyn OrderHandler>, parser: &mut Field
 /// Process order status message
 pub fn process_order_status(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
   let version = server_version;
-  let id = parser.read_int()?;
+  let id = parser.read_int(false)?;
   let status_str = parser.read_string()?;
   let status_enum = parse_order_status(&status_str); // Parse the enum here
 
@@ -955,24 +955,24 @@ pub fn process_order_status(handler: &Arc<dyn OrderHandler>, parser: &mut FieldP
     let filled_str = parser.read_string()?;
     filled_str.parse().map_err(|e| IBKRError::ParseError(format!("Failed to parse fractional filled qty '{}': {}", filled_str, e)))?
   } else {
-    parser.read_double()?
+    parser.read_double(false)?
   };
 
   let remaining = if server_version >= min_server_ver::FRACTIONAL_POSITIONS {
     let rem_str = parser.read_string()?;
     rem_str.parse().map_err(|e| IBKRError::ParseError(format!("Failed to parse fractional remaining qty '{}': {}", rem_str, e)))?
   } else {
-    parser.read_double()?
+    parser.read_double(false)?
   };
 
-  let avg_fill_price = parser.read_double()?;
-  let perm_id = if version >= 2 { parser.read_int()? } else { 0 };
-  let parent_id = if version >= 3 { parser.read_int()? } else { 0 };
-  let last_fill_price = if version >= 4 { parser.read_double()? } else { 0.0 };
-  let client_id = if version >= 5 { parser.read_int()? } else { 0 };
+  let avg_fill_price = parser.read_double(false)?;
+  let perm_id = if version >= 2 { parser.read_int(false)? } else { 0 };
+  let parent_id = if version >= 3 { parser.read_int(false)? } else { 0 };
+  let last_fill_price = if version >= 4 { parser.read_double(false)? } else { 0.0 };
+  let client_id = if version >= 5 { parser.read_int(false)? } else { 0 };
   let why_held = parser.read_string()?;
   let mkt_cap_price = if server_version >= min_server_ver::MARKET_CAP_PRICE {
-    parser.read_double().ok().filter(|&p| p != f64::MAX)
+    parser.read_double(false).ok().filter(|&p| p != f64::MAX)
   } else {
     None
   };
@@ -1009,12 +1009,12 @@ pub fn process_open_order<'a>(
 ) -> Result<(), IBKRError> {
   // --- Start of `process_open_order` ---
   let msg_version = if server_version < min_server_ver::ORDER_CONTAINER {
-    parser.read_int()?
+    parser.read_int(false)?
   } else {
     server_version
   };
 
-  let order_id_i32 = parser.read_int()?;
+  let order_id_i32 = parser.read_int(false)?;
   debug!(
     "Parsing Open Order: ID={}, MessageVersion={}, ServerVersion={}",
     order_id_i32, msg_version, server_version
@@ -1139,7 +1139,7 @@ pub fn process_open_order<'a>(
 }
 
 pub fn process_open_order_end(handler: &Arc<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
-  // let _version = parser.read_int()?; // If version added later
+  // let _version = parser.read_int(false)?; // If version added later
   debug!("Parsed Open Order End");
   handler.open_order_end(); // Call handler
   Ok(())
@@ -1148,8 +1148,8 @@ pub fn process_open_order_end(handler: &Arc<dyn OrderHandler>, _parser: &mut Fie
 /// Process order bound message
 pub fn process_order_bound(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let order_id = parser.read_i64()?;
-  let api_client_id = parser.read_int()?;
-  let api_order_id = parser.read_int()?;
+  let api_client_id = parser.read_int(false)?;
+  let api_order_id = parser.read_int(false)?;
   debug!("Parsed Order Bound: OrderId={}, ApiClientId={}, ApiOrderId={}", order_id, api_client_id, api_order_id);
   handler.order_bound(order_id, api_client_id, api_order_id); // Call handler
   Ok(())
@@ -1226,7 +1226,7 @@ pub fn process_completed_order<'a>(
 
 /// Process completed orders end message
 pub fn process_completed_orders_end(handler: &Arc<dyn OrderHandler>, _parser: &mut FieldParser) -> Result<(), IBKRError> {
-  // let _version = parser.read_int()?; // If version added later
+  // let _version = parser.read_int(false)?; // If version added later
   debug!("Parsed Completed Orders End");
   handler.completed_orders_end(); // Call handler
   Ok(())

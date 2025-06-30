@@ -239,11 +239,11 @@ impl<'a> FieldParser<'a> {
   }
 
   /// Read an integer field
-  pub fn read_int(&mut self) -> Result<i32, IBKRError> {
+  pub fn read_int(&mut self, show_unset: bool) -> Result<i32, IBKRError> {
     let s = self.read_string()?;
 
     if s.is_empty() {
-      return Ok(0);
+      return Ok(if show_unset { i32::MAX } else { 0 });
     }
 
     s.parse::<i32>()
@@ -263,19 +263,19 @@ impl<'a> FieldParser<'a> {
   }
 
   /// Read a double field
-  pub fn read_double(&mut self) -> Result<f64, IBKRError> {
+  pub fn read_double(&mut self, show_unset: bool) -> Result<f64, IBKRError> {
     let s = self.read_string()?;
 
     if s.is_empty() {
-      return Ok(0.0);
+      return Ok(if show_unset { f64::MAX } else { 0.0 });
     }
 
     s.parse::<f64>()
       .map_err(|e| IBKRError::ParseError(format!("Failed to parse double `{}`: {}", s, e)))
   }
 
-  pub fn read_double_max(&mut self) -> Result<Option<f64>, IBKRError> {
-    let val = self.read_double()?;
+  pub fn read_double_max(&mut self, show_unset: bool) -> Result<Option<f64>, IBKRError> {
+    let val = self.read_double(show_unset)?;
     if val == f64::MAX {
       Ok(None)
     } else {
@@ -283,8 +283,8 @@ impl<'a> FieldParser<'a> {
     }
   }
 
-  pub fn read_int_max(&mut self) -> Result<Option<i32>, IBKRError> {
-    let val = self.read_int()?;
+  pub fn read_int_max(&mut self, show_unset: bool) -> Result<Option<i32>, IBKRError> {
+    let val = self.read_int(show_unset)?;
     // Assuming i32::MAX represents "no value" for ints in this context
     // Adjust if a different sentinel value is used (e.g., 0 or -1 sometimes)
     if val == i32::MAX {
@@ -310,7 +310,7 @@ impl<'a> FieldParser<'a> {
     }
     // --- OR ---
     // If TWS sends MAX as a specific numeric value for decimals:
-    // let val = self.read_double()?; // Assuming it sends as double
+    // let val = self.read_double(false)?; // Assuming it sends as double
     // if val == f64::MAX { Ok(None) } else { Ok(Some(val)) }
   }
 
@@ -325,16 +325,16 @@ impl<'a> FieldParser<'a> {
   }
 
   /// Read a boolean field (as 0 or 1)
-  pub fn read_bool(&mut self) -> Result<bool, IBKRError> {
-    let val = self.read_int()?;
+  pub fn read_bool(&mut self, show_unset: bool) -> Result<bool, IBKRError> {
+    let val = self.read_int(show_unset)?;
     Ok(val != 0)
   }
 
-  pub fn read_bool_opt(&mut self) -> Result<Option<bool>, IBKRError> {
+  pub fn read_bool_opt(&mut self, show_unset: bool) -> Result<Option<bool>, IBKRError> {
     if self.peek_string()?.is_empty() {
       Ok(None)
     } else {
-      let val = self.read_int()?;
+      let val = self.read_int(show_unset)?;
       Ok(Some(val != 0))
     }
   }
