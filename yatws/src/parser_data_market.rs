@@ -47,12 +47,12 @@ fn parse_tick_attrib_bid_ask(mask_val: i32) -> TickAttribBidAsk {
 
 /// Process tick price message
 pub fn process_tick_price(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?; // Version of the tick price message itself
-  let ticker_id = parser.read_int()?;
-  let tick_type_int = parser.read_int()?;
-  let price = parser.read_double()?;
+  let _version = parser.read_int(false)?; // Version of the tick price message itself
+  let ticker_id = parser.read_int(false)?;
+  let tick_type_int = parser.read_int(false)?;
+  let price = parser.read_double(false)?;
   let size = parser.read_decimal_max()?.unwrap_or(-1.0); // Read size, default to -1.0 if MAX/empty
-  let attr_mask = parser.read_int()?; // Read attribute mask
+  let attr_mask = parser.read_int(false)?; // Read attribute mask
 
   let tick_type = TickType::try_from(tick_type_int)
     .unwrap_or_else(|_| {
@@ -79,9 +79,9 @@ pub fn process_tick_price(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fie
 
 /// Process tick size message
 pub fn process_tick_size(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let ticker_id = parser.read_int()?;
-  let tick_type_int = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let ticker_id = parser.read_int(false)?;
+  let tick_type_int = parser.read_int(false)?;
   let size = parser.read_decimal_max()?.unwrap_or(0.0); // Read as optional decimal
 
   let tick_type = TickType::try_from(tick_type_int)
@@ -98,22 +98,22 @@ pub fn process_tick_size(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fiel
 /// Process historical data message (handles one row at a time, end signaled separately)
 pub fn process_historical_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
   // Version handling differs slightly from Java - we read fields based on their presence in the stream
-  let _version = if server_version < min_server_ver::SYNT_REALTIME_BARS { parser.read_int()? } else { i32::MAX }; // Consume version if present
+  let _version = if server_version < min_server_ver::SYNT_REALTIME_BARS { parser.read_int(false)? } else { i32::MAX }; // Consume version if present
 
-  let req_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
 
   let start_date_str = parser.read_string_opt()?; // Consume if present (version >= 2)
   let end_date_str = parser.read_string_opt()?; // Consume if present (version >= 2)
 
-  let item_count = parser.read_int()?;
+  let item_count = parser.read_int(false)?;
   log::trace!("Historical Data: ReqID={}, ItemCount={}", req_id, item_count);
 
   for i in 0..item_count {
     let date_str = parser.read_string()?;
-    let open = parser.read_double()?;
-    let high = parser.read_double()?;
-    let low = parser.read_double()?;
-    let close = parser.read_double()?;
+    let open = parser.read_double(false)?;
+    let high = parser.read_double(false)?;
+    let low = parser.read_double(false)?;
+    let close = parser.read_double(false)?;
     let volume = parser.read_decimal_max()?.unwrap_or(-1.0); // Use -1 if invalid/max
     let wap = parser.read_decimal_max()?.unwrap_or(-1.0); // Use -1 if invalid/max
 
@@ -121,7 +121,7 @@ pub fn process_historical_data(handler: &Arc<dyn MarketDataHandler>, parser: &mu
       let _has_gaps = parser.read_string()?; // Consume "hasGaps" field if present
     }
 
-    let bar_count = parser.read_int_max()?.unwrap_or(-1); // Use -1 if invalid/max
+    let bar_count = parser.read_int_max(false)?.unwrap_or(-1); // Use -1 if invalid/max
 
     // Parse timestamp (handle different formats)
     let time = crate::protocol_dec_parser::parse_tws_date_time(&date_str)
@@ -160,12 +160,12 @@ pub fn process_historical_data(handler: &Arc<dyn MarketDataHandler>, parser: &mu
 
 /// Process market depth message (L1 - Top of Book Update)
 pub fn process_market_depth(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-  let position = parser.read_int()?; // Row
-  let operation = parser.read_int()?; // 0=insert, 1=update, 2=delete
-  let side = parser.read_int()?; // 0=ask, 1=bid
-  let price = parser.read_double()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
+  let position = parser.read_int(false)?; // Row
+  let operation = parser.read_int(false)?; // 0=insert, 1=update, 2=delete
+  let side = parser.read_int(false)?; // 0=ask, 1=bid
+  let price = parser.read_double(false)?;
   let size = parser.read_decimal_max()?.unwrap_or(0.0); // Size as optional decimal
 
   log::trace!("Market Depth (L1): ID={}, Pos={}, Op={}, Side={}, Price={}, Size={}", req_id, position, operation, side, price, size);
@@ -175,17 +175,17 @@ pub fn process_market_depth(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
 
 /// Process market depth L2 message (Full Book Update)
 pub fn process_market_depth_l2(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> { // Added server_version
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-  let position = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
+  let position = parser.read_int(false)?;
   let market_maker = parser.read_string()?;
-  let operation = parser.read_int()?;
-  let side = parser.read_int()?;
-  let price = parser.read_double()?;
+  let operation = parser.read_int(false)?;
+  let side = parser.read_int(false)?;
+  let price = parser.read_double(false)?;
   let size = parser.read_decimal_max()?.unwrap_or(0.0);
 
   let is_smart_depth = if server_version >= min_server_ver::SMART_DEPTH {
-    parser.read_bool()?
+    parser.read_bool(false)?
   } else {
     false
   };
@@ -198,16 +198,16 @@ pub fn process_market_depth_l2(handler: &Arc<dyn MarketDataHandler>, parser: &mu
 
 /// Process tick EFP message
 pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-  let tick_type_int = parser.read_int()?;
-  let basis_points = parser.read_double()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
+  let tick_type_int = parser.read_int(false)?;
+  let basis_points = parser.read_double(false)?;
   let formatted_basis_points = parser.read_string()?;
-  let implied_futures_price = parser.read_double()?;
-  let hold_days = parser.read_int()?;
+  let implied_futures_price = parser.read_double(false)?;
+  let hold_days = parser.read_int(false)?;
   let future_last_trade_date = parser.read_string()?;
-  let dividend_impact = parser.read_double()?;
-  let dividends_to_last_trade_date = parser.read_double()?;
+  let dividend_impact = parser.read_double(false)?;
+  let dividends_to_last_trade_date = parser.read_double(false)?;
 
   let tick_type = TickType::try_from(tick_type_int)
     .unwrap_or_else(|_| {
@@ -224,16 +224,16 @@ pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, parser: &mut Field
 
 /// Process real-time bars message
 pub fn process_real_time_bars(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
   let time_unix = parser.read_i64()?; // Timestamp is Unix epoch seconds
-  let open = parser.read_double()?;
-  let high = parser.read_double()?;
-  let low = parser.read_double()?;
-  let close = parser.read_double()?;
+  let open = parser.read_double(false)?;
+  let high = parser.read_double(false)?;
+  let low = parser.read_double(false)?;
+  let close = parser.read_double(false)?;
   let volume = parser.read_decimal_max()?.unwrap_or(0.0);
   let wap = parser.read_decimal_max()?.unwrap_or(0.0);
-  let count = parser.read_int()?;
+  let count = parser.read_int(false)?;
 
   log::trace!("Real Time Bar: ID={}, Time={}, O={}, H={}, L={}, C={}, Vol={}, WAP={}, Count={}",
               req_id, time_unix, open, high, low, close, volume, wap, count);
@@ -243,11 +243,11 @@ pub fn process_real_time_bars(handler: &Arc<dyn MarketDataHandler>, parser: &mut
 
 /// Process delta neutral validation message
 pub fn process_delta_neutral_validation(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-  let _con_id = parser.read_int()?;
-  let _delta = parser.read_double()?;
-  let _price = parser.read_double()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
+  let _con_id = parser.read_int(false)?;
+  let _delta = parser.read_double(false)?;
+  let _price = parser.read_double(false)?;
   log::debug!("Delta Neutral Validation: ReqID={}", req_id);
   // TODO: Reconstruct DeltaNeutralContract struct if needed by handler
   handler.delta_neutral_validation(req_id);
@@ -256,8 +256,8 @@ pub fn process_delta_neutral_validation(handler: &Arc<dyn MarketDataHandler>, pa
 
 /// Process tick snapshot end message
 pub fn process_tick_snapshot_end(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
   log::debug!("Tick Snapshot End: ReqID={}", req_id);
   handler.tick_snapshot_end(req_id);
   Ok(())
@@ -265,9 +265,9 @@ pub fn process_tick_snapshot_end(handler: &Arc<dyn MarketDataHandler>, parser: &
 
 /// Process market data type message
 pub fn process_market_data_type(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-  let market_data_type_int = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
+  let market_data_type_int = parser.read_int(false)?;
   let market_data_type = MarketDataType::from(market_data_type_int);
 
   log::debug!("Market Data Type: ReqId={}, Type={:?} ({})", req_id, market_data_type, market_data_type_int);
@@ -277,25 +277,25 @@ pub fn process_market_data_type(handler: &Arc<dyn MarketDataHandler>, parser: &m
 
 /// Process tick option computation message
 pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
-  let version = if server_version >= min_server_ver::PRICE_BASED_VOLATILITY { i32::MAX } else { parser.read_int()? };
-  let req_id = parser.read_int()?;
-  let tick_type_int = parser.read_int()?;
+  let version = if server_version >= min_server_ver::PRICE_BASED_VOLATILITY { i32::MAX } else { parser.read_int(false)? };
+  let req_id = parser.read_int(false)?;
+  let tick_type_int = parser.read_int(false)?;
 
   let tick_attrib = if server_version >= min_server_ver::PRICE_BASED_VOLATILITY {
-    parser.read_int()?
+    parser.read_int(false)?
   } else {
     i32::MAX // Not available
   };
 
   // Read implied vol, handle -1 sentinel -> None
-  let implied_vol = match parser.read_double()? {
+  let implied_vol = match parser.read_double(false)? {
     -1.0 => None,
     vol if vol < 0.0 => None, // Treat other negatives as None too
     vol => Some(vol),
   };
 
   // Read delta, handle -2 sentinel -> None
-  let delta = match parser.read_double()? {
+  let delta = match parser.read_double(false)? {
     -2.0 => None,
     d => Some(d), // Allow any other value, including < -1 or > 1 if API sends it
   };
@@ -318,14 +318,14 @@ pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, par
 
   if version >= 6 || is_model_tick {
     if version >= 6 || is_model_tick { // Check again for clarity, logic from Java
-      opt_price = match parser.read_double()? { -1.0 => None, p => Some(p) };
-      pv_dividend = match parser.read_double()? { -1.0 => None, p => Some(p) };
+      opt_price = match parser.read_double(false)? { -1.0 => None, p => Some(p) };
+      pv_dividend = match parser.read_double(false)? { -1.0 => None, p => Some(p) };
     }
     if version >= 6 {
-      gamma = match parser.read_double()? { -2.0 => None, g => Some(g) };
-      vega = match parser.read_double()? { -2.0 => None, v => Some(v) };
-      theta = match parser.read_double()? { -2.0 => None, t => Some(t) };
-      und_price = match parser.read_double()? { -1.0 => None, u => Some(u) };
+      gamma = match parser.read_double(false)? { -2.0 => None, g => Some(g) };
+      vega = match parser.read_double(false)? { -2.0 => None, v => Some(v) };
+      theta = match parser.read_double(false)? { -2.0 => None, t => Some(t) };
+      und_price = match parser.read_double(false)? { -1.0 => None, u => Some(u) };
     }
   }
 
@@ -349,11 +349,11 @@ pub fn process_tick_option_computation(handler: &Arc<dyn MarketDataHandler>, par
 
 /// Process histogram data message
 pub fn process_histogram_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let n = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let n = parser.read_int(false)?;
   let mut items = Vec::with_capacity(n as usize);
   for _ in 0..n {
-    let price = parser.read_double()?;
+    let price = parser.read_double(false)?;
     let size = parser.read_decimal_max()?.unwrap_or(0.0); // Assuming size is decimal
     items.push((price, size));
   }
@@ -364,13 +364,13 @@ pub fn process_histogram_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut
 
 /// Process historical data update message (for real-time updates after initial load)
 pub fn process_historical_data_update(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let bar_count = parser.read_int()?; // Usually 1 for updates
+  let req_id = parser.read_int(false)?;
+  let bar_count = parser.read_int(false)?; // Usually 1 for updates
   let date_str = parser.read_string()?; // Should be epoch seconds for updates? Check format.
-  let open = parser.read_double()?;
-  let close = parser.read_double()?;
-  let high = parser.read_double()?;
-  let low = parser.read_double()?;
+  let open = parser.read_double(false)?;
+  let close = parser.read_double(false)?;
+  let high = parser.read_double(false)?;
+  let low = parser.read_double(false)?;
   let wap = parser.read_decimal_max()?.unwrap_or(0.0);
   let volume = parser.read_decimal_max()?.unwrap_or(0.0);
 
@@ -404,8 +404,8 @@ pub fn process_historical_data_update(handler: &Arc<dyn MarketDataHandler>, pars
 
 /// Process reroute market data request message
 pub fn process_reroute_mkt_data_req(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let con_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let con_id = parser.read_int(false)?;
   let exchange = parser.read_string()?;
   log::info!("Reroute Market Data Request: ReqID={}, ConID={}, Exchange={}", req_id, con_id, exchange);
   handler.reroute_mkt_data_req(req_id, con_id, &exchange);
@@ -414,8 +414,8 @@ pub fn process_reroute_mkt_data_req(handler: &Arc<dyn MarketDataHandler>, parser
 
 /// Process reroute market depth request message
 pub fn process_reroute_mkt_depth_req(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let con_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let con_id = parser.read_int(false)?;
   let exchange = parser.read_string()?;
   log::info!("Reroute Market Depth Request: ReqID={}, ConID={}, Exchange={}", req_id, con_id, exchange);
   handler.reroute_mkt_depth_req(req_id, con_id, &exchange);
@@ -424,18 +424,18 @@ pub fn process_reroute_mkt_depth_req(handler: &Arc<dyn MarketDataHandler>, parse
 
 /// Process historical ticks message (Trades only)
 pub fn process_historical_ticks(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let tick_count = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let tick_count = parser.read_int(false)?;
   let mut ticks = Vec::with_capacity(tick_count as usize);
 
   for _ in 0..tick_count {
     let time = parser.read_i64()?;
-    let _ = parser.read_int()?; // Skip unused field (for consistency with Java)
-    let price = parser.read_double()?;
+    let _ = parser.read_int(false)?; // Skip unused field (for consistency with Java)
+    let price = parser.read_double(false)?;
     let size = parser.read_decimal_max()?.unwrap_or(0.0);
     ticks.push((time, price, size));
   }
-  let done = parser.read_bool()?;
+  let done = parser.read_bool(false)?;
   log::debug!("Historical Ticks: ReqID={}, Count={}, Done={}", req_id, ticks.len(), done);
   handler.historical_ticks(req_id, &ticks, done);
   Ok(())
@@ -443,21 +443,21 @@ pub fn process_historical_ticks(handler: &Arc<dyn MarketDataHandler>, parser: &m
 
 /// Process historical ticks bid ask message
 pub fn process_historical_ticks_bid_ask(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let tick_count = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let tick_count = parser.read_int(false)?;
   let mut ticks = Vec::with_capacity(tick_count as usize);
 
   for _ in 0..tick_count {
     let time = parser.read_i64()?;
-    let mask = parser.read_int()?;
+    let mask = parser.read_int(false)?;
     let attrib = parse_tick_attrib_bid_ask(mask);
-    let price_bid = parser.read_double()?;
-    let price_ask = parser.read_double()?;
+    let price_bid = parser.read_double(false)?;
+    let price_ask = parser.read_double(false)?;
     let size_bid = parser.read_decimal_max()?.unwrap_or(0.0);
     let size_ask = parser.read_decimal_max()?.unwrap_or(0.0);
     ticks.push((time, attrib, price_bid, price_ask, size_bid, size_ask));
   }
-  let done = parser.read_bool()?;
+  let done = parser.read_bool(false)?;
   log::debug!("Historical Ticks Bid/Ask: ReqID={}, Count={}, Done={}", req_id, ticks.len(), done);
   handler.historical_ticks_bid_ask(req_id, &ticks, done);
   Ok(())
@@ -465,21 +465,21 @@ pub fn process_historical_ticks_bid_ask(handler: &Arc<dyn MarketDataHandler>, pa
 
 /// Process historical ticks last message
 pub fn process_historical_ticks_last(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let tick_count = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let tick_count = parser.read_int(false)?;
   let mut ticks = Vec::with_capacity(tick_count as usize);
 
   for _ in 0..tick_count {
     let time = parser.read_i64()?;
-    let mask = parser.read_int()?;
+    let mask = parser.read_int(false)?;
     let attrib = parse_tick_attrib_last(mask);
-    let price = parser.read_double()?;
+    let price = parser.read_double(false)?;
     let size = parser.read_decimal_max()?.unwrap_or(0.0);
     let exchange = parser.read_string()?;
     let special_conditions = parser.read_string()?;
     ticks.push((time, attrib, price, size, exchange, special_conditions));
   }
-  let done = parser.read_bool()?;
+  let done = parser.read_bool(false)?;
   log::debug!("Historical Ticks Last: ReqID={}, Count={}, Done={}", req_id, ticks.len(), done);
   handler.historical_ticks_last(req_id, &ticks, done);
   Ok(())
@@ -487,15 +487,15 @@ pub fn process_historical_ticks_last(handler: &Arc<dyn MarketDataHandler>, parse
 
 /// Process tick by tick message
 pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let tick_type_int = parser.read_int()?; // 1=Last, 2=AllLast, 3=BidAsk, 4=MidPoint
+  let req_id = parser.read_int(false)?;
+  let tick_type_int = parser.read_int(false)?; // 1=Last, 2=AllLast, 3=BidAsk, 4=MidPoint
   let time = parser.read_i64()?; // Unix epoch seconds
 
   match tick_type_int {
     1 | 2 => { // Last or AllLast
-      let price = parser.read_double()?;
+      let price = parser.read_double(false)?;
       let size = parser.read_decimal_max()?.unwrap_or(0.0);
-      let mask = parser.read_int()?;
+      let mask = parser.read_int(false)?;
       let tick_attrib_last = parse_tick_attrib_last(mask);
       let exchange = parser.read_string()?;
       let special_conditions = parser.read_string()?;
@@ -503,17 +503,17 @@ pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
       handler.tick_by_tick_all_last(req_id, tick_type_int, time, price, size, tick_attrib_last, &exchange, &special_conditions);
     },
     3 => { // BidAsk
-      let bid_price = parser.read_double()?;
-      let ask_price = parser.read_double()?;
+      let bid_price = parser.read_double(false)?;
+      let ask_price = parser.read_double(false)?;
       let bid_size = parser.read_decimal_max()?.unwrap_or(0.0);
       let ask_size = parser.read_decimal_max()?.unwrap_or(0.0);
-      let mask = parser.read_int()?;
+      let mask = parser.read_int(false)?;
       let tick_attrib_bid_ask = parse_tick_attrib_bid_ask(mask);
       log::trace!("Tick-By-Tick BidAsk: ID={}, Time={}, BidPx={}, AskPx={}, BidSz={}, AskSz={}", req_id, time, bid_price, ask_price, bid_size, ask_size);
       handler.tick_by_tick_bid_ask(req_id, time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask);
     },
     4 => { // MidPoint
-      let mid_point = parser.read_double()?;
+      let mid_point = parser.read_double(false)?;
       log::trace!("Tick-By-Tick MidPoint: ID={}, Time={}, MidPt={}", req_id, time, mid_point);
       handler.tick_by_tick_mid_point(req_id, time, mid_point);
     },
@@ -528,10 +528,10 @@ pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
 
 /// Process tick generic message
 pub fn process_tick_generic(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-  let tick_type_int = parser.read_int()?;
-  let value = parser.read_double()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
+  let tick_type_int = parser.read_int(false)?;
+  let value = parser.read_double(false)?;
 
   let tick_type = TickType::try_from(tick_type_int)
     .unwrap_or_else(|_| {
@@ -546,9 +546,9 @@ pub fn process_tick_generic(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
 
 /// Process tick string message
 pub fn process_tick_string(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-  let tick_type_int = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
+  let tick_type_int = parser.read_int(false)?;
   let value = parser.read_string()?;
 
   let tick_type = TickType::try_from(tick_type_int)
@@ -565,7 +565,7 @@ pub fn process_tick_string(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fi
 /// Process scanner parameters message (XML string)
 // AI: Process the XML into a rustr struct, for example: <ScannerSubscription instrument="STK" locationCode="STK.US.MAJOR" scanCode="TOP_PERC_GAIN" numberOfRows="50" abovePrice="10" belowPrice="200" aboveVolume="1000000"/>
 pub fn process_scanner_parameters(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?; // Version is typically 1
+  let _version = parser.read_int(false)?; // Version is typically 1
   let xml_data = parser.read_string()?;
   log::debug!("Scanner Parameters XML received (length: {})", xml_data.len());
   handler.scanner_parameters(&xml_data);
@@ -575,22 +575,22 @@ pub fn process_scanner_parameters(handler: &Arc<dyn MarketDataHandler>, parser: 
 /// Process scanner data message
 pub fn process_scanner_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(),
                                                                                                                            IBKRError> {
-  let _version = parser.read_int()?; // Version of the message format
-  let req_id = parser.read_int()?;
-  let num_elements = parser.read_int()?;
+  let _version = parser.read_int(false)?; // Version of the message format
+  let req_id = parser.read_int(false)?;
+  let num_elements = parser.read_int(false)?;
 
   log::debug!("Scanner Data: ReqID={}, NumElements={}", req_id, num_elements);
 
   for _ in 0..num_elements {
-    let rank = parser.read_int()?;
+    let rank = parser.read_int(false)?;
     let mut contract_details = ContractDetails::default();
 
     // Populate Contract part of ContractDetails
-    contract_details.contract.con_id = parser.read_int()?;
+    contract_details.contract.con_id = parser.read_int(false)?;
     contract_details.contract.symbol = parser.read_string()?;
     contract_details.contract.sec_type = SecType::from_str(&parser.read_string()?).map_err(|e| IBKRError::ParseError(e.to_string()))?;
     contract_details.contract.last_trade_date_or_contract_month = parse_opt_tws_date_or_month(parser.read_string_opt()?)?;
-    contract_details.contract.strike = parser.read_double_max()?;
+    contract_details.contract.strike = parser.read_double_max(false)?;
     let opt_right_str = parser.read_string()?;
     if !opt_right_str.is_empty() {
       contract_details.contract.right = Some(OptionRight::from_str(&opt_right_str)?);

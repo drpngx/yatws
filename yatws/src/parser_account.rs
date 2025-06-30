@@ -13,7 +13,7 @@ use crate::protocol_dec_parser::{parse_tws_date_time, parse_tws_date_or_month, p
 
 /// Process account value message
 pub fn process_account_value(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let version = parser.read_int()?;
+  let version = parser.read_int(false)?;
 
   let key = parser.read_string()?;
   let value = parser.read_string()?;
@@ -38,12 +38,12 @@ pub fn process_account_value(handler: &Arc<dyn AccountHandler>, parser: &mut Fie
 
 /// Process portfolio value message
 pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let version = parser.read_int()?;
+  let version = parser.read_int(false)?;
 
   // --- Parse Contract ---
   let mut contract = Contract::new();
   if version >= 6 {
-    contract.con_id = parser.read_int()?;
+    contract.con_id = parser.read_int(false)?;
   }
   contract.symbol = parser.read_string()?;
   let sec_type_str = parser.read_string()?;
@@ -52,7 +52,7 @@ pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut F
   if !expiry.is_empty() {
     contract.last_trade_date_or_contract_month = Some(parse_tws_date_or_month(&expiry)?);
   }
-  let strike = parser.read_double()?;
+  let strike = parser.read_double(false)?;
   if strike > 0.0 { // Use > 0.0 check as per typical TWS API examples
     contract.strike = Some(strike);
   }
@@ -92,18 +92,18 @@ pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut F
   }
   // --- End Parse Contract ---
 
-  let position = parser.read_double()?;
-  let market_price = parser.read_double()?;
-  let market_value = parser.read_double()?;
+  let position = parser.read_double(false)?;
+  let market_price = parser.read_double(false)?;
+  let market_value = parser.read_double(false)?;
 
   let mut average_cost = 0.0;
   let mut unrealized_pnl = 0.0;
   let mut realized_pnl = 0.0;
 
   if version >= 3 {
-    average_cost = parser.read_double()?;
-    unrealized_pnl = parser.read_double()?;
-    realized_pnl = parser.read_double()?;
+    average_cost = parser.read_double(false)?;
+    unrealized_pnl = parser.read_double(false)?;
+    realized_pnl = parser.read_double(false)?;
   }
 
   let mut account_name = String::new();
@@ -130,7 +130,7 @@ pub fn process_portfolio_value(handler: &Arc<dyn AccountHandler>, parser: &mut F
 
 /// Process account update time message
 pub fn process_account_update_time(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  let _version = parser.read_int(false)?;
   let time_stamp = parser.read_string()?;
 
   handler.account_update_time(&time_stamp);
@@ -142,7 +142,7 @@ pub fn process_account_update_time(handler: &Arc<dyn AccountHandler>, parser: &m
 
 /// Process account download end message
 pub fn process_account_download_end(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  let _version = parser.read_int(false)?;
   let account = parser.read_string()?;
 
   handler.account_download_end(&account);
@@ -153,7 +153,7 @@ pub fn process_account_download_end(handler: &Arc<dyn AccountHandler>, parser: &
 
 /// Process managed accounts message
 pub fn process_managed_accounts(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  let _version = parser.read_int(false)?;
   let accounts_list = parser.read_string()?;
 
   handler.managed_accounts(&accounts_list);
@@ -165,12 +165,12 @@ pub fn process_managed_accounts(handler: &Arc<dyn AccountHandler>, parser: &mut 
 
 /// Process position message
 pub fn process_position(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let version = parser.read_int()?;
+  let version = parser.read_int(false)?;
   let account = parser.read_string()?;
 
   // --- Parse Contract ---
   let mut contract = Contract::new();
-  contract.con_id = parser.read_int()?;
+  contract.con_id = parser.read_int(false)?;
   contract.symbol = parser.read_string()?;
   let sec_type_str = parser.read_string()?;
   contract.sec_type = SecType::from_str(&sec_type_str).unwrap_or(SecType::Stock);
@@ -178,7 +178,7 @@ pub fn process_position(handler: &Arc<dyn AccountHandler>, parser: &mut FieldPar
   if !expiry.is_empty() {
     contract.last_trade_date_or_contract_month = Some(parse_tws_date_or_month(&expiry)?);
   }
-  let strike = parser.read_double()?;
+  let strike = parser.read_double(false)?;
   if strike > 0.0 {
     contract.strike = Some(strike);
   }
@@ -211,10 +211,10 @@ pub fn process_position(handler: &Arc<dyn AccountHandler>, parser: &mut FieldPar
   }
   // --- End Parse Contract ---
 
-  let position = parser.read_double()?;
+  let position = parser.read_double(false)?;
   let mut avg_cost = 0.0;
   if version >= 3 {
-    avg_cost = parser.read_double()?;
+    avg_cost = parser.read_double(false)?;
   }
 
   handler.position(&account, &contract, position, avg_cost);
@@ -234,8 +234,8 @@ pub fn process_position_end(handler: &Arc<dyn AccountHandler>, _parser: &mut Fie
 
 /// Process account summary message
 pub fn process_account_summary(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
   let account = parser.read_string()?;
   let tag = parser.read_string()?;
   let value = parser.read_string()?;
@@ -250,8 +250,8 @@ pub fn process_account_summary(handler: &Arc<dyn AccountHandler>, parser: &mut F
 
 /// Process account summary end message
 pub fn process_account_summary_end(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
 
   handler.account_summary_end(req_id);
 
@@ -262,9 +262,9 @@ pub fn process_account_summary_end(handler: &Arc<dyn AccountHandler>, parser: &m
 
 /// Process PnL message
 pub fn process_pnl(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
-  let daily_pnl = parser.read_double()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
+  let daily_pnl = parser.read_double(false)?;
 
   // Unrealized and realized PnL are optional
   let mut unrealized_pnl: Option<f64> = None;
@@ -274,7 +274,7 @@ pub fn process_pnl(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) 
   if parser.remaining_fields() > 0 {
     let u_pnl_str = parser.peek_string()?;
     if !u_pnl_str.is_empty() {
-      unrealized_pnl = Some(parser.read_double()?);
+      unrealized_pnl = Some(parser.read_double(false)?);
     } else {
       parser.skip_field()?; // Skip empty unrealized PnL field
     }
@@ -282,7 +282,7 @@ pub fn process_pnl(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) 
   if parser.remaining_fields() > 0 {
     let r_pnl_str = parser.peek_string()?;
     if !r_pnl_str.is_empty() {
-      realized_pnl = Some(parser.read_double()?);
+      realized_pnl = Some(parser.read_double(false)?);
     } else {
       parser.skip_field()?; // Skip empty realized PnL field
     }
@@ -298,9 +298,9 @@ pub fn process_pnl(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) 
 /// Process PnL single message
 pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Example: 95·11·20·-2.2151342773440774·-2.2150912773440723·1.7976931348623157E308·4920.799865722656·
-  let req_id = parser.read_int()?;
-  let pos = parser.read_int()?;
-  let daily_pnl = parser.read_double()?;
+  let req_id = parser.read_int(false)?;
+  let pos = parser.read_int(false)?;
+  let daily_pnl = parser.read_double(false)?;
 
   let mut unrealized_pnl: Option<f64> = None;
   let mut realized_pnl: Option<f64> = None;
@@ -310,7 +310,7 @@ pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldP
   if parser.remaining_fields() > 0 {
     let u_pnl_str = parser.peek_string()?;
     if !u_pnl_str.is_empty() {
-      unrealized_pnl = Some(parser.read_double()?);
+      unrealized_pnl = Some(parser.read_double(false)?);
     } else {
       parser.skip_field()?;
     }
@@ -318,7 +318,7 @@ pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldP
   if parser.remaining_fields() > 0 {
     let r_pnl_str = parser.peek_string()?;
     if !r_pnl_str.is_empty() {
-      realized_pnl = Some(parser.read_double()?);
+      realized_pnl = Some(parser.read_double(false)?);
     } else {
       parser.skip_field()?;
     }
@@ -326,7 +326,7 @@ pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldP
   if parser.remaining_fields() > 0 {
     let val_str = parser.peek_string()?;
     if !val_str.is_empty() {
-      value = parser.read_double()?;
+      value = parser.read_double(false)?;
     } else {
       parser.skip_field()?;
     }
@@ -342,12 +342,12 @@ pub fn process_pnl_single(handler: &Arc<dyn AccountHandler>, parser: &mut FieldP
 
 // Add a placeholder implementation for CommissionReport parsing if needed
 pub fn process_commission_report(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  let _version = parser.read_int(false)?;
   let exec_id = parser.read_string().map_err(|e| IBKRError::ParseError(format!("CommissionReport exec_id: {}", e)))?;
-  let commission = parser.read_double().map_err(|e| IBKRError::ParseError(format!("CommissionReport comm: {}", e)))?;
+  let commission = parser.read_double(false).map_err(|e| IBKRError::ParseError(format!("CommissionReport comm: {}", e)))?;
   let currency = parser.read_string().map_err(|e| IBKRError::ParseError(format!("CommissionReport currency: {}", e)))?;
-  let yld = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("CommissionReport yield: {}", e)))?;
-  let yld_red = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("CommissionReport yield redemption: {}", e)))?;
+  let yld = parser.read_double_max(false).map_err(|e| IBKRError::ParseError(format!("CommissionReport yield: {}", e)))?;
+  let yld_red = parser.read_double_max(false).map_err(|e| IBKRError::ParseError(format!("CommissionReport yield redemption: {}", e)))?;
 
   handler.commission_report(&exec_id, commission, &currency, yld, yld_red);
   Ok(())
@@ -391,24 +391,24 @@ pub fn process_execution_data(
   let mut req_id = -1; // Default for messages before version 7
   if msg_version >= 7 {
     // If version is high enough (or assumed high enough), read req_id
-    req_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails ReqId: {}", e)))?;
+    req_id = parser.read_int(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails ReqId: {}", e)))?;
     log::trace!("  Req ID: {}", req_id);
   }
 
-  let order_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails OrderId: {}", e)))?;
+  let order_id = parser.read_int(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails OrderId: {}", e)))?;
   log::trace!("  Order ID: {}", order_id);
 
   // --- Read contract fields ---
   let mut contract = Contract::new();
   if msg_version >= 5 {
-    contract.con_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract ConId: {}", e)))?;
+    contract.con_id = parser.read_int(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract ConId: {}", e)))?;
     log::trace!("  Contract ConID: {}", contract.con_id);
   }
   contract.symbol = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Symbol: {}", e)))?;
   contract.sec_type = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract SecType Str: {}", e)))?
     .parse().unwrap_or(SecType::Stock);
   contract.last_trade_date_or_contract_month = parse_opt_tws_date_or_month(parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract LastTradeDate: {}", e)))?)?;
-  contract.strike = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Strike: {}", e)))?;
+  contract.strike = parser.read_double_max(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Strike: {}", e)))?;
   contract.right = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Right Str: {}", e)))?.parse().ok();
   if msg_version >= 9 {
     contract.multiplier = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails Contract Multiplier: {}", e)))?;
@@ -431,25 +431,25 @@ pub fn process_execution_data(
   let exec_exchange = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails ExecExchange: {}", e)))?;
   let side_str = parser.read_string().map_err(|e| IBKRError::ParseError(format!("ExecDetails SideStr: {}", e)))?;
   let quantity = parser.read_decimal_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails Quantity: {}", e)))?.unwrap_or(0.); // Shares/Quantity is Decimal
-  let price = parser.read_double().map_err(|e| IBKRError::ParseError(format!("ExecDetails Price: {}", e)))?;
+  let price = parser.read_double(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails Price: {}", e)))?;
 
   let mut perm_id = 0;
   if msg_version >= 2 {
-    perm_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails PermId: {}", e)))?;
+    perm_id = parser.read_int(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails PermId: {}", e)))?;
   }
   let mut client_id = 0;
   if msg_version >= 3 {
-    client_id = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails ClientId: {}", e)))?;
+    client_id = parser.read_int(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails ClientId: {}", e)))?;
   }
   let mut liquidation_int = 0;
   if msg_version >= 4 {
-    liquidation_int = parser.read_int().map_err(|e| IBKRError::ParseError(format!("ExecDetails Liquidation: {}", e)))?;
+    liquidation_int = parser.read_int(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails Liquidation: {}", e)))?;
   }
   let mut cum_qty = 0.0;
   let mut avg_price = 0.0;
   if msg_version >= 6 {
     cum_qty = parser.read_decimal_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails CumQty: {}", e)))?.unwrap_or(0.);
-    avg_price = parser.read_double().map_err(|e| IBKRError::ParseError(format!("ExecDetails AvgPrice: {}", e)))?;
+    avg_price = parser.read_double(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails AvgPrice: {}", e)))?;
   }
   let mut order_ref = None;
   if msg_version >= 8 {
@@ -459,11 +459,11 @@ pub fn process_execution_data(
   let mut ev_multiplier = None;
   if msg_version >= 9 {
     ev_rule = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails EvRule: {}", e)))?;
-    ev_multiplier = parser.read_double_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails EvMultiplier: {}", e)))?;
+    ev_multiplier = parser.read_double_max(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails EvMultiplier: {}", e)))?;
   }
   let model_code = parser.read_string_opt().map_err(|e| IBKRError::ParseError(format!("ExecDetails ModelCode: {}", e)))?;
-  let last_liquidity = parser.read_int_max().map_err(|e| IBKRError::ParseError(format!("ExecDetails LastLiquidity: {}", e)))?;
-  let pending_price_revision = parser.read_bool().map_err(|e| IBKRError::ParseError(format!("ExecDetails PendingPriceRevision: {}", e)))?.into();
+  let last_liquidity = parser.read_int_max(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails LastLiquidity: {}", e)))?;
+  let pending_price_revision = parser.read_bool(false).map_err(|e| IBKRError::ParseError(format!("ExecDetails PendingPriceRevision: {}", e)))?.into();
 
   log::debug!("Parsed Execution Detail: ExecID={}, OrderID={}, Account={}, Symbol={}, Side={}, Qty={}, Price={}, Time={}",
               execution_id, order_id, account_id, contract.symbol, side_str, quantity, price, time_str);
@@ -508,8 +508,8 @@ pub fn process_execution_data(
 
 /// Process execution data end message
 pub fn process_execution_data_end(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
 
   log::debug!("Execution Data End: {}", req_id);
 

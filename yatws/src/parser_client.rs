@@ -10,7 +10,7 @@ use log::{warn, error, info}; // Import logging levels
 
 /// Process an error message (Type 4)
 pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let version = parser.read_int()?;
+  let version = parser.read_int(false)?;
 
   let mut id: i32 = -1; // Default for version < 2 or errors not associated with a request
   let error_code_int: i32;
@@ -22,8 +22,8 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     error_code_int = 0; // No code provided in this format, treat as unknown or info?
     // Let's try to map 0 to a specific code if appropriate, or handle it
   } else {
-    id = parser.read_int()?;
-    error_code_int = parser.read_int()?;
+    id = parser.read_int(false)?;
+    error_code_int = parser.read_int(false)?;
     error_msg = parser.read_string()?;
     // Version >= 3 adds an optional 'advanced order reject' JSON string
     // TODO: Parse advanced_order_reject if server_version supports it
@@ -556,8 +556,8 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
 /// Process current time message (Type 49)
 pub fn process_current_time(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Version is unused for this message type according to docs
-  let _version = parser.read_int()?;
-  let time_unix = parser.read_int()? as i64; // TWS sends Unix timestamp
+  let _version = parser.read_int(false)?;
+  let time_unix = parser.read_int(false)? as i64; // TWS sends Unix timestamp
 
   // --- Call the handler ---
   handler.current_time(time_unix);
@@ -568,7 +568,7 @@ pub fn process_current_time(handler: &Arc<dyn ClientHandler>, parser: &mut Field
 
 /// Process verify message API message (Type 65)
 pub fn process_verify_message_api(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  let _version = parser.read_int(false)?;
   let api_data = parser.read_string()?;
 
   // --- Call the handler ---
@@ -581,7 +581,7 @@ pub fn process_verify_message_api(handler: &Arc<dyn ClientHandler>, parser: &mut
 
 /// Process verify completed message (Type 66)
 pub fn process_verify_completed(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  let _version = parser.read_int(false)?;
   let is_successful_str = parser.read_string()?; // "true" or "false"
   let error_text = parser.read_string()?;
 
@@ -596,7 +596,7 @@ pub fn process_verify_completed(handler: &Arc<dyn ClientHandler>, parser: &mut F
 
 /// Process verify and auth message API message (Type 69)
 pub fn process_verify_and_auth_message_api(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  let _version = parser.read_int(false)?;
   let api_data = parser.read_string()?;
   let xyz_challenge = parser.read_string()?;
 
@@ -610,7 +610,7 @@ pub fn process_verify_and_auth_message_api(handler: &Arc<dyn ClientHandler>, par
 
 /// Process verify and auth completed message (Type 70)
 pub fn process_verify_and_auth_completed(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
+  let _version = parser.read_int(false)?;
   let is_successful_str = parser.read_string()?; // "true" or "false"
   let error_text = parser.read_string()?;
 
@@ -626,8 +626,8 @@ pub fn process_verify_and_auth_completed(handler: &Arc<dyn ClientHandler>, parse
 /// Process head timestamp message (Type 88)
 pub fn process_head_timestamp(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Version is unused according to docs
-  // let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
+  // let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
   let timestamp_str = parser.read_string()?; // Can be Unix timestamp or "yyyyMMdd HH:mm:ss"
 
   // --- Call the handler ---
@@ -641,8 +641,8 @@ pub fn process_head_timestamp(handler: &Arc<dyn ClientHandler>, parser: &mut Fie
 /// Process user info message (Type 107)
 pub fn process_user_info(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   // Version is unused according to docs
-  // let _version = parser.read_int()?;
-  let req_id = parser.read_int()?; // Will always be 0 from TWS
+  // let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?; // Will always be 0 from TWS
   let white_branding_id = parser.read_string()?;
 
   // --- Call the handler ---
@@ -654,8 +654,8 @@ pub fn process_user_info(handler: &Arc<dyn ClientHandler>, parser: &mut FieldPar
 
 /// Process display group list message (Type 67)
 pub fn process_display_group_list(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
   let groups = parser.read_string()?; // Comma-separated list of group IDs
 
   // --- Call the handler ---
@@ -667,8 +667,8 @@ pub fn process_display_group_list(handler: &Arc<dyn ClientHandler>, parser: &mut
 
 /// Process display group updated message (Type 68)
 pub fn process_display_group_updated(handler: &Arc<dyn ClientHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?;
-  let req_id = parser.read_int()?;
+  let _version = parser.read_int(false)?;
+  let req_id = parser.read_int(false)?;
   let contract_info = parser.read_string()?; // Encoded contract string (needs parsing if used)
 
   // --- Call the handler ---

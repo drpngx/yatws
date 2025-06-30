@@ -10,7 +10,7 @@ use log::debug;
 
 /// Process WSH meta data message
 pub fn process_wsh_meta_data(handler: &Arc<dyn FinancialDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
   let data_json = parser.read_string()?; // Assuming JSON data
   debug!("WSH Meta Data: ReqID={}, Data length={}", req_id, data_json.len());
   if data_json.trim().is_empty() {
@@ -22,7 +22,7 @@ pub fn process_wsh_meta_data(handler: &Arc<dyn FinancialDataHandler>, parser: &m
 
 /// Process WSH event data message
 pub fn process_wsh_event_data(handler: &Arc<dyn FinancialDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
   let data_json = parser.read_string()?;
   debug!("WSH Event Data: ReqID={}, Data length={}", req_id, data_json.len());
   if data_json.trim().is_empty() {
@@ -36,8 +36,8 @@ pub fn process_wsh_event_data(handler: &Arc<dyn FinancialDataHandler>, parser: &
 pub fn process_fundamental_data(handler: &Arc<dyn FinancialDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
   // Version field is implicit based on server version, Java client reads version but ignores it.
   if server_version >= min_server_ver::FUNDAMENTAL_DATA {
-    let _version = parser.read_int()?; // Read version but ignore (like Java client)
-    let req_id = parser.read_int()?;
+    let _version = parser.read_int(false)?; // Read version but ignore (like Java client)
+    let req_id = parser.read_int(false)?;
     let data = parser.read_string()?; // The XML/text data
     debug!("Fundamental Data: ReqID={}, Data length={}", req_id, data.len());
     handler.fundamental_data(req_id, &data);

@@ -46,11 +46,11 @@ fn read_last_trade_date(parser: &mut FieldParser, contract_details: &mut Contrac
 
 /// Process bond contract data message
 pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
-  let version = if server_version < min_server_ver::SIZE_RULES { parser.read_int()? } else { 6 }; // Default to 6 for newer servers
+  let version = if server_version < min_server_ver::SIZE_RULES { parser.read_int(false)? } else { 6 }; // Default to 6 for newer servers
 
   let mut req_id = -1;
   if version >= 3 {
-    req_id = parser.read_int()?;
+    req_id = parser.read_int(false)?;
   }
 
   let mut contract_details = ContractDetails::default();
@@ -61,24 +61,24 @@ pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parse
   contract_details.contract.symbol = parser.read_string()?;
   contract_details.contract.sec_type = SecType::Bond; // It's always Bond here
   contract_details.bond_details.as_mut().unwrap().cusip = parser.read_string()?;
-  contract_details.bond_details.as_mut().unwrap().coupon = parser.read_double()?;
+  contract_details.bond_details.as_mut().unwrap().coupon = parser.read_double(false)?;
   read_last_trade_date(parser, &mut contract_details, true)?;
   contract_details.bond_details.as_mut().unwrap().issue_date = Some(parse_tws_date(&parser.read_string()?)?);
   contract_details.bond_details.as_mut().unwrap().ratings = parser.read_string()?;
   contract_details.bond_details.as_mut().unwrap().bond_type = parser.read_string()?;
   contract_details.bond_details.as_mut().unwrap().coupon_type = parser.read_string()?;
-  contract_details.bond_details.as_mut().unwrap().convertible = parser.read_bool()?;
-  contract_details.bond_details.as_mut().unwrap().callable = parser.read_bool()?;
-  contract_details.bond_details.as_mut().unwrap().puttable = parser.read_bool()?;
+  contract_details.bond_details.as_mut().unwrap().convertible = parser.read_bool(false)?;
+  contract_details.bond_details.as_mut().unwrap().callable = parser.read_bool(false)?;
+  contract_details.bond_details.as_mut().unwrap().puttable = parser.read_bool(false)?;
   contract_details.bond_details.as_mut().unwrap().desc_append = parser.read_string()?;
   contract_details.contract.exchange = parser.read_string()?;
   contract_details.contract.currency = parser.read_string()?;
   contract_details.market_name = parser.read_string()?;
   contract_details.contract.trading_class = Some(parser.read_string()?);
-  contract_details.contract.con_id = parser.read_int()?;
-  contract_details.min_tick = parser.read_double()?;
+  contract_details.contract.con_id = parser.read_int(false)?;
+  contract_details.min_tick = parser.read_double(false)?;
   if server_version >= min_server_ver::MD_SIZE_MULTIPLIER && server_version < min_server_ver::SIZE_RULES {
-    let _md_size_multiplier = parser.read_int()?; // Not used anymore
+    let _md_size_multiplier = parser.read_int(false)?; // Not used anymore
   }
   contract_details.order_types = parser.read_string()?;
   contract_details.valid_exchanges = parser.read_string()?;
@@ -86,7 +86,7 @@ pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parse
     let dt = parser.read_string()?;
     contract_details.bond_details.as_mut().unwrap().next_option_date = Some(parse_tws_date(&dt)?);
     contract_details.bond_details.as_mut().unwrap().next_option_type = Some(OptionRight::from_str(&parser.read_string()?)?);
-    contract_details.bond_details.as_mut().unwrap().next_option_partial = parser.read_bool()?;
+    contract_details.bond_details.as_mut().unwrap().next_option_partial = parser.read_bool(false)?;
     contract_details.bond_details.as_mut().unwrap().notes = parser.read_string()?;
   }
   if version >= 4 {
@@ -94,10 +94,10 @@ pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parse
   }
   if version >= 6 {
     contract_details.ev_rule = parser.read_string()?;
-    contract_details.ev_multiplier = parser.read_double()?;
+    contract_details.ev_multiplier = parser.read_double(false)?;
   }
   if version >= 5 {
-    let sec_id_list_count = parser.read_int()?;
+    let sec_id_list_count = parser.read_int(false)?;
     if sec_id_list_count > 0 {
       let mut sec_id_list = Vec::with_capacity(sec_id_list_count as usize);
       for _ in 0..sec_id_list_count {
@@ -110,7 +110,7 @@ pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parse
     }
   }
   if server_version >= min_server_ver::AGG_GROUP {
-    contract_details.agg_group = parser.read_int_max()?;
+    contract_details.agg_group = parser.read_int_max(false)?;
   }
   if server_version >= min_server_ver::MARKET_RULES {
     contract_details.market_rule_ids = parser.read_string()?;
@@ -124,9 +124,9 @@ pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parse
     contract_details.contract.issuer_id = parser.read_string_opt()?;
   }
   if server_version >= min_server_ver::BOND_ACCRUED_INTEREST { // Added missing BOND_ACCRUED_INTEREST check
-    // contract_details.accrued_interest = parser.read_double_max()?;
+    // contract_details.accrued_interest = parser.read_double_max(false)?;
     // The accrued interest is in Order. We may have to include Order.
-    if let Some(acc_int) = parser.read_double_max()? {
+    if let Some(acc_int) = parser.read_double_max(false)? {
       warn!("Ignoring bond accrued interest {}", acc_int);
     }
   }
@@ -139,8 +139,8 @@ pub fn process_bond_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parse
 
 /// Process contract data end message
 pub fn process_contract_data_end(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int()?; // Version field exists but isn't usually used
-  let req_id = parser.read_int()?;
+  let _version = parser.read_int(false)?; // Version field exists but isn't usually used
+  let req_id = parser.read_int(false)?;
   debug!("Contract Data End: ReqID={}", req_id);
   handler.contract_details_end(req_id);
   Ok(())
@@ -148,22 +148,22 @@ pub fn process_contract_data_end(handler: &Arc<dyn ReferenceDataHandler>, parser
 
 /// Process security definition option parameter message
 pub fn process_security_definition_option_parameter(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
   let exchange = parser.read_string()?;
-  let underlying_con_id = parser.read_int()?;
+  let underlying_con_id = parser.read_int(false)?;
   let trading_class = parser.read_string()?;
   let multiplier = parser.read_string()?;
 
-  let expirations_size = parser.read_int()?;
+  let expirations_size = parser.read_int(false)?;
   let mut expirations = Vec::with_capacity(expirations_size as usize);
   for _ in 0..expirations_size {
     expirations.push(parser.read_string()?);
   }
 
-  let strikes_size = parser.read_int()?;
+  let strikes_size = parser.read_int(false)?;
   let mut strikes = Vec::with_capacity(strikes_size as usize);
   for _ in 0..strikes_size {
-    strikes.push(parser.read_double()?);
+    strikes.push(parser.read_double(false)?);
   }
 
   debug!("Security Definition Option Parameter: ReqID={}, Exchange={}, UnderlyingConID={}, TC={}, Mult={}, {} Expirations, {} Strikes",
@@ -183,7 +183,7 @@ pub fn process_security_definition_option_parameter(handler: &Arc<dyn ReferenceD
 
 /// Process security definition option parameter end message
 pub fn process_security_definition_option_parameter_end(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
   debug!("Security Definition Option Parameter End: ReqID={}", req_id);
   handler.security_definition_option_parameter_end(req_id);
   Ok(())
@@ -191,8 +191,8 @@ pub fn process_security_definition_option_parameter_end(handler: &Arc<dyn Refere
 
 /// Process soft dollar tiers message
 pub fn process_soft_dollar_tiers(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let n_tiers = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let n_tiers = parser.read_int(false)?;
   let mut tiers = Vec::with_capacity(n_tiers as usize);
   for _ in 0..n_tiers {
     tiers.push(SoftDollarTier {
@@ -208,7 +208,7 @@ pub fn process_soft_dollar_tiers(handler: &Arc<dyn ReferenceDataHandler>, parser
 
 /// Process family codes message
 pub fn process_family_codes(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let n_family_codes = parser.read_int()?;
+  let n_family_codes = parser.read_int(false)?;
   let mut family_codes = Vec::with_capacity(n_family_codes as usize);
   for _ in 0..n_family_codes {
     family_codes.push(FamilyCode {
@@ -223,19 +223,19 @@ pub fn process_family_codes(handler: &Arc<dyn ReferenceDataHandler>, parser: &mu
 
 /// Process symbol samples message
 pub fn process_symbol_samples(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let n_contract_descriptions = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let n_contract_descriptions = parser.read_int(false)?;
   let mut contract_descriptions = Vec::with_capacity(n_contract_descriptions as usize);
 
   for _ in 0..n_contract_descriptions {
     let mut contract = Contract::new();
-    contract.con_id = parser.read_int()?;
+    contract.con_id = parser.read_int(false)?;
     contract.symbol = parser.read_string()?;
     contract.sec_type = SecType::from_str(&parser.read_string()?).unwrap_or(SecType::Stock);
     contract.primary_exchange = Some(parser.read_string()?);
     contract.currency = parser.read_string()?;
 
-    let n_derivative_sec_types = parser.read_int()?;
+    let n_derivative_sec_types = parser.read_int(false)?;
     let mut derivative_sec_types = Vec::with_capacity(n_derivative_sec_types as usize);
     for _ in 0..n_derivative_sec_types {
       derivative_sec_types.push(parser.read_string()?);
@@ -259,7 +259,7 @@ pub fn process_symbol_samples(handler: &Arc<dyn ReferenceDataHandler>, parser: &
 
 /// Process market depth exchanges message
 pub fn process_mkt_depth_exchanges(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
-  let n_descriptions = parser.read_int()?;
+  let n_descriptions = parser.read_int(false)?;
   let mut descriptions = Vec::with_capacity(n_descriptions as usize);
   for _ in 0..n_descriptions {
     if server_version >= min_server_ver::SERVICE_DATA_TYPE {
@@ -268,14 +268,14 @@ pub fn process_mkt_depth_exchanges(handler: &Arc<dyn ReferenceDataHandler>, pars
         sec_type: parser.read_string()?,
         listing_exch: parser.read_string()?, // Added field
         service_data_type: parser.read_string()?,
-        agg_group: parser.read_int_max()?, // Use read_int_max for optional int
+        agg_group: parser.read_int_max(false)?, // Use read_int_max for optional int
       });
     } else {
       descriptions.push(DepthMktDataDescription {
         exchange: parser.read_string()?,
         sec_type: parser.read_string()?,
         listing_exch: "".to_string(), // Not available pre SERVICE_DATA_TYPE
-        service_data_type: if parser.read_bool()? { "Deep2".to_string() } else { "Deep".to_string() },
+        service_data_type: if parser.read_bool(false)? { "Deep2".to_string() } else { "Deep".to_string() },
         agg_group: None, // Not available pre SERVICE_DATA_TYPE
       });
     }
@@ -287,10 +287,10 @@ pub fn process_mkt_depth_exchanges(handler: &Arc<dyn ReferenceDataHandler>, pars
 
 /// Process tick req params message
 pub fn process_tick_req_params(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let min_tick = parser.read_double()?;
+  let req_id = parser.read_int(false)?;
+  let min_tick = parser.read_double(false)?;
   let bbo_exchange = parser.read_string()?;
-  let snapshot_permissions = parser.read_int()?;
+  let snapshot_permissions = parser.read_int(false)?;
 
   log::debug!("Tick Req Params: ID={}, MinTick={}, BBOExch={}, Permissions={}", req_id, min_tick, bbo_exchange, snapshot_permissions);
   handler.tick_req_params(req_id, min_tick, &bbo_exchange, snapshot_permissions);
@@ -299,11 +299,11 @@ pub fn process_tick_req_params(handler: &Arc<dyn ReferenceDataHandler>, parser: 
 
 /// Process smart components message
 pub fn process_smart_components(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
-  let n = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
+  let n = parser.read_int(false)?;
   let mut components = HashMap::with_capacity(n as usize);
   for _ in 0..n {
-    let bit_number = parser.read_int()?;
+    let bit_number = parser.read_int(false)?;
     let exchange = parser.read_string()?;
     // Read char - assumes single byte UTF-8 character
     let exchange_letter_str = parser.read_string()?;
@@ -318,13 +318,13 @@ pub fn process_smart_components(handler: &Arc<dyn ReferenceDataHandler>, parser:
 
 /// Process market rule message
 pub fn process_market_rule(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let market_rule_id = parser.read_int()?;
-  let n_price_increments = parser.read_int()?;
+  let market_rule_id = parser.read_int(false)?;
+  let n_price_increments = parser.read_int(false)?;
   let mut price_increments = Vec::with_capacity(n_price_increments as usize);
   for _ in 0..n_price_increments {
     price_increments.push(PriceIncrement {
-      low_edge: parser.read_double()?,
-      increment: parser.read_double()?,
+      low_edge: parser.read_double(false)?,
+      increment: parser.read_double(false)?,
     });
   }
   debug!("Market Rule: RuleID={}, Increments={}", market_rule_id, price_increments.len());
@@ -334,12 +334,12 @@ pub fn process_market_rule(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut
 
 /// Process historical schedule message
 pub fn process_historical_schedule(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let req_id = parser.read_int()?;
+  let req_id = parser.read_int(false)?;
   let start_date_time = parser.read_string()?;
   let end_date_time = parser.read_string()?;
   let time_zone = parser.read_string()?;
 
-  let sessions_count = parser.read_int()?;
+  let sessions_count = parser.read_int(false)?;
   let mut sessions = Vec::with_capacity(sessions_count as usize);
   for _ in 0..sessions_count {
     sessions.push(HistoricalSession {
@@ -357,11 +357,11 @@ pub fn process_historical_schedule(handler: &Arc<dyn ReferenceDataHandler>, pars
 /// Process contract data message
 pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
   // Determine version based on server version (matching Java EDecoder logic)
-  let version = if server_version < min_server_ver::SIZE_RULES { parser.read_int()? } else { 8 }; // Default to 8 for newer servers
+  let version = if server_version < min_server_ver::SIZE_RULES { parser.read_int(false)? } else { 8 }; // Default to 8 for newer servers
 
   let mut req_id = -1;
   if version >= 3 {
-    req_id = parser.read_int()?;
+    req_id = parser.read_int(false)?;
   }
 
   let mut contract_details = ContractDetails::default();
@@ -372,7 +372,7 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
   if server_version >= min_server_ver::LAST_TRADE_DATE {
     contract_details.contract.last_trade_date = parse_opt_tws_date(parser.read_string_opt()?)?;
   }
-  contract_details.contract.strike = Some(parser.read_double()?);
+  contract_details.contract.strike = Some(parser.read_double(false)?);
   let opt_right = parser.read_string()?;
   contract_details.contract.right = if opt_right.is_empty() { None } else { Some(OptionRight::from_str(&opt_right)?) };
   contract_details.contract.exchange = parser.read_string()?;
@@ -380,19 +380,19 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
   contract_details.contract.local_symbol = parser.read_string_opt()?;
   contract_details.market_name = parser.read_string()?;
   contract_details.contract.trading_class = parser.read_string_opt()?;
-  contract_details.contract.con_id = parser.read_int()?;
-  contract_details.min_tick = parser.read_double()?;
+  contract_details.contract.con_id = parser.read_int(false)?;
+  contract_details.min_tick = parser.read_double(false)?;
   if server_version >= min_server_ver::MD_SIZE_MULTIPLIER && server_version < min_server_ver::SIZE_RULES {
-    let _md_size_multiplier = parser.read_int()?; // Not used anymore
+    let _md_size_multiplier = parser.read_int(false)?; // Not used anymore
   }
   contract_details.contract.multiplier = parser.read_string_opt()?;
   contract_details.order_types = parser.read_string()?;
   contract_details.valid_exchanges = parser.read_string()?;
   if version >= 2 {
-    contract_details.price_magnifier = parser.read_int_max()?.unwrap_or(1);
+    contract_details.price_magnifier = parser.read_int_max(false)?.unwrap_or(1);
   }
   if version >= 4 {
-    contract_details.underlying_con_id = parser.read_int_max()?.unwrap_or(0);
+    contract_details.underlying_con_id = parser.read_int_max(false)?.unwrap_or(0);
   }
   if version >= 5 {
     contract_details.long_name = parser.read_string()?;
@@ -409,10 +409,10 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
   }
   if version >= 8 {
     contract_details.ev_rule = parser.read_string()?;
-    contract_details.ev_multiplier = parser.read_double()?;
+    contract_details.ev_multiplier = parser.read_double(false)?;
   }
   if version >= 7 {
-    let sec_id_list_count = parser.read_int()?;
+    let sec_id_list_count = parser.read_int(false)?;
     if sec_id_list_count > 0 {
       let mut sec_id_list = Vec::with_capacity(sec_id_list_count as usize);
       for _ in 0..sec_id_list_count {
@@ -425,7 +425,7 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
     }
   }
   if server_version >= min_server_ver::AGG_GROUP {
-    contract_details.agg_group = parser.read_int_max()?;
+    contract_details.agg_group = parser.read_int_max(false)?;
   }
   if server_version >= min_server_ver::UNDERLYING_INFO {
     contract_details.underlying_symbol = parser.read_string_opt()?.unwrap_or(String::new());
@@ -469,7 +469,7 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
     contract_details.fund_asset_type = parser.read_string_opt()?;
   }
   if server_version >= min_server_ver::INELIGIBILITY_REASONS {
-    let count = parser.read_int()?;
+    let count = parser.read_int(false)?;
     if count > 0 {
       let mut reasons = Vec::with_capacity(count as usize);
       for _ in 0..count {
