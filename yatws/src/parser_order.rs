@@ -258,7 +258,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_percent_offset(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.percent_offset = self.parser.read_double_max(false)?;
+      self.request.percent_offset = self.parser.read_double_max(true)?;
     }
     Ok(())
   }
@@ -293,9 +293,9 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_box_order_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.starting_price = self.parser.read_double_max(false)?;
-      self.request.stock_ref_price = self.parser.read_double_max(false)?;
-      self.request.delta = self.parser.read_double_max(false)?;
+      self.request.starting_price = self.parser.read_double_max(true)?;
+      self.request.stock_ref_price = self.parser.read_double_max(true)?;
+      self.request.delta = self.parser.read_double_max(true)?;
     }
     Ok(())
   }
@@ -306,8 +306,8 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       // Avoid reading them here if they overlap to prevent double reads/errors.
       if self.server_version != 26 {
         // Only read here if not the special VOL case handled later
-        self.request.stock_range_lower = self.parser.read_double_max(false)?;
-        self.request.stock_range_upper = self.parser.read_double_max(false)?;
+        self.request.stock_range_lower = self.parser.read_double_max(true)?;
+        self.request.stock_range_upper = self.parser.read_double_max(true)?;
       }
     }
     Ok(())
@@ -315,7 +315,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_display_size(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.display_size = self.parser.read_int_max(false)?;
+      self.request.display_size = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
@@ -354,7 +354,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_min_qty(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.min_quantity = self.parser.read_int_max(false)?;
+      self.request.min_quantity = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
@@ -382,7 +382,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_nbbo_price_cap(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      let _ = self.parser.read_double_max(false)?; // skip deprecated
+      let _ = self.parser.read_double_max(true)?; // skip deprecated
     }
     Ok(())
   }
@@ -454,18 +454,18 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_trail_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 13 {
-      self.request.trailing_stop_price = self.parser.read_double_max(false)?;
+      self.request.trailing_stop_price = self.parser.read_double_max(true)?;
     }
     if self.msg_version >= 30 {
-      self.request.trailing_percent = self.parser.read_double_max(false)?;
+      self.request.trailing_percent = self.parser.read_double_max(true)?;
     }
     Ok(())
   }
 
   fn read_basis_points(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 14 {
-      self.request.basis_points = self.parser.read_double_max(false)?;
-      self.request.basis_points_type = self.parser.read_int_max(false)?;
+      self.request.basis_points = self.parser.read_double_max(true)?;
+      self.request.basis_points_type = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
@@ -502,7 +502,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       if order_combo_legs_count > 0 {
         let mut order_legs = Vec::with_capacity(order_combo_legs_count as usize);
         for _ in 0..order_combo_legs_count {
-          order_legs.push(self.parser.read_double_max(false)?); // Read optional leg price
+          order_legs.push(self.parser.read_double_max(true)?); // Read optional leg price
         }
         self.request.order_combo_legs = order_legs;
       } else {
@@ -533,25 +533,25 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   fn read_scale_order_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 15 {
       if self.msg_version >= 20 {
-        self.request.scale_init_level_size = self.parser.read_int_max(false)?;
-        self.request.scale_subs_level_size = self.parser.read_int_max(false)?;
+        self.request.scale_init_level_size = self.parser.read_int_max(true)?;
+        self.request.scale_subs_level_size = self.parser.read_int_max(true)?;
       } else {
-        let _not_supp_scale_num_components = self.parser.read_int_max(false)?; // Read but ignore old field
-        self.request.scale_init_level_size = self.parser.read_int_max(false)?;
+        let _not_supp_scale_num_components = self.parser.read_int_max(true)?; // Read but ignore old field
+        self.request.scale_init_level_size = self.parser.read_int_max(true)?;
         self.request.scale_subs_level_size = None; // Ensure this is None if only init size was sent
       }
-      self.request.scale_price_increment = self.parser.read_double_max(false)?;
+      self.request.scale_price_increment = self.parser.read_double_max(true)?;
     }
 
     // Check scale_price_increment > 0 and != MAX, Java logic is slightly different (checks > 0 and != MAX).
     // Our read_double_max returns None for MAX, so is_some() covers the != MAX part. Check > 0 separately.
     if self.msg_version >= 28 && self.request.scale_price_increment.map_or(false, |p| p > 0.0) {
-      self.request.scale_price_adjust_value = self.parser.read_double_max(false)?;
-      self.request.scale_price_adjust_interval = self.parser.read_int_max(false)?;
-      self.request.scale_profit_offset = self.parser.read_double_max(false)?;
+      self.request.scale_price_adjust_value = self.parser.read_double_max(true)?;
+      self.request.scale_price_adjust_interval = self.parser.read_int_max(true)?;
+      self.request.scale_profit_offset = self.parser.read_double_max(true)?;
       self.request.scale_auto_reset = read_bool_from_int(self.parser)?;
-      self.request.scale_init_position = self.parser.read_int_max(false)?;
-      self.request.scale_init_fill_qty = self.parser.read_int_max(false)?;
+      self.request.scale_init_position = self.parser.read_int_max(true)?;
+      self.request.scale_init_fill_qty = self.parser.read_int_max(true)?;
       self.request.scale_random_percent = read_bool_from_int(self.parser)?;
     } else if self.msg_version >= 28 {
       // If scale params shouldn't be read, ensure they are None
@@ -681,9 +681,9 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       self.state.equity_with_loan_after =
         Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
 
-      self.state.commission = self.parser.read_double_max(false)?;
-      self.state.min_commission = self.parser.read_double_max(false)?;
-      self.state.max_commission = self.parser.read_double_max(false)?;
+      self.state.commission = self.parser.read_double_max(true)?;
+      self.state.min_commission = self.parser.read_double_max(true)?;
+      self.state.max_commission = self.parser.read_double_max(true)?;
       self.state.commission_currency = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
       self.state.warning_text = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
     }
@@ -862,14 +862,14 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_duration(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::DURATION {
-      self.request.duration = self.parser.read_int_max(false)?;
+      self.request.duration = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
 
   fn read_post_to_ats(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::POST_TO_ATS {
-      self.request.post_to_ats = self.parser.read_int_max(false)?;
+      self.request.post_to_ats = self.parser.read_int_max(true)?;
     }
     Ok(())
   }
@@ -884,11 +884,11 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_peg_best_peg_mid_order_attributes(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::PEGBEST_PEGMID_OFFSETS {
-      self.request.min_trade_qty = self.parser.read_int_max(false)?;
-      self.request.min_compete_size = self.parser.read_int_max(false)?;
-      self.request.compete_against_best_offset = self.parser.read_double_max(false)?;
-      self.request.mid_offset_at_whole = self.parser.read_double_max(false)?;
-      self.request.mid_offset_at_half = self.parser.read_double_max(false)?;
+      self.request.min_trade_qty = self.parser.read_int_max(true)?;
+      self.request.min_compete_size = self.parser.read_int_max(true)?;
+      self.request.compete_against_best_offset = self.parser.read_double_max(true)?;
+      self.request.mid_offset_at_whole = self.parser.read_double_max(true)?;
+      self.request.mid_offset_at_half = self.parser.read_double_max(true)?;
     }
     Ok(())
   }

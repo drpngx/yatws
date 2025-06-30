@@ -457,9 +457,9 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
     contract_details.fund_back_load = parser.read_string_opt()?;
     contract_details.fund_back_load_time_interval = parser.read_string_opt()?;
     contract_details.fund_management_fee = parser.read_string_opt()?;
-    contract_details.fund_closed = parser.read_bool_opt()?;
-    contract_details.fund_closed_for_new_investors = parser.read_bool_opt()?;
-    contract_details.fund_closed_for_new_money = parser.read_bool_opt()?;
+    contract_details.fund_closed = parser.read_bool_opt(false)?;
+    contract_details.fund_closed_for_new_investors = parser.read_bool_opt(false)?;
+    contract_details.fund_closed_for_new_money = parser.read_bool_opt(false)?;
     contract_details.fund_notify_amount = parser.read_string_opt()?;
     contract_details.fund_minimum_initial_purchase = parser.read_string_opt()?;
     contract_details.fund_subsequent_minimum_purchase = parser.read_string_opt()?;

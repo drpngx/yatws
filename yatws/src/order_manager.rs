@@ -439,6 +439,13 @@ impl OrderManager {
       order.0.request.clone() // Clone the original request
     };
 
+    // TWS sends weird string on delta_neutral_order_type
+    if let Some(delta_neutral_order_type) = &modified_request.delta_neutral_order_type {
+      if delta_neutral_order_type.as_bytes() == &[195, 142, 195, 158] /* ÎÞ */ {
+        modified_request.delta_neutral_order_type = None;
+      }
+    }
+
     // Apply updates
     let mut changed = false;
     if let Some(qty) = updates.quantity {
