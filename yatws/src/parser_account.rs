@@ -260,9 +260,8 @@ pub fn process_account_summary_end(handler: &Arc<dyn AccountHandler>, parser: &m
 }
 
 
-/// Process PnL message
+/// Process PnL message [req_id, daily_pnl, unrealized_pnl, realized_pnl]
 pub fn process_pnl(handler: &Arc<dyn AccountHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
-  let _version = parser.read_int(false)?;
   let req_id = parser.read_int(false)?;
   let daily_pnl = parser.read_double(false)?;
 
