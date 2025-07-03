@@ -501,6 +501,46 @@ impl AccountManager {
     self.get_parsed_value("RealizedPnL")
   }
 
+  /// Subscribes to daily Profit and Loss (P&L) updates for the account.
+  ///
+  /// This method sends a `reqDailyPnL` request to TWS, which will start
+  /// continuous updates for the daily P&L. The updates will be delivered
+  /// through the `pnl` method in the `AccountHandler` implementation.
+  ///
+  /// # Returns
+  /// `Ok(())` if the subscription request was sent successfully.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the underlying account subscription is not established,
+  /// if there are issues communicating with TWS, or if essential account information
+  pub fn subscribe_daily_pnl(&self) -> Result<(), IBKRError> {
+    self.ensure_subscribed()?;
+    let account_id = self.account_state.read().account_id.clone();
+    if account_id.is_empty() {
+      return Err(IBKRError::InternalError(
+        "Account ID not available for PnL subscription. Ensure account summary has been received.".to_string()
+      ));
+    }
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    // Send PnL request (this also implicitly starts continuous updates)
+    match encoder.encode_request_daily_pnl(req_id, &account_id, "") {
+      Ok(pnl_msg) => {
+        if let Err(e) = self.message_broker.send_message(&pnl_msg) {
+          error!("Failed to send PnL request: {:?}", e);
+          return Err(e);
+        }
+      },
+      Err(e) => {
+        error!("Failed to encode PnL request: {:?}", e);
+        return Err(e);
+      }
+    }
+    Ok(())
+  }
+
   /// Subscribes to real-time Profit and Loss (P&L) updates for individual positions.
   ///
   /// When called, this method will:
