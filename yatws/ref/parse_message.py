@@ -69,8 +69,32 @@ def DecodeOpenOrderVwap():
   dec.processOpenOrder(fields)
 
 
+def DecodeOpenOrderStopLimit():
+  def PrintOpenOrder(order_id, contract, order, order_state):
+    print(f'order id: {order_id}')
+    print(f'contract: {contract}')
+    print(f'order: {order}')
+    print('order_state(' + ', '.join(f'{k}="{v}"' if isinstance(v, str) else f'{k}={v}' for k, v in vars(order_state).items()) + ')')
+    FullPrint(order, 'ORDER')
+
+  def FullPrint(x, lab: str):
+    for m in dir(x):
+      if m.startswith('_'):
+        continue
+      v = getattr(x, m)
+      print(f'{lab}: {m} = {v}')
+
+  dec = Decoder(EWrapper(), 187)
+  dec.wrapper.openOrder = PrintOpenOrder
+
+  #msg = "5·9393·272093·MSFT·STK··0·?··SMART·USD·MSFT·NMS·SELL·1·STP·0.0·95.0·GTC·853839679·DU1234567··0··101·853839680·0·0·0··853839680.0/DU1234567/100······0···0··-1·0······2147483647·0·0·0··3·0·0··9392·0··0·None··0····?·0·0··0·0······0·0·0·2147483647·2147483647···0··IB·0·0··0·0·PreSubmitted·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308······0·0·0·None·1.7976931348623157E308·95.0·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·0····0·1·0·0·0···0·······0··"
+  msg = "5·9390·272093·MSFT·STK··0·?··SMART·USD·MSFT·NMS·BUY·1·LMT·100.0·0.0·GTC··DU1234567··0··101·853839677·0·0·0··853839677.0/DU1234567/100······0···0··-1·0······2147483647·0·0·0··3·0·0··0·0··0·None··0····?·0·0··0·0······0·0·0·2147483647·2147483647···0··IB·0·0··0·0·PreSubmitted·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308······0·0·0·None·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·1.7976931348623157E308·0····0·1·0·0·0···0·······0··"
+  fields = Fields(msg)
+  dec.processOpenOrder(fields)
+
+
 def Run():
-  DecodeOpenOrderVwap()
+  DecodeOpenOrderStopLimit()
 
 
 if __name__ == "__main__":
