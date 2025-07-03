@@ -501,6 +501,36 @@ impl AccountManager {
     self.get_parsed_value("RealizedPnL")
   }
 
+  /// Subscribes to daily Profit and Loss (P&L) updates for the account.
+  ///
+  /// This method sends a `reqPnl` request to TWS, which will start
+  /// continuous updates for the P&L. The updates will be delivered
+  /// through the `pnl` method in the `AccountHandler` implementation.
+  ///
+  /// # Returns
+  /// `Ok(())` if the subscription request was sent successfully.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the underlying account subscription is not established,
+  /// if there are issues communicating with TWS, or if essential account information
+  pub fn subscribe_account_pnl(&self) -> Result<(), IBKRError> {
+    self.ensure_subscribed()?;
+    let account_id = self.account_state.read().account_id.clone();
+    if account_id.is_empty() {
+      return Err(IBKRError::InternalError(
+        "Account ID not available for PnL subscription. Ensure account summary has been received.".to_string()
+      ));
+    }
+    let req_id = self.message_broker.next_request_id();
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+
+    // Send PnL request (this also implicitly starts continuous updates)
+    let pnl_msg = encoder.encode_request_pnl(req_id, &account_id, "")?;
+    self.message_broker.send_message(&pnl_msg)?;
+    Ok(())
+  }
+
   /// Subscribes to real-time Profit and Loss (P&L) updates for individual positions.
   ///
   /// When called, this method will:
@@ -903,7 +933,7 @@ impl AccountManager {
 
       // Prepare messages
       // Request a comprehensive set of tags, including PnL
-      let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
+      let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage".to_string();
 
       // Send summary request (this also implicitly starts continuous updates)
       match encoder.encode_request_account_summary(req_id, "All", &tags) {
@@ -1036,6 +1066,10 @@ impl AccountManager {
           u_state.current_summary_req_id = None;
         }
       } // Release lock (`u_state`) here
+
+      // --- Send daily PnL request ---
+      self.subscribe_account_pnl()?;
+      info!("Daily PnL subscription request sent.");
 
       // --- Clear initializing flag ---
       // Do this *after* releasing the lock and *before* potential notification

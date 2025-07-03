@@ -472,6 +472,23 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
+  pub fn encode_request_pnl(
+    &self,
+    req_id: i32,
+    account: &str,
+    model_code: &str,
+    ) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding request daily PnL message: ReqID={}, Account={}, ModelCode={}", req_id, account, model_code);
+    if self.server_version < min_server_ver::PNL {
+      return Err(IBKRError::Unsupported("Server version does not support PnL request.".to_string()));
+    }
+    let mut cursor = self.start_encoding(OutgoingMessageType::ReqPnl as i32)?;
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+    self.write_str_to_cursor(&mut cursor, account)?;
+    self.write_str_to_cursor(&mut cursor, model_code)?;
+    Ok(self.finish_encoding(cursor))
+  }
+
   pub fn encode_request_executions(&self, req_id: i32, filter: &ExecutionFilter) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request executions: ReqID={}, Filter={:?}", req_id, filter);
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqExecutions as i32)?;
