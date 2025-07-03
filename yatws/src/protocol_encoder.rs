@@ -472,13 +472,13 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn encode_request_daily_pnl(
+  pub fn encode_request_pnl(
     &self,
     req_id: i32,
     account: &str,
     model_code: &str,
     ) -> Result<Vec<u8>, IBKRError> {
-    debug!("Encoding request account summary message: ReqID={}, Account={}, ModelCode={}", req_id, account, model_code);
+    debug!("Encoding request daily PnL message: ReqID={}, Account={}, ModelCode={}", req_id, account, model_code);
     if self.server_version < min_server_ver::PNL {
       return Err(IBKRError::Unsupported("Server version does not support PnL request.".to_string()));
     }

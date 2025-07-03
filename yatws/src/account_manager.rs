@@ -513,7 +513,7 @@ impl AccountManager {
   /// # Errors
   /// Returns `IBKRError` if the underlying account subscription is not established,
   /// if there are issues communicating with TWS, or if essential account information
-  pub fn subscribe_daily_pnl(&self) -> Result<(), IBKRError> {
+  pub fn req_pnl(&self) -> Result<(), IBKRError> {
     self.ensure_subscribed()?;
     let account_id = self.account_state.read().account_id.clone();
     if account_id.is_empty() {
@@ -526,18 +526,8 @@ impl AccountManager {
     let encoder = Encoder::new(server_version);
 
     // Send PnL request (this also implicitly starts continuous updates)
-    match encoder.encode_request_daily_pnl(req_id, &account_id, "") {
-      Ok(pnl_msg) => {
-        if let Err(e) = self.message_broker.send_message(&pnl_msg) {
-          error!("Failed to send PnL request: {:?}", e);
-          return Err(e);
-        }
-      },
-      Err(e) => {
-        error!("Failed to encode PnL request: {:?}", e);
-        return Err(e);
-      }
-    }
+    let pnl_msg = encoder.encode_request_pnl(req_id, &account_id, "")?;
+    self.message_broker.send_message(&pnl_msg)?;
     Ok(())
   }
 
@@ -943,7 +933,7 @@ impl AccountManager {
 
       // Prepare messages
       // Request a comprehensive set of tags, including PnL
-      let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage-S,Currency,DailyPnL,UnrealizedPnL,RealizedPnL".to_string();
+      let tags = "AccountType,NetLiquidation,TotalCashValue,SettledCash,AccruedCash,BuyingPower,EquityWithLoanValue,PreviousEquityWithLoanValue,GrossPositionValue,ReqTEquity,ReqTMargin,SMA,InitMarginReq,MaintMarginReq,AvailableFunds,ExcessLiquidity,Cushion,FullInitMarginReq,FullMaintMarginReq,FullAvailableFunds,FullExcessLiquidity,LookAheadNextChange,LookAheadInitMarginReq,LookAheadMaintMarginReq,LookAheadAvailableFunds,LookAheadExcessLiquidity,HighestSeverity,DayTradesRemaining,Leverage".to_string();
 
       // Send summary request (this also implicitly starts continuous updates)
       match encoder.encode_request_account_summary(req_id, "All", &tags) {
@@ -1076,6 +1066,10 @@ impl AccountManager {
           u_state.current_summary_req_id = None;
         }
       } // Release lock (`u_state`) here
+
+      // --- Send daily PnL request ---
+      self.req_pnl()?;
+      info!("Daily PnL subscription request sent.");
 
       // --- Clear initializing flag ---
       // Do this *after* releasing the lock and *before* potential notification
