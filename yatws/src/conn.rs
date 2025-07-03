@@ -372,9 +372,7 @@ mod socket {
       // Only tokio::TcpStream has keepalive.
       {
         let sock_ref = SockRef::from(&stream);
-        let mut keepalive = TcpKeepalive::new()
-          .with_time(Duration::from_secs(60))       // Time before sending first keepalive probe
-          .with_interval(Duration::from_secs(20));   // Interval between keepalive probes
+        let keepalive;
 
         #[cfg(any(
           target_os = "android",
@@ -392,7 +390,30 @@ mod socket {
           target_os = "cygwin",
         ))]
         {
-          keepalive = keepalive.with_retries(32);  // Number of failed probes before dropping the connection
+          keepalive = TcpKeepalive::new()
+          .with_time(Duration::from_secs(60))       // Time before sending first keepalive probe
+          .with_interval(Duration::from_secs(20))   // Interval between keepalive probes
+          .with_retries(32);  // Number of failed probes before dropping the connection
+        }
+        #[cfg(not(any(
+          target_os = "android",
+          target_os = "dragonfly",
+          target_os = "freebsd",
+          target_os = "fuchsia",
+          target_os = "illumos",
+          target_os = "ios",
+          target_os = "visionos",
+          target_os = "linux",
+          target_os = "macos",
+          target_os = "netbsd",
+          target_os = "tvos",
+          target_os = "watchos",
+          target_os = "cygwin",
+        )))]
+        {
+          keepalive = TcpKeepalive::new()
+          .with_time(Duration::from_secs(60))       // Time before sending first keepalive probe
+          .with_interval(Duration::from_secs(20));   // Interval between keepalive probes
         }
         sock_ref.set_tcp_keepalive(&keepalive).unwrap_or_else(|e| log::warn!("Failed to set keepalive: {:?}", e));
       }
