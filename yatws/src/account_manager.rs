@@ -503,8 +503,8 @@ impl AccountManager {
 
   /// Subscribes to daily Profit and Loss (P&L) updates for the account.
   ///
-  /// This method sends a `reqDailyPnL` request to TWS, which will start
-  /// continuous updates for the daily P&L. The updates will be delivered
+  /// This method sends a `reqPnl` request to TWS, which will start
+  /// continuous updates for the P&L. The updates will be delivered
   /// through the `pnl` method in the `AccountHandler` implementation.
   ///
   /// # Returns
@@ -513,7 +513,7 @@ impl AccountManager {
   /// # Errors
   /// Returns `IBKRError` if the underlying account subscription is not established,
   /// if there are issues communicating with TWS, or if essential account information
-  pub fn req_pnl(&self) -> Result<(), IBKRError> {
+  pub fn subscribe_account_pnl(&self) -> Result<(), IBKRError> {
     self.ensure_subscribed()?;
     let account_id = self.account_state.read().account_id.clone();
     if account_id.is_empty() {
@@ -1068,7 +1068,7 @@ impl AccountManager {
       } // Release lock (`u_state`) here
 
       // --- Send daily PnL request ---
-      self.req_pnl()?;
+      self.subscribe_account_pnl()?;
       info!("Daily PnL subscription request sent.");
 
       // --- Clear initializing flag ---
