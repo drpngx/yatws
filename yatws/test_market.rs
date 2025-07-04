@@ -560,7 +560,7 @@ pub(super) fn historical_schedule_impl(client: &IBKRClient, _is_live: bool) -> R
     time_zone_id
   );
 
-  match data_ref_mgr.get_historical_schedule(&contract, start_date, end_date, time_zone_id) {
+  match data_ref_mgr.get_historical_schedule(&contract, start_date, end_date, false, time_zone_id) {
     Ok(schedule_result) => {
       info!("Successfully received historical schedule for {}:", contract.symbol);
       info!("  StartDateTime: {}", schedule_result.start_date_time);
