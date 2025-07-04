@@ -85,3 +85,9 @@ py_binary(
     srcs = ["stop_limit_order.py"],
     deps = ["//:ibapi"],
 )
+
+py_binary(
+    name = "place_order",
+    srcs = ["place_order.py"],
+    deps = ["//:ibapi"],
+)
