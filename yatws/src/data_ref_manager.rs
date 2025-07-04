@@ -225,7 +225,6 @@ impl DataRefManager {
     // For SCHEDULE, encoder will override:
     // - end_date_time to ""
     // - bar_size_setting to "1 day"
-    // - use_rth to false (0)
     // - format_date to 1
     // - keep_up_to_date to false (0)
     // - strike to 0.0 (if contract.strike is None)
