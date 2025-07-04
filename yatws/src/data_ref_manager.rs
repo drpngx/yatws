@@ -236,7 +236,7 @@ impl DataRefManager {
       &final_duration_str,
       "1 day",
       "SCHEDULE",
-      use_rth, // use_rth (encoder will ensure false for SCHEDULE)
+      use_rth,
       1, // format_date (encoder will ensure 1 for SCHEDULE)
       false, // keep_up_to_date (encoder will ensure false for SCHEDULE)
       &[],
