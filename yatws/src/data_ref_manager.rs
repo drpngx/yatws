@@ -188,6 +188,7 @@ impl DataRefManager {
     contract: &Contract,
     start_date: Option<chrono::DateTime<chrono::Utc>>,
     end_date: Option<chrono::DateTime<chrono::Utc>>,
+    use_rth: bool,
     time_zone_id: &str, // Note: This parameter is currently not used by the TWS API for SCHEDULE requests.
   ) -> Result<HistoricalScheduleResult, IBKRError> {
     info!("Requesting historical schedule for: {}, StartDate: {:?}, EndDate: {:?}, TimeZoneID: {}", contract.symbol, start_date, end_date, time_zone_id);
@@ -235,7 +236,7 @@ impl DataRefManager {
       &final_duration_str,
       "1 day",
       "SCHEDULE",
-      false, // use_rth (encoder will ensure false for SCHEDULE)
+      use_rth, // use_rth (encoder will ensure false for SCHEDULE)
       1, // format_date (encoder will ensure 1 for SCHEDULE)
       false, // keep_up_to_date (encoder will ensure false for SCHEDULE)
       &[],
