@@ -50,6 +50,9 @@ pub(super) fn account_details_impl(client: &IBKRClient, _is_live: bool) -> Resul
     }
   }
 
+  let pnl =  acct_mgr.get_daily_pnl()?;
+  info!("Daily PNL: {}", pnl);
+
   info!("Fetching open positions...");
   match acct_mgr.list_open_positions() {
     Ok(positions) => {
