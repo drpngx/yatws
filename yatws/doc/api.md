@@ -750,12 +750,13 @@ Requests and returns SMART routing components for a BBO exchange. Blocks until d
 
 Requests and returns details for a specific market rule ID. Blocks until data received or timeout (no explicit end message).
 
-### `DataRefManager::get_historical_schedule(&self, contract: &Contract, start_date: Option<chrono::DateTime<chrono::Utc>>, end_date: Option<chrono::DateTime<chrono::Utc>>, time_zone_id: &str) -> Result<HistoricalScheduleResult, IBKRError>`
+### `DataRefManager::get_historical_schedule(&self, contract: &Contract, start_date: Option<chrono::DateTime<chrono::Utc>>, end_date: Option<chrono::DateTime<chrono::Utc>>, use_rth: bool, time_zone_id: &str) -> Result<HistoricalScheduleResult, IBKRError>`
 
 Requests the historical trading schedule for a contract.
 -   `contract`: The contract for which to request the schedule.
 -   `start_date`: Optional start date/time.
 -   `end_date`: Optional end date/time.
+-   `use_rth`: Use regular trading hours.
 -   `time_zone_id`: Desired time zone (note: TWS may return schedule in its own timezone).
 -   **Returns**: `HistoricalScheduleResult` or `IBKRError`.
 
