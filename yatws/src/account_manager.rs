@@ -375,6 +375,26 @@ impl AccountManager {
     })
   }
 
+  /// Requests the list of managed accounts from TWS.
+  ///
+  /// The result is received asynchronously by the `managed_accounts` handler,
+  /// which typically sets the primary account ID if it's not already known.
+  /// This is often called automatically on connection, but can be called manually.
+  ///
+  /// # Returns
+  /// `Ok(())` if the request was sent successfully.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if there are issues encoding or sending the request.
+  pub fn request_managed_accounts(&self) -> Result<(), IBKRError> {
+    info!("Requesting managed accounts.");
+    let server_version = self.message_broker.get_server_version()?;
+    let encoder = Encoder::new(server_version);
+    let request_msg = encoder.encode_request_managed_accounts()?;
+    self.message_broker.send_message(&request_msg)?;
+    Ok(())
+  }
+
   /// Retrieves the current buying power for the account.
   /// Requires an active subscription.
   pub fn get_buying_power(&self) -> Result<f64, IBKRError> {

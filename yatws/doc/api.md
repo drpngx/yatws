@@ -199,6 +199,11 @@ Retrieves unrealized Profit & Loss. Requires active subscription.
 
 Retrieves realized Profit & Loss. Requires active subscription.
 
+### `AccountManager::request_managed_accounts(&self) -> Result<(), IBKRError>`
+
+Requests the list of managed accounts from TWS. The result is received asynchronously by the `managed_accounts` handler, which typically sets the primary account ID if it's not already known. This is often called automatically on connection, but can be called manually.
+-   **Errors**: Returns `IBKRError` if there are issues encoding or sending the request.
+
 ### `AccountManager::subscribe_pnl(&self, con_id_filter: Option<Vec<i32>>) -> Result<(), IBKRError>`
 
 Subscribes to real-time Profit and Loss (P&L) updates for individual positions.

@@ -1837,7 +1837,7 @@ impl Encoder {
     Ok(self.finish_encoding(cursor))
   }
 
-  pub fn _encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
+  pub fn encode_request_managed_accounts(&self) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding request managed accounts");
     let mut cursor = self.start_encoding(OutgoingMessageType::ReqManagedAccts as i32)?;
     let version = 1;
