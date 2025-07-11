@@ -370,6 +370,78 @@ impl OrderManager {
     Ok(true) // Indicate request was sent
   }
 
+  /// Replaces an existing open order with a new contract and/or order request.
+  ///
+  /// This is a more direct replacement than `modify_order`. It sends a new `placeOrder`
+  /// message with the same client ID but entirely new `Contract` and `OrderRequest` data.
+  /// The method returns immediately after sending the replacement request.
+  ///
+  /// # Arguments
+  /// * `order_id` - The client order ID of the order to replace.
+  /// * `contract` - The new [`Contract`] for the order.
+  /// * `request` - The new [`OrderRequest`] for the order.
+  ///
+  /// # Returns
+  /// An `Arc<RwLock<Order>>` pointing to the order being modified.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the order ID is not found, the order is already in a
+  /// terminal state, the order ID format is invalid, or if there are issues
+  /// encoding or sending the replacement request.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, OrderBuilder, contract::Contract, order::{OrderSide, OrderRequest}};
+  /// # use std::time::Duration;
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let order_mgr = client.orders();
+  /// # let (original_contract, original_req) = OrderBuilder::new(OrderSide::Buy, 1.0).limit(100.0).for_stock("AAPL").build()?;
+  /// # let order_id = order_mgr.place_order(original_contract, original_req)?;
+  /// // Assume order_id is an active limit order for 1 share of AAPL at $100
+  ///
+  /// // Now, replace it with an order for 2 shares of AAPL at $150
+  /// let (new_contract, new_req) = OrderBuilder::new(OrderSide::Buy, 2.0)
+  ///     .limit(150.0)
+  ///     .for_stock("AAPL")
+  ///     .build()?;
+  ///
+  /// order_mgr.replace_order(&order_id, new_contract, new_req)?;
+  /// println!("Replacement request sent for order {}", order_id);
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn replace_order(&self, order_id: &str, contract: Contract, request: OrderRequest) -> Result<Arc<RwLock<Order>>, IBKRError> {
+    info!("Replacing order ID: {} with new contract/request", order_id);
+    let order_id_int = order_id.parse::<i32>()
+      .map_err(|_| IBKRError::InvalidOrder(format!("Invalid order ID format: {}", order_id)))?;
+
+    let order_arc = {
+      let book = self.order_book.read();
+      book.get(order_id)
+        .cloned()
+        .ok_or_else(|| IBKRError::InvalidOrder(format!("Order ID {} not found for replacement", order_id)))?
+    };
+
+    // Check if the order is already in a terminal state before attempting replacement
+    {
+      let order = order_arc.read();
+      if order.state.is_terminal() {
+        error!("Cannot replace order {} because it is in a terminal state: {:?}", order_id, order.state.status);
+        return Err(IBKRError::InvalidOrder(format!("Order {} is terminal ({:?}) and cannot be replaced", order_id, order.state.status)));
+      }
+    }
+
+    // Prepare and send message with the *same order ID* but *new contract and request*
+    let encoder = Encoder::new(self.message_broker.get_server_version()?);
+    let replace_msg = encoder.encode_place_order(order_id_int, &contract, &request)?;
+    self.message_broker.send_message(&replace_msg)?;
+
+    info!("Replace order request sent for ID: {}", order_id);
+    // We don't update the local state immediately. We wait for OrderStatus updates.
+    Ok(order_arc)
+  }
+
   /// Modifies an existing open order.
   ///
   /// This method sends a new `placeOrder` message to TWS with the *same client order ID*

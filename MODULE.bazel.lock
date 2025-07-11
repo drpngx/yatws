@@ -3002,7 +3002,7 @@
         "bzlTransitiveDigest": "45NbGJaeDWJioHGqEel8KouYKKfGixQynmwTRiPOf70=",
         "usagesDigest": "yKkEjWhrEuztvxxQZXxLbqw7pHJMiLmBp/aOqm2NxoQ=",
         "recordedFileInputs": {
-          "@@//Cargo.lock": "4847e9bde44f7cc62703778c34cec86dd150619fffb21a428e394d62201dab92",
+          "@@//Cargo.lock": "8e5df391ae554421dbfcdd571f44c3f0a7cf183c7bbc16132e52776eedb2bfd6",
           "@@//Cargo.toml": "a0aaa2c2f548500dfe6bf3e43d451846a2a138492111af2c390853f5876831e8",
           "@@//yatws/Cargo.toml": "3becf632a4328df90c327ed113b30c8695dc0d398100c084f19154b154b3bb4c"
         },

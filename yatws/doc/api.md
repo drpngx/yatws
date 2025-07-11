@@ -381,6 +381,15 @@ Modifies an existing open order. Sends new `placeOrder` with same client ID and 
 -   **Returns**: `Arc<RwLock<Order>>` to the order's state in local book.
 -   **Errors**: Order not found, terminal state, invalid ID, encoding/send issues.
 
+### `OrderManager::replace_order(&self, order_id: &str, contract: Contract, request: OrderRequest) -> Result<Arc<RwLock<Order>>, IBKRError>`
+
+Replaces an existing open order with a new contract and/or order request. This is a more direct replacement than `modify_order`. It sends a new `placeOrder` message with the same client ID but entirely new `Contract` and `OrderRequest` data. Returns immediately.
+-   `order_id`: Client order ID to replace.
+-   `contract`: The new `Contract` for the order.
+-   `request`: The new `OrderRequest` for the order.
+-   **Returns**: `Arc<RwLock<Order>>` to the order's state in local book.
+-   **Errors**: Order not found, terminal state, invalid ID, encoding/send issues.
+
 ### `OrderManager::refresh_orderbook(&self, timeout: Duration) -> Result<(), IBKRError>`
 
 Refreshes local order book by requesting all open orders from TWS. Blocking call, waits for `openOrderEnd` or timeout.
