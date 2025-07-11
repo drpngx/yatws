@@ -30,7 +30,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-yatws = "0.1.2"    # Replace with actual version
+yatws = "0.1.3"    # Replace with actual version
 ```
 
 ## Reading Further
