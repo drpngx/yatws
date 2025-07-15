@@ -19,6 +19,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+impl From<quick_xml::encoding::EncodingError> for IBKRError {
+  fn from(err: quick_xml::encoding::EncodingError) -> Self {
+    IBKRError::ParseError(err.to_string())
+  }
+}
+
 #[derive(Debug, Default)]
 struct FARequestState {
   waiting_for_data: bool,
@@ -191,7 +197,7 @@ impl FinancialAdvisorManager {
   // --- XML Parsing Helpers ---
   fn parse_fa_groups(xml_data: &str) -> Result<HashMap<String, FAGroup>, IBKRError> {
     let mut reader = Reader::from_str(xml_data);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut groups = HashMap::new();
     let mut current_group: Option<FAGroup> = None;
     let mut in_accounts_list = false;
@@ -204,18 +210,18 @@ impl FinancialAdvisorManager {
             b"Group" => current_group = Some(FAGroup::default()),
             b"name" if current_group.is_some() => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_group.as_mut().unwrap().name = t.unescape()?.into_owned();
+                current_group.as_mut().unwrap().name = t.decode()?.into_owned();
               }
             }
             b"ListOfAccts" if current_group.is_some() => in_accounts_list = true,
             b"String" if current_group.is_some() && in_accounts_list => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_group.as_mut().unwrap().accounts.push(t.unescape()?.into_owned());
+                current_group.as_mut().unwrap().accounts.push(t.decode()?.into_owned());
               }
             }
             b"DefaultMethod" if current_group.is_some() => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_group.as_mut().unwrap().default_method = t.unescape()?.into_owned();
+                current_group.as_mut().unwrap().default_method = t.decode()?.into_owned();
               }
             }
             _ => (),
@@ -243,7 +249,7 @@ impl FinancialAdvisorManager {
 
   fn parse_fa_profiles(xml_data: &str) -> Result<HashMap<String, FAProfile>, IBKRError> {
     let mut reader = Reader::from_str(xml_data);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut profiles = HashMap::new();
     let mut current_profile: Option<FAProfile> = None;
     let mut current_allocation: Option<FAProfileAllocation> = None;
@@ -257,12 +263,12 @@ impl FinancialAdvisorManager {
             b"Profile" => current_profile = Some(FAProfile::default()),
             b"name" if current_profile.is_some() && !in_allocations_list => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_profile.as_mut().unwrap().name = t.unescape()?.into_owned();
+                current_profile.as_mut().unwrap().name = t.decode()?.into_owned();
               }
             }
             b"type" if current_profile.is_some() => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_profile.as_mut().unwrap().profile_type = t.unescape()?.into_owned();
+                current_profile.as_mut().unwrap().profile_type = t.decode()?.into_owned();
               }
             }
             b"ListOfAllocations" if current_profile.is_some() => in_allocations_list = true,
@@ -271,12 +277,12 @@ impl FinancialAdvisorManager {
             }
             b"acct" if current_allocation.is_some() => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_allocation.as_mut().unwrap().account_id = t.unescape()?.into_owned();
+                current_allocation.as_mut().unwrap().account_id = t.decode()?.into_owned();
               }
             }
             b"amount" if current_allocation.is_some() => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_allocation.as_mut().unwrap().amount = t.unescape()?.into_owned();
+                current_allocation.as_mut().unwrap().amount = t.decode()?.into_owned();
               }
             }
             _ => (),
@@ -311,7 +317,7 @@ impl FinancialAdvisorManager {
 
   fn parse_fa_aliases(xml_data: &str) -> Result<HashMap<String, FAAlias>, IBKRError> {
     let mut reader = Reader::from_str(xml_data);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
     let mut aliases = HashMap::new();
     let mut current_alias: Option<FAAlias> = None;
     let mut buf = Vec::new();
@@ -323,12 +329,12 @@ impl FinancialAdvisorManager {
             b"Alias" => current_alias = Some(FAAlias::default()),
             b"alias" if current_alias.is_some() => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_alias.as_mut().unwrap().alias = t.unescape()?.into_owned();
+                current_alias.as_mut().unwrap().alias = t.decode()?.into_owned();
               }
             }
             b"acct" if current_alias.is_some() => {
               if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_alias.as_mut().unwrap().account_id = t.unescape()?.into_owned();
+                current_alias.as_mut().unwrap().account_id = t.decode()?.into_owned();
               }
             }
             _ => (),

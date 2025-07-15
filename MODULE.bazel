@@ -24,10 +24,10 @@ pip.parse(
 use_repo(pip, "yatws_pip_deps")
 
 ########## RUST
-bazel_dep(name = "rules_rust", version = "0.59.2")
+bazel_dep(name = "rules_rust", version = "0.62.0")
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 # Pick one that works from here: https://releases.rs/
-rust.toolchain(edition = "2021", versions = ["1.86.0"])
+rust.toolchain(edition = "2021", versions = ["1.88.0"])
 use_repo(rust, "rust_toolchains")
 register_toolchains("@rust_toolchains//:all")
 # To update, run `bazel run @rules_rust//tools/rust_analyzer:gen_rust_project`.

@@ -46,7 +46,7 @@ fn parse_optional_date(opt_str: Option<String>) -> Option<NaiveDate> {
 
 fn parse_reports_fin_summary(xml_data: &str) -> Result<ReportsFinSummary, IBKRError> {
   let mut reader = Reader::from_str(xml_data);
-  reader.trim_text(true);
+  reader.config_mut().trim_text(true);
   let mut buf = Vec::new();
   let mut report = ReportsFinSummary::default();
 
@@ -72,7 +72,7 @@ fn parse_reports_fin_summary(xml_data: &str) -> Result<ReportsFinSummary, IBKREr
 
             if !is_empty_tag {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                record.value = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
+                record.value = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* ok */ }
                 else { return Err(IBKRError::ParseError("Expected </EPS> after text".into())); }
               } else {
@@ -93,7 +93,7 @@ fn parse_reports_fin_summary(xml_data: &str) -> Result<ReportsFinSummary, IBKREr
 
             if !is_empty_tag {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                record.value = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
+                record.value = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* ok */ }
                 else { return Err(IBKRError::ParseError("Expected </DividendPerShare> after text".into())); }
               } else {
@@ -114,7 +114,7 @@ fn parse_reports_fin_summary(xml_data: &str) -> Result<ReportsFinSummary, IBKREr
 
             if !is_empty_tag {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                record.value = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
+                record.value = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* ok */ }
                 else { return Err(IBKRError::ParseError("Expected </TotalRevenue> after text".into())); }
               } else {
@@ -137,7 +137,7 @@ fn parse_reports_fin_summary(xml_data: &str) -> Result<ReportsFinSummary, IBKREr
 
             if !is_empty_tag {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                record.value = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
+                record.value = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* ok */ }
                 else { return Err(IBKRError::ParseError("Expected </Dividend> after text".into())); }
               } else {
@@ -204,7 +204,7 @@ fn parse_optional_bool_int(opt_str: Option<String>) -> Option<bool> {
 
 fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
   let mut reader = Reader::from_str(xml_data);
-  reader.trim_text(true);
+  reader.config_mut().trim_text(true);
   let mut buf = Vec::new();
   let mut report = ReportSnapshot::default();
   let mut current_issue: Option<Issue> = None;
@@ -231,7 +231,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
                 Ok(Event::Start(coid_e)) if coid_e.name().as_ref() == b"CoID" => {
                   if let Some(coid_type) = get_attr_value(&coid_e, b"Type")? {
                     if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                      report.top_level_coids.insert(coid_type, text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                      report.top_level_coids.insert(coid_type, text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                     }
                     if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end CoID */ }
                   }
@@ -305,7 +305,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
               let is_empty_tag = e.is_empty();
               if !is_empty_tag {
                 if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                  ratio.raw_value = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                  ratio.raw_value = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                   if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                   else { return Err(IBKRError::ParseError("Expected </Ratio> after text in Ratios/Group".into())); }
                 } else {
@@ -344,7 +344,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
                   // The <IssueID ...> tag is not self-closing, so expect content or an immediate end tag.
                   match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                     Event::Text(text_e) => {
-                      let value = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned();
+                      let value = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned();
                       match id_type.as_str() {
                         "Name" => issue.name = Some(value),
                         "Ticker" => issue.ticker = Some(value),
@@ -378,7 +378,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
               issue.exchange_country = get_attr_value(&e, b"Country")?;
               if !e.is_empty() {
                 if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                  issue.exchange_name = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                  issue.exchange_name = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                   if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                   else { return Err(IBKRError::ParseError("Expected </Exchange> after text".into())); }
                 } else { return Err(IBKRError::ParseError("Expected text for <Exchange>".into())); }
@@ -389,7 +389,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             if let Some(issue) = current_issue.as_mut() {
               if !e.is_empty() {
                 if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                  issue.global_listing_type = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                  issue.global_listing_type = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                   if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                   else { return Err(IBKRError::ParseError("Expected </GlobalListingType> after text".into())); }
                 } else { return Err(IBKRError::ParseError("Expected text for <GlobalListingType>".into())); }
@@ -401,7 +401,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
               issue.most_recent_split_date = parse_optional_date(get_attr_value(&e, b"Date")?);
               if !e.is_empty() {
                 if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                  issue.most_recent_split_factor = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
+                  issue.most_recent_split_factor = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
                   if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                   else { return Err(IBKRError::ParseError("Expected </MostRecentSplit> after text".into())); }
                 } else { return Err(IBKRError::ParseError("Expected text for <MostRecentSplit>".into())); }
@@ -413,7 +413,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             current_co_general_info.co_status_code = parse_optional_i32(get_attr_value(&e, b"Code")?);
             if !e.is_empty() {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                current_co_general_info.co_status_desc = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                current_co_general_info.co_status_desc = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                 else { return Err(IBKRError::ParseError("Expected </CoStatus> after text".into())); }
               } else { return Err(IBKRError::ParseError("Expected text for <CoStatus>".into())); }
@@ -423,7 +423,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             current_co_general_info.co_type_code = get_attr_value(&e, b"Code")?;
             if !e.is_empty() {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                current_co_general_info.co_type_desc = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                current_co_general_info.co_type_desc = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                 else { return Err(IBKRError::ParseError("Expected </CoType> after text".into())); }
               } else { return Err(IBKRError::ParseError("Expected text for <CoType>".into())); }
@@ -433,7 +433,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             let tag_name = e.name().as_ref().to_vec(); // Clone name before reading text
             if !e.is_empty() {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                let date_val = parse_optional_date(Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned()));
+                let date_val = parse_optional_date(Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned()));
                 if tag_name == b"LatestAvailableAnnual" { current_co_general_info.latest_available_annual = date_val; }
                 else { current_co_general_info.latest_available_interim = date_val; }
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
@@ -445,7 +445,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             current_co_general_info.employees_last_updated = parse_optional_date(get_attr_value(&e, b"LastUpdated")?);
             if !e.is_empty() {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                current_co_general_info.employees = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
+                current_co_general_info.employees = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                 else { return Err(IBKRError::ParseError("Expected </Employees> after text".into())); }
               } else { return Err(IBKRError::ParseError("Expected text for <Employees>".into())); }
@@ -456,7 +456,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             current_co_general_info.total_float = parse_optional_f64(get_attr_value(&e, b"TotalFloat")?);
             if !e.is_empty() {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                current_co_general_info.shares_out = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
+                current_co_general_info.shares_out = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                 else { return Err(IBKRError::ParseError("Expected </SharesOut> after text".into())); }
               } else { return Err(IBKRError::ParseError("Expected text for <SharesOut>".into())); }
@@ -466,7 +466,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             current_co_general_info.reporting_currency_code = get_attr_value(&e, b"Code")?;
             if !e.is_empty() {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                current_co_general_info.reporting_currency_name = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                current_co_general_info.reporting_currency_name = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                 else { return Err(IBKRError::ParseError("Expected </ReportingCurrency> after text".into())); }
               } else { return Err(IBKRError::ParseError("Expected text for <ReportingCurrency>".into())); }
@@ -476,7 +476,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             current_co_general_info.most_recent_exchange_rate_date = parse_optional_date(get_attr_value(&e, b"Date")?);
             if !e.is_empty() {
               if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                current_co_general_info.most_recent_exchange_rate = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
+                current_co_general_info.most_recent_exchange_rate = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.parse().ok();
                 if let Ok(Event::End(_)) = reader.read_event_into(&mut buf) { /* consume end */ }
                 else { return Err(IBKRError::ParseError("Expected </MostRecentExchange> after text".into())); }
               } else { return Err(IBKRError::ParseError("Expected text for <MostRecentExchange>".into())); }
@@ -490,7 +490,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             if !is_empty_outer_tag {
               match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                 Event::Text(text_e) => {
-                  let value = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned();
+                  let value = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned();
                   if let Some(line) = line_opt {
                     match line.as_str() {
                       "1" => current_contact_info.address_line1 = Some(value),
@@ -528,7 +528,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             if !is_empty_outer_tag {
               match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                 Event::Text(text_e) => {
-                  let value_str = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned();
+                  let value_str = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned();
                   match tag_name.as_slice() {
                     b"city" => current_contact_info.city = Some(value_str),
                     b"state-region" => current_contact_info.state_region = Some(value_str),
@@ -564,7 +564,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             if !is_empty_outer_tag {
               match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                 Event::Text(text_e) => {
-                  current_contact_info.country_name = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                  current_contact_info.country_name = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                   match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                     Event::End(end_e) if end_e.name().as_ref() == b"country" => { /* ok */ }
                     other => return Err(IBKRError::ParseError(format!("Expected </country> after text, got {:?}", other))),
@@ -587,7 +587,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
                                                                                   let ph_tag_name = ph_e.name().as_ref().to_vec();
                                                                                   if !ph_e.is_empty() {
                                                                                     if let Ok(Event::Text(text_e)) = reader.read_event_into(&mut buf) {
-                                                                                      let value = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                                                                                      let value = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                                                                                       match ph_tag_name.as_slice() {
                                                                                         b"countryPhoneCode" => current_contact_info.main_phone_country_code = value,
                                                                                         b"city-areacode" => current_contact_info.main_phone_area_code = value,
@@ -618,7 +618,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             if !is_empty_outer_tag {
               match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                 Event::Text(text_e) => {
-                  current_web_links.home_page = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                  current_web_links.home_page = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                   match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                     Event::End(end_e) if end_e.name().as_ref() == b"webSite" => { /* ok */ }
                     other => return Err(IBKRError::ParseError(format!("Expected </webSite> after text, got {:?}", other))),
@@ -636,7 +636,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             if !is_empty_outer_tag {
               match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                 Event::Text(text_e) => {
-                  current_web_links.email = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                  current_web_links.email = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                   match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                     Event::End(end_e) if end_e.name().as_ref() == b"eMail" => { /* ok */ }
                     other => return Err(IBKRError::ParseError(format!("Expected </eMail> after text, got {:?}", other))),
@@ -665,7 +665,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
               match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                 Event::Text(text_e) => {
                   if let Some(ind) = current_industry.as_mut() {
-                    ind.description = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                    ind.description = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                   }
                   match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                     Event::End(end_e) if end_e.name().as_ref() == b"Industry" => { /* ok */ }
@@ -686,7 +686,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
             if !is_empty_outer_tag {
               match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                 Event::Text(text_e) => {
-                  current_peer_info.index_constituents.push(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                  current_peer_info.index_constituents.push(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                   match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                     Event::End(end_e) if end_e.name().as_ref() == b"Indexconstituet" => { /* ok */ }
                     other => return Err(IBKRError::ParseError(format!("Expected </Indexconstituet> after text, got {:?}", other))),
@@ -708,7 +708,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
               if !is_empty_outer_tag {
                 match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                   Event::Text(text_e) => {
-                    let value_str = text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned();
+                    let value_str = text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned();
                     match tag_name.as_slice() {
                       b"firstName" => officer.first_name = Some(value_str),
                       b"mI" => officer.middle_initial = Some(value_str),
@@ -750,7 +750,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
               if !is_empty_outer_tag {
                 match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                   Event::Text(text_e) => {
-                    officer.title_full = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                    officer.title_full = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                     match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                       Event::End(end_e) if end_e.name().as_ref() == b"title" => { /* ok */ }
                       other => return Err(IBKRError::ParseError(format!("Expected </title> after text, got {:?}", other))),
@@ -772,7 +772,7 @@ fn parse_report_snapshot(xml_data: &str) -> Result<ReportSnapshot, IBKRError> {
               if !is_empty_outer_tag {
                 match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                   Event::Text(text_e) => {
-                    item.value = Some(text_e.unescape().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
+                    item.value = Some(text_e.decode().map_err(|e| IBKRError::ParseError(e.to_string()))?.into_owned());
                     match reader.read_event_into(&mut buf).map_err(|e| IBKRError::ParseError(e.to_string()))? {
                       Event::End(end_e) if end_e.name().as_ref() == b"Value" => { /* ok */ }
                       other => return Err(IBKRError::ParseError(format!("Expected </Value> after text, got {:?}", other))),
