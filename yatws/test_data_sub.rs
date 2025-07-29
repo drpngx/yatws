@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, anyhow};
 use log::{debug, error, info, warn};
 use std::time::Duration;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use yatws::{
   IBKRError,
   IBKRClient,
@@ -175,7 +175,9 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
   info!("--- Testing Subscribe number of ticks ---");
   let contract = Contract::stock("AAPL");
 
-  let num_historical = 5;
+  let num_historical = 10;
+  let min_historical = 8;
+  let now = Utc::now();
   let sub_l1 = client
     .data_market()
     .subscribe_tick_by_tick(&contract, yatws::data::TickByTickRequestType::BidAsk)
@@ -185,25 +187,34 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
     .expect("Failed to subscribe to l1 data");
 
   let mut num_received = 0;
+  let mut num_historical_ticks = 0;
   for tick in sub_l1.events() {
     match tick {
       TickByTickEvent::BidAsk {
         time,
         bid_price,
         ask_price,
-        bid_size,
-        ask_size,
         ..
       } => {
-        log::info!("[{num_received}] Received L1 tick at {time}: {bid_price}:{ask_price}");
+        let tick_time = Utc.timestamp_opt(time, 0).single().unwrap();
+        log::info!("[{num_received}] Received L1 tick at {tick_time}: {bid_price}:{ask_price}");
+        if tick_time < now {
+          num_historical_ticks += 1;
+        }
         num_received += 1;
-        if num_received > num_historical + 3 {
+        if num_received >= num_historical + 3 {
           break;
         }
       }
       TickByTickEvent::Error(e) => return Err(anyhow!(e.to_string())),
       _ => log::info!("Other tick received!"),
     }
+  }
+
+  if num_historical_ticks < min_historical {
+    return Err(anyhow!(
+      "Expected at least {min_historical} historical ticks, but got {num_historical_ticks}"
+    ));
   }
 
   Ok(())
