@@ -24,7 +24,7 @@ pub(super) fn subscribe_market_data_impl(client: &IBKRClient, is_live: bool) -> 
   let contract = Contract::stock("GOOG");
 
   info!("Building TickDataSubscription for {}...", contract.symbol);
-  let subscription = data_mgr.subscribe_market_data(&contract)
+  let mut subscription = data_mgr.subscribe_market_data(&contract)
     .with_snapshot(false) // Streaming
     .with_market_data_type(MarketDataType::Delayed)
     .submit()
@@ -206,8 +206,24 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
           break;
         }
       }
+      TickByTickEvent::HistoricalTickBidAsk {
+        time,
+        price_bid,
+        price_ask,
+        ..
+      } => {
+        let tick_time = Utc.timestamp_opt(time, 0).single().unwrap();
+        log::info!("[{num_received}] Received Historical L1 tick at {tick_time}: {price_bid}:{price_ask}");
+        if tick_time < now {
+          num_historical_ticks += 1;
+        }
+        num_received += 1;
+        if num_received >= num_historical + 3 {
+          break;
+        }
+      }
       TickByTickEvent::Error(e) => return Err(anyhow!(e.to_string())),
-      _ => log::info!("Other tick received!"),
+      _ => log::info!("Other tick received!: {:?}", tick),
     }
   }
 
@@ -340,7 +356,7 @@ pub(super) fn subscribe_real_time_bars_impl(client: &IBKRClient, is_live: bool) 
   let what_to_show = WhatToShow::Trades;
 
   info!("Building RealTimeBarSubscription for {}...", contract.symbol);
-  let subscription = data_mgr.subscribe_real_time_bars(&contract, what_to_show)
+  let mut subscription = data_mgr.subscribe_real_time_bars(&contract, what_to_show)
     .with_use_rth(true)
     .submit()
     .context("Failed to submit RealTimeBarSubscription")?;
@@ -397,7 +413,7 @@ pub(super) fn subscribe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) ->
   let tick_type = TickByTickRequestType::BidAsk;
 
   info!("Building TickByTickSubscription for {}...", contract.symbol);
-  let subscription = data_mgr.subscribe_tick_by_tick(&contract, tick_type)
+  let mut subscription = data_mgr.subscribe_tick_by_tick(&contract, tick_type)
     .with_number_of_ticks(0) // Streaming
     .with_market_data_type(MarketDataType::Delayed)
     .submit()
@@ -466,7 +482,7 @@ pub(super) fn subscribe_market_depth_impl(client: &IBKRClient, is_live: bool) ->
   let num_rows = 5;
 
   info!("Building MarketDepthSubscription for {}...", contract.symbol);
-  let subscription = data_mgr.subscribe_market_depth(&contract, num_rows)
+  let mut subscription = data_mgr.subscribe_market_depth(&contract, num_rows)
     .with_smart_depth(false)
     .submit()
     .context("Failed to submit MarketDepthSubscription")?;
@@ -525,12 +541,12 @@ pub(super) fn multi_subscription_mixed_impl(client: &IBKRClient, is_live: bool) 
 
   // Create two market data subscriptions for different symbols
   info!("Creating market data subscriptions for AAPL and MSFT...");
-  let aapl_sub = data_mgr.subscribe_market_data(&Contract::stock("AAPL"))
+  let mut aapl_sub = data_mgr.subscribe_market_data(&Contract::stock("AAPL"))
     .with_market_data_type(MarketDataType::Delayed)
     .submit()
     .context("Failed to submit AAPL market data subscription")?;
 
-  let msft_sub = data_mgr.subscribe_market_data(&Contract::stock("MSFT"))
+  let mut msft_sub = data_mgr.subscribe_market_data(&Contract::stock("MSFT"))
     .with_market_data_type(MarketDataType::Delayed)
     .submit()
     .context("Failed to submit MSFT market data subscription")?;

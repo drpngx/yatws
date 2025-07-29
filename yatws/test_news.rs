@@ -114,7 +114,7 @@ pub(super) fn subscribe_news_bulletins_impl(client: &IBKRClient, is_live: bool) 
 
   info!("Building NewsSubscription (all_msgs: true)...");
   // Request all messages, hoping to see some historical ones if available, plus any new ones.
-  let subscription = news_mgr.subscribe_news_bulletins_stream(true)
+  let mut subscription = news_mgr.subscribe_news_bulletins_stream(true)
     .submit()
     .context("Failed to submit NewsSubscription")?;
 
@@ -188,7 +188,7 @@ pub(super) fn subscribe_historical_news_impl(client: &IBKRClient, is_live: bool)
   info!("Building HistoricalNewsSubscription for AAPL (ConID: {}), Providers: {}, MaxResults: {}...",
         con_id, provider_code, total_results);
 
-  let subscription = news_mgr.subscribe_historical_news_stream(con_id, provider_code, total_results)
+  let mut subscription = news_mgr.subscribe_historical_news_stream(con_id, provider_code, total_results)
     .with_start_date_time(Utc::now() - ChronoDuration::days(7)) // Last 7 days
     .with_end_date_time(Utc::now())
     .submit()

@@ -14,8 +14,8 @@ use crate::data_market_manager::DataMarketManager;
 use crate::data_market_manager::DataMarketManagerTrait as DataMarketManager; // For testing/mocking
 
 use crate::data_observer::{
-  HistoricalDataObserver, MarketDataObserver, MarketDepthObserver, ObserverId,
-  RealTimeBarsObserver, TickByTickObserver, // Removed HistoricalTicksObserver as it's not used here
+  HistoricalDataObserver, HistoricalTicksObserver, MarketDataObserver, MarketDepthObserver, ObserverId,
+  RealTimeBarsObserver, TickByTickObserver,
 };
 
 // NewsManager is only used as a generic parameter M in SubscriptionState,
@@ -47,7 +47,7 @@ pub trait MarketDataSubscription: Send + Sync + 'static {
   fn is_completed(&self) -> bool;
   fn has_error(&self) -> bool;
   fn get_error(&self) -> Option<IBKRError>;
-  fn cancel(&self) -> Result<(), IBKRError>;
+  fn cancel(&mut self) -> Result<(), IBKRError>;
   fn events(&self) -> Self::Iterator;
 }
 
@@ -291,7 +291,7 @@ impl MarketDataSubscription for TickDataSubscription {
   fn is_completed(&self) -> bool { self.state.completed.load(Ordering::SeqCst) }
   fn has_error(&self) -> bool { self.state.error.lock().is_some() }
   fn get_error(&self) -> Option<IBKRError> { self.state.error.lock().clone() }
-  fn cancel(&self) -> Result<(), IBKRError> {
+  fn cancel(&mut self) -> Result<(), IBKRError> {
     if !self.state.active.swap(false, Ordering::SeqCst) { return Ok(()); } // Already inactive
     self.state.completed.store(true, Ordering::SeqCst); // Mark as completed due to cancel
     self.state.condvar.notify_all(); // Wake up iterators
@@ -367,7 +367,7 @@ impl MarketDataSubscription for RealTimeBarSubscription {
   fn is_completed(&self) -> bool { self.state.completed.load(Ordering::SeqCst) } // Streaming, completed on error/cancel
   fn has_error(&self) -> bool { self.state.error.lock().is_some() }
   fn get_error(&self) -> Option<IBKRError> { self.state.error.lock().clone() }
-  fn cancel(&self) -> Result<(), IBKRError> {
+  fn cancel(&mut self) -> Result<(), IBKRError> {
     if !self.state.active.swap(false, Ordering::SeqCst) { return Ok(()); }
     self.state.completed.store(true, Ordering::SeqCst); self.state.condvar.notify_all();
     if let Some(manager) = self.state.manager_weak.upgrade() {
@@ -402,9 +402,18 @@ impl RealTimeBarsObserver for RealTimeBarInternalObserver {
 #[derive(Debug, Clone)]
 pub struct TickByTickParams { pub tick_type: TickByTickRequestType, pub number_of_ticks: i32, pub ignore_size: bool, pub market_data_type: Option<MarketDataType> }
 #[derive(Debug, Clone)]
-pub enum TickByTickEvent { Last { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, AllLast { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String }, BidAsk { time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk }, MidPoint { time: i64, mid_point: f64 }, Error(IBKRError), }
+pub enum TickByTickEvent {
+  Last { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String },
+  AllLast { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String },
+  BidAsk { time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk },
+  MidPoint { time: i64, mid_point: f64 },
+  HistoricalTickMidPoint { time: i64, price: f64, size: f64 },
+  HistoricalTickBidAsk { time: i64, tick_attrib_bid_ask: TickAttribBidAsk, price_bid: f64, price_ask: f64, size_bid: f64, size_ask: f64 },
+  HistoricalTickLast { time: i64, tick_attrib_last: TickAttribLast, price: f64, size: f64, exchange: String, special_conditions: String },
+  Error(IBKRError),
+}
 #[derive(Debug)]
-pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>> }
+pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>>, params: TickByTickParams, live_req_id: i32, hist_req_id: Option<i32>, live_observer_id: Option<ObserverId>, hist_observer_id: Option<ObserverId>, }
 pub struct TickByTickSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: TickByTickParams }
 impl TickByTickSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, tick_type: TickByTickRequestType) -> Self { Self { manager_weak, contract, params: TickByTickParams { tick_type, number_of_ticks: 0, ignore_size: false, market_data_type: None } } }
@@ -413,33 +422,75 @@ impl TickByTickSubscriptionBuilder {
   pub fn with_market_data_type(mut self, mdt: MarketDataType) -> Self { self.params.market_data_type = Some(mdt); self }
   pub fn submit(self) -> Result<TickByTickSubscription, IBKRError> {
     let manager = self.manager_weak.upgrade().ok_or(IBKRError::NotConnected)?;
-    let req_id = manager.next_request_id();
-    let state = Arc::new(SubscriptionState::<TickByTickEvent, DataMarketManager>::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
-    let observer = TickByTickInternalObserver { state: Arc::clone(&state) };
-    let observer_id = manager.observe_tick_by_tick(observer);
-    state.set_observer_id(observer_id);
+
+    let live_req_id = manager.next_request_id();
+    let hist_req_id = if self.params.number_of_ticks > 0 { Some(manager.next_request_id()) } else { None };
+
+    // The state will primarily track the live_req_id, as that's the continuous stream
+    let state = Arc::new(SubscriptionState::<TickByTickEvent, DataMarketManager>::new(live_req_id, self.contract.clone(), Arc::downgrade(&manager)));
+    let observer = TickByTickInternalObserver { state: Arc::clone(&state), hist_req_id };
+
+    let mut live_observer_id = None;
+    let mut hist_observer_id = None;
+
+    if let Some(h_req_id) = hist_req_id {
+      hist_observer_id = Some(manager.observe_historical_ticks(observer.clone()));
+      // Request historical ticks first
+      let what_to_show = match self.params.tick_type {
+        TickByTickRequestType::Last | TickByTickRequestType::AllLast => WhatToShow::Trades,
+        TickByTickRequestType::BidAsk => WhatToShow::BidAsk,
+        TickByTickRequestType::MidPoint => WhatToShow::Midpoint,
+      };
+      manager.internal_request_historical_ticks(
+        h_req_id,
+        &self.contract,
+        None, // start_date_time
+        Some(Utc::now()), // end_date_time
+        self.params.number_of_ticks,
+        what_to_show,
+        false, // use_rth (assuming false for historical ticks unless specified)
+        self.params.ignore_size,
+        &[], // misc_options
+      )?;
+    }
+
+    // Always register for live tick-by-tick data, even if historical was requested
+    live_observer_id = Some(manager.observe_tick_by_tick(observer));
+    state.set_observer_id(live_observer_id.unwrap()); // Set the primary observer ID for the state
+
     let mdt_to_set = self.params.market_data_type.unwrap_or(MarketDataType::RealTime);
     // Attempt to set MDT, log warning on failure but proceed.
     if manager.set_market_data_type_if_needed(mdt_to_set).is_err() {
-      warn!("Failed to set market data type to {:?} for req_id {}, proceeding with request.", mdt_to_set, req_id);
+      warn!("Failed to set market data type to {:?} for req_id {}, proceeding with request.", mdt_to_set, live_req_id);
     }
-    manager.internal_request_tick_by_tick_data(req_id, &self.contract, self.params.tick_type, self.params.number_of_ticks, self.params.ignore_size)?;
-    Ok(TickByTickSubscription { state })
+
+    // Request live tick-by-tick data
+    manager.internal_request_tick_by_tick_data(live_req_id, &self.contract, self.params.tick_type, 0, self.params.ignore_size)?;
+
+    Ok(TickByTickSubscription { state, params: self.params, live_req_id, hist_req_id, live_observer_id, hist_observer_id })
   }
 }
 impl MarketDataSubscription for TickByTickSubscription {
   type Event = TickByTickEvent; type Iterator = TickByTickIterator;
-  fn request_id(&self) -> i32 { self.state.req_id }
+  fn request_id(&self) -> i32 { self.live_req_id }
   fn contract(&self) -> &Contract { &self.state.contract }
   fn is_completed(&self) -> bool { self.state.completed.load(Ordering::SeqCst) }
   fn has_error(&self) -> bool { self.state.error.lock().is_some() }
   fn get_error(&self) -> Option<IBKRError> { self.state.error.lock().clone() }
-  fn cancel(&self) -> Result<(), IBKRError> {
+  fn cancel(&mut self) -> Result<(), IBKRError> {
     if !self.state.active.swap(false, Ordering::SeqCst) { return Ok(()); }
     self.state.completed.store(true, Ordering::SeqCst); self.state.condvar.notify_all();
     if let Some(manager) = self.state.manager_weak.upgrade() {
-      if let Some(observer_id) = self.state.observer_id.lock().take() { manager.remove_tick_by_tick_observer(observer_id); }
-      manager.cancel_tick_by_tick_data(self.state.req_id)?;
+      if let Some(observer_id) = self.live_observer_id.take() {
+        manager.remove_tick_by_tick_observer(observer_id);
+        manager.cancel_tick_by_tick_data(self.live_req_id)?;
+      }
+      if let Some(h_req_id) = self.hist_req_id.take() {
+        if let Some(observer_id) = self.hist_observer_id.take() {
+          manager.remove_historical_ticks_observer(observer_id);
+        }
+        manager.cancel_historical_ticks(h_req_id)?;
+      }
     } else { return Err(IBKRError::InternalError("Manager unavailable".to_string())); }
     Ok(())
   }
@@ -459,12 +510,68 @@ impl MarketDataIterator<TickByTickEvent> for TickByTickIterator {
   fn try_next(&mut self, timeout: Duration) -> Option<TickByTickEvent> { self.inner.try_next(timeout) }
   fn collect_available(&mut self) -> Vec<TickByTickEvent> { self.inner.collect_available() }
 }
-struct TickByTickInternalObserver { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>> }
+struct TickByTickInternalObserver { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>>, hist_req_id: Option<i32> }
+impl Clone for TickByTickInternalObserver {
+  fn clone(&self) -> Self {
+    Self { state: Arc::clone(&self.state), hist_req_id: self.hist_req_id }
+  }
+}
 impl TickByTickObserver for TickByTickInternalObserver {
   fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type_val: i32, time: i64, price: f64, size: f64, tick_attrib_last: &TickAttribLast, exchange: &str, special_conditions: &str) { if req_id != self.state.req_id { return; } let event = if tick_type_val == 1 { TickByTickEvent::Last { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } } else { TickByTickEvent::AllLast { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } }; self.state.push_event(event); }
   fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: &TickAttribBidAsk) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask: tick_attrib_bid_ask.clone() }); }
   fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::MidPoint { time, mid_point }); }
-  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(TickByTickEvent::Error(e.clone())); self.state.set_error(e); }
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id && self.hist_req_id != Some(req_id) { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(TickByTickEvent::Error(e.clone())); self.state.set_error(e); }
+}
+
+impl HistoricalTicksObserver for TickByTickInternalObserver {
+  fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool) {
+    if self.hist_req_id != Some(req_id) { return; }
+    for &(time, price, size) in ticks {
+      self.state.push_event(TickByTickEvent::HistoricalTickMidPoint {
+        time,
+        price,
+        size,
+      });
+    }
+    // Do NOT mark completed here, as live stream might follow
+  }
+
+  fn on_historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
+    if self.hist_req_id != Some(req_id) { return; }
+    for &(time, ref tick_attrib_bid_ask, price_bid, price_ask, size_bid, size_ask) in ticks {
+      self.state.push_event(TickByTickEvent::HistoricalTickBidAsk {
+        time,
+        tick_attrib_bid_ask: tick_attrib_bid_ask.clone(),
+        price_bid,
+        price_ask,
+        size_bid,
+        size_ask,
+      });
+    }
+    // Do NOT mark completed here, as live stream might follow
+  }
+
+  fn on_historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
+    if self.hist_req_id != Some(req_id) { return; }
+    for (time, tick_attrib_last, price, size, exchange, special_conditions) in ticks {
+      self.state.push_event(TickByTickEvent::HistoricalTickLast {
+        time: *time,
+        tick_attrib_last: tick_attrib_last.clone(),
+        price: *price,
+        size: *size,
+        exchange: exchange.clone(),
+        special_conditions: special_conditions.clone(),
+      });
+    }
+    // Do NOT mark completed here, as live stream might follow
+  }
+
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+    if req_id != self.state.req_id && self.hist_req_id != Some(req_id) { return; }
+    let e = IBKRError::ApiError(error_code, error_message.to_string());
+    self.state.push_event(TickByTickEvent::Error(e.clone()));
+    self.state.set_error(e);
+  }
 }
 
 // --- MarketDepthSubscription ---
@@ -497,7 +604,7 @@ impl MarketDataSubscription for MarketDepthSubscription {
   fn is_completed(&self) -> bool { self.state.completed.load(Ordering::SeqCst) }
   fn has_error(&self) -> bool { self.state.error.lock().is_some() }
   fn get_error(&self) -> Option<IBKRError> { self.state.error.lock().clone() }
-  fn cancel(&self) -> Result<(), IBKRError> {
+  fn cancel(&mut self) -> Result<(), IBKRError> {
     if !self.state.active.swap(false, Ordering::SeqCst) { return Ok(()); }
     self.state.completed.store(true, Ordering::SeqCst); self.state.condvar.notify_all();
     if let Some(manager) = self.state.manager_weak.upgrade() {
@@ -567,7 +674,7 @@ impl MarketDataSubscription for HistoricalDataSubscription {
   fn is_completed(&self) -> bool { self.state.completed.load(Ordering::SeqCst) }
   fn has_error(&self) -> bool { self.state.error.lock().is_some() }
   fn get_error(&self) -> Option<IBKRError> { self.state.error.lock().clone() }
-  fn cancel(&self) -> Result<(), IBKRError> {
+  fn cancel(&mut self) -> Result<(), IBKRError> {
     if !self.state.active.swap(false, Ordering::SeqCst) { return Ok(()); }
     self.state.completed.store(true, Ordering::SeqCst); self.state.condvar.notify_all();
     if let Some(manager) = self.state.manager_weak.upgrade() {

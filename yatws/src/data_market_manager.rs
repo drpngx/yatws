@@ -2670,7 +2670,7 @@ impl DataMarketManager {
     Ok(req_id)
   }
 
-  fn internal_request_historical_ticks(
+  pub fn internal_request_historical_ticks(
     &self, req_id: i32, contract: &Contract, start_date_time: Option<chrono::DateTime<chrono::Utc>>,
     end_date_time: Option<chrono::DateTime<chrono::Utc>>, number_of_ticks: i32, what_to_show: WhatToShow,
     use_rth: bool, ignore_size: bool, misc_options: &[(String, String)]

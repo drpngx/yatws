@@ -164,7 +164,7 @@ impl MarketDataSubscription for NewsSubscription {
     self.state.error.lock().clone()
   }
 
-  fn cancel(&self) -> Result<(), IBKRError> {
+  fn cancel(&mut self) -> Result<(), IBKRError> {
     if !self.state.active.swap(false, std::sync::atomic::Ordering::SeqCst) {
       debug!("NewsSubscription (ObsID {}) already inactive.", self.request_id());
       return Ok(()); // Already inactive
@@ -388,7 +388,7 @@ impl MarketDataSubscription for HistoricalNewsSubscription {
     self.state.error.lock().clone()
   }
 
-  fn cancel(&self) -> Result<(), IBKRError> {
+  fn cancel(&mut self) -> Result<(), IBKRError> {
     if !self.state.active.swap(false, std::sync::atomic::Ordering::SeqCst) {
       debug!("HistoricalNewsSubscription (ReqID {}) already inactive.", self.request_id());
       return Ok(());
