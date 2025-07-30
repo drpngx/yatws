@@ -403,13 +403,13 @@ impl RealTimeBarsObserver for RealTimeBarInternalObserver {
 pub struct TickByTickParams { pub tick_type: TickByTickRequestType, pub number_of_ticks: i32, pub ignore_size: bool, pub market_data_type: Option<MarketDataType> }
 #[derive(Debug, Clone)]
 pub enum TickByTickEvent {
-  Last { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String },
-  AllLast { time: i64, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String },
-  BidAsk { time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk },
-  MidPoint { time: i64, mid_point: f64 },
-  HistoricalTickMidPoint { time: i64, price: f64, size: f64 },
-  HistoricalTickBidAsk { time: i64, tick_attrib_bid_ask: TickAttribBidAsk, price_bid: f64, price_ask: f64, size_bid: f64, size_ask: f64 },
-  HistoricalTickLast { time: i64, tick_attrib_last: TickAttribLast, price: f64, size: f64, exchange: String, special_conditions: String },
+  Last { time: DateTime<Utc>, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String },
+  AllLast { time: DateTime<Utc>, price: f64, size: f64, tick_attrib_last: TickAttribLast, exchange: String, special_conditions: String },
+  BidAsk { time: DateTime<Utc>, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: TickAttribBidAsk },
+  MidPoint { time: DateTime<Utc>, mid_point: f64 },
+  HistoricalTickMidPoint { time: DateTime<Utc>, price: f64, size: f64 },
+  HistoricalTickBidAsk { time: DateTime<Utc>, tick_attrib_bid_ask: TickAttribBidAsk, price_bid: f64, price_ask: f64, size_bid: f64, size_ask: f64 },
+  HistoricalTickLast { time: DateTime<Utc>, tick_attrib_last: TickAttribLast, price: f64, size: f64, exchange: String, special_conditions: String },
   Error(IBKRError),
 }
 #[derive(Debug)]
@@ -517,14 +517,14 @@ impl Clone for TickByTickInternalObserver {
   }
 }
 impl TickByTickObserver for TickByTickInternalObserver {
-  fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type_val: i32, time: i64, price: f64, size: f64, tick_attrib_last: &TickAttribLast, exchange: &str, special_conditions: &str) { if req_id != self.state.req_id { return; } let event = if tick_type_val == 1 { TickByTickEvent::Last { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } } else { TickByTickEvent::AllLast { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } }; self.state.push_event(event); }
-  fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: &TickAttribBidAsk) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask: tick_attrib_bid_ask.clone() }); }
-  fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::MidPoint { time, mid_point }); }
+  fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type_val: i32, time: DateTime<Utc>, price: f64, size: f64, tick_attrib_last: &TickAttribLast, exchange: &str, special_conditions: &str) { if req_id != self.state.req_id { return; } let event = if tick_type_val == 1 { TickByTickEvent::Last { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } } else { TickByTickEvent::AllLast { time, price, size, tick_attrib_last: tick_attrib_last.clone(), exchange: exchange.to_string(), special_conditions: special_conditions.to_string() } }; self.state.push_event(event); }
+  fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: DateTime<Utc>, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: &TickAttribBidAsk) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::BidAsk { time, bid_price, ask_price, bid_size, ask_size, tick_attrib_bid_ask: tick_attrib_bid_ask.clone() }); }
+  fn on_tick_by_tick_mid_point(&self, req_id: i32, time: DateTime<Utc>, mid_point: f64) { if req_id != self.state.req_id { return; } self.state.push_event(TickByTickEvent::MidPoint { time, mid_point }); }
   fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) { if req_id != self.state.req_id && self.hist_req_id != Some(req_id) { return; } let e = IBKRError::ApiError(error_code, error_message.to_string()); self.state.push_event(TickByTickEvent::Error(e.clone())); self.state.set_error(e); }
 }
 
 impl HistoricalTicksObserver for TickByTickInternalObserver {
-  fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool) {
+  fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(DateTime<Utc>, f64, f64)], done: bool) {
     if self.hist_req_id != Some(req_id) { return; }
     for &(time, price, size) in ticks {
       self.state.push_event(TickByTickEvent::HistoricalTickMidPoint {
@@ -536,7 +536,7 @@ impl HistoricalTicksObserver for TickByTickInternalObserver {
     // Do NOT mark completed here, as live stream might follow
   }
 
-  fn on_historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
+  fn on_historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(DateTime<Utc>, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
     if self.hist_req_id != Some(req_id) { return; }
     for &(time, ref tick_attrib_bid_ask, price_bid, price_ask, size_bid, size_ask) in ticks {
       self.state.push_event(TickByTickEvent::HistoricalTickBidAsk {
@@ -551,7 +551,7 @@ impl HistoricalTicksObserver for TickByTickInternalObserver {
     // Do NOT mark completed here, as live stream might follow
   }
 
-  fn on_historical_ticks_last(&self, req_id: i32, ticks: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
+  fn on_historical_ticks_last(&self, req_id: i32, ticks: &[(DateTime<Utc>, TickAttribLast, f64, f64, String, String)], done: bool) {
     if self.hist_req_id != Some(req_id) { return; }
     for (time, tick_attrib_last, price, size, exchange, special_conditions) in ticks {
       self.state.push_event(TickByTickEvent::HistoricalTickLast {

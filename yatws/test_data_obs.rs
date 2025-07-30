@@ -181,7 +181,7 @@ pub(super) fn observe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) -> R
   }
 
   impl TickByTickObserver for TestTickByTickObserver {
-    fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: i64, price: f64, size: f64,
+    fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: DateTime<Utc>, price: f64, size: f64,
                                 _tick_attrib_last: &yatws::data::TickAttribLast,
                                 _exchange: &str, _special_conditions: &str) {
       info!("[{}] Tick Last: ReqID={}, Type={}, Time={}, Price={}, Size={}",
@@ -193,7 +193,7 @@ pub(super) fn observe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) -> R
       }
     }
 
-    fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: i64, bid_price: f64, ask_price: f64,
+    fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: DateTime<Utc>, bid_price: f64, ask_price: f64,
                                bid_size: f64, ask_size: f64,
                                _tick_attrib_bid_ask: &yatws::data::TickAttribBidAsk) {
       info!("[{}] Tick BidAsk: ReqID={}, Time={}, Bid={}x{}, Ask={}x{}",
@@ -205,7 +205,7 @@ pub(super) fn observe_tick_by_tick_impl(client: &IBKRClient, is_live: bool) -> R
       }
     }
 
-    fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) {
+    fn on_tick_by_tick_mid_point(&self, req_id: i32, time: DateTime<Utc>, mid_point: f64) {
       info!("[{}] Tick MidPoint: ReqID={}, Time={}, MidPoint={}",
             self.name, req_id, time, mid_point);
       // Increment tick count
@@ -492,7 +492,7 @@ pub(super) fn observe_historical_ticks_impl(client: &IBKRClient, _is_live: bool)
   }
 
   impl HistoricalTicksObserver for TestHistoricalTicksObserver {
-    fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool) {
+    fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(DateTime<Utc>, f64, f64)], done: bool) {
       info!("[{}] Historical Ticks Midpoint: ReqID={}, Count={}, Done={}",
             self.name, req_id, ticks.len(), done);
       {
@@ -506,7 +506,7 @@ pub(super) fn observe_historical_ticks_impl(client: &IBKRClient, _is_live: bool)
     }
 
     fn on_historical_ticks_bid_ask(&self, req_id: i32,
-                                   ticks: &[(i64, yatws::data::TickAttribBidAsk, f64, f64, f64, f64)],
+                                   ticks: &[(DateTime<Utc>, yatws::data::TickAttribBidAsk, f64, f64, f64, f64)],
                                    done: bool) {
       info!("[{}] Historical Ticks BidAsk: ReqID={}, Count={}, Done={}",
             self.name, req_id, ticks.len(), done);
@@ -521,7 +521,7 @@ pub(super) fn observe_historical_ticks_impl(client: &IBKRClient, _is_live: bool)
     }
 
     fn on_historical_ticks_last(&self, req_id: i32,
-                                ticks: &[(i64, yatws::data::TickAttribLast, f64, f64, String, String)],
+                                ticks: &[(DateTime<Utc>, yatws::data::TickAttribLast, f64, f64, String, String)],
                                 done: bool) {
       info!("[{}] Historical Ticks Last: ReqID={}, Count={}, Done={}",
             self.name, req_id, ticks.len(), done);

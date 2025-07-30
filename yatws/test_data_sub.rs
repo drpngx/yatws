@@ -196,13 +196,13 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
         ask_price,
         ..
       } => {
-        let tick_time = Utc.timestamp_opt(time, 0).single().unwrap();
-        log::info!("[{num_received}] Received L1 tick at {tick_time}: {bid_price}:{ask_price}");
-        if tick_time < now {
+        log::info!("[{num_received}] Received L1 tick at {time}: {bid_price}:{ask_price}");
+        if time < now {
+          log::warn!("Real-time tick is in the past.");
           num_historical_ticks += 1;
         }
         num_received += 1;
-        if num_received >= num_historical + 3 {
+        if num_received >= num_historical + 4 {
           break;
         }
       }
@@ -212,9 +212,8 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
         price_ask,
         ..
       } => {
-        let tick_time = Utc.timestamp_opt(time, 0).single().unwrap();
-        log::info!("[{num_received}] Received Historical L1 tick at {tick_time}: {price_bid}:{price_ask}");
-        if tick_time < now {
+        log::info!("[{num_received}] Received Historical L1 tick at {time}: {price_bid}:{price_ask}");
+        if time < now {
           num_historical_ticks += 1;
         }
         num_received += 1;

@@ -44,7 +44,7 @@ pub trait TickByTickObserver: Send + Sync {
     &self,
     req_id: i32,
     tick_type: i32, // 1 for Last, 2 for AllLast
-    time: i64,
+    time: DateTime<Utc>,
     price: f64,
     size: f64,
     tick_attrib_last: &TickAttribLast,
@@ -56,7 +56,7 @@ pub trait TickByTickObserver: Send + Sync {
   fn on_tick_by_tick_bid_ask(
     &self,
     req_id: i32,
-    time: i64,
+    time: DateTime<Utc>,
     bid_price: f64,
     ask_price: f64,
     bid_size: f64,
@@ -65,7 +65,7 @@ pub trait TickByTickObserver: Send + Sync {
   ) {}
 
   /// Called when midpoint tick data is received.
-  fn on_tick_by_tick_mid_point(&self, req_id: i32, time: i64, mid_point: f64) {}
+  fn on_tick_by_tick_mid_point(&self, req_id: i32, time: DateTime<Utc>, mid_point: f64) {}
   /// Called when an error occurs related to this observer's data type.
   fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }
@@ -115,14 +115,14 @@ pub trait HistoricalDataObserver: Send + Sync {
 pub trait HistoricalTicksObserver: Send + Sync {
   /// Called when historical midpoint ticks are received.
   /// `ticks` is a slice of (time, price, size).
-  fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(i64, f64, f64)], done: bool) {}
+  fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(DateTime<Utc>, f64, f64)], done: bool) {}
 
   /// Called when historical bid/ask ticks are received.
   /// `ticks` is a slice of (time, TickAttribBidAsk, price_bid, price_ask, size_bid, size_ask).
   fn on_historical_ticks_bid_ask(
     &self,
     req_id: i32,
-    ticks: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)],
+    ticks: &[(DateTime<Utc>, TickAttribBidAsk, f64, f64, f64, f64)],
     done: bool,
   ) {}
 
@@ -131,7 +131,7 @@ pub trait HistoricalTicksObserver: Send + Sync {
   fn on_historical_ticks_last(
     &self,
     req_id: i32,
-    ticks: &[(i64, TickAttribLast, f64, f64, String, String)],
+    ticks: &[(DateTime<Utc>, TickAttribLast, f64, f64, String, String)],
     done: bool,
   ) {}
   /// Called when an error occurs related to this observer's data type.
