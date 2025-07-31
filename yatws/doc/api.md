@@ -1042,6 +1042,32 @@ Various observer traits for different types of market data updates:
 - `HistoricalDataObserver`: For historical bar data and updates
 - `HistoricalTicksObserver`: For historical tick data
 
+#### `MarketDataObserver`
+```rust
+pub trait MarketDataObserver: Send + Sync {
+  fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib);
+  fn on_tick_size(&self, req_id: i32, tick_type: TickType, size: f64);
+  fn on_tick_string(&self, req_id: i32, tick_type: TickType, value: &str);
+  fn on_tick_generic(&self, req_id: i32, tick_type: TickType, value: f64);
+  fn on_tick_snapshot_end(&self, req_id: i32);
+  fn on_market_data_type(&self, req_id: i32, market_data_type: MarketDataType);
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str);
+}
+```
+
+#### `TickByTickObserver`
+```rust
+pub trait TickByTickObserver: Send + Sync {
+  fn on_tick_by_tick_all_last(&self, req_id: i32, tick_type: i32, time: DateTime<Utc>, price: f64, size: f64, tick_attrib_last: &TickAttribLast, exchange: &str, special_conditions: &str);
+  fn on_tick_by_tick_bid_ask(&self, req_id: i32, time: DateTime<Utc>, bid_price: f64, ask_price: f64, bid_size: f64, ask_size: f64, tick_attrib_bid_ask: &TickAttribBidAsk);
+  fn on_tick_by_tick_mid_point(&self, req_id: i32, time: DateTime<Utc>, mid_point: f64);
+  fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(DateTime<Utc>, f64, f64)], done: bool);
+  fn on_historical_ticks_bid_ask(&self, req_id: i32, ticks: &[(DateTime<Utc>, TickAttribBidAsk, f64, f64, f64, f64)], done: bool);
+  fn on_historical_ticks_last(&self, req_id: i32, ticks: &[(DateTime<Utc>, TickAttribLast, f64, f64, String, String)], done: bool);
+  fn on_error(&self, req_id: i32, error_code: i32, error_message: &str);
+}
+```
+
 ### Observer Registration Methods
 
 - `observe_market_data<T: MarketDataObserver + Send + Sync + 'static>(&self, observer: T) -> ObserverId`

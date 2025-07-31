@@ -170,8 +170,8 @@
 //!   name: String,
 //! }
 //! impl MarketDataObserver for TestMarketObserver {
-//!   fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, _attrib: yatws::data::TickAttrib) {
-//!     info!("[{}] TickPrice: ReqID={}, Type={:?}, Price={}", self.name, req_id, tick_type, price);
+//!   fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: yatws::data::TickAttrib) {
+//!     info!("[{}] TickPrice: ReqID={}, Type={:?}, Price={}, Attrib={:?}", self.name, req_id, tick_type, price, attrib);
 //!   }
 //!   ...
 //! }

@@ -202,8 +202,8 @@ struct MyMarketObserver {
 }
 
 impl MarketDataObserver for MyMarketObserver {
-    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, _attrib: TickAttrib) {
-        println!("[{}] TickPrice: ReqID={}, Type={:?}, Price={}", self.name, req_id, tick_type, price);
+    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib) {
+        println!("[{}] TickPrice: ReqID={}, Type={:?}, Price={}, Attrib={:?}", self.name, req_id, tick_type, price, attrib);
         *self.tick_count.lock().unwrap() += 1;
     }
     // Implement other MarketDataObserver methods as needed (on_tick_size, on_error, etc.)
