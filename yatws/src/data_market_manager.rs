@@ -3023,6 +3023,29 @@ impl DataMarketManager {
       fn on_tick_by_tick_mid_point(&self, req_id: i32, time: DateTime<Utc>, mid_point: f64) {
         if req_id == self.req_id { self.inner.on_tick_by_tick_mid_point(req_id, time, mid_point); }
       }
+
+      fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(DateTime<Utc>, f64, f64)], done: bool) {
+        if req_id == self.req_id { self.inner.on_historical_ticks_midpoint(req_id, ticks, done); }
+      }
+
+      fn on_historical_ticks_bid_ask(
+        &self,
+        req_id: i32,
+        ticks: &[(DateTime<Utc>, TickAttribBidAsk, f64, f64, f64, f64)],
+        done: bool,
+      ) {
+        if req_id == self.req_id { self.inner.on_historical_ticks_bid_ask(req_id, ticks, done); }
+      }
+
+      fn on_historical_ticks_last(
+        &self,
+        req_id: i32,
+        ticks: &[(DateTime<Utc>, TickAttribLast, f64, f64, String, String)],
+        done: bool,
+      ) {
+        if req_id == self.req_id { self.inner.on_historical_ticks_last(req_id, ticks, done); }
+      }
+
       fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
         if req_id == self.req_id { self.inner.on_error(req_id, error_code, error_message); }
       }
@@ -3714,29 +3737,46 @@ impl MarketDataHandler for DataMarketManager {
   fn historical_ticks(&self, req_id: i32, ticks_data: &[(i64, f64, f64)], done: bool) {
     debug!("Handler: Historical Ticks (MidPoint): ID={}, Count={}, Done={}", req_id, ticks_data.len(), done);
     let mut subs = self.subscriptions.lock();
-    if let Some(MarketStream::HistoricalTicks(state)) = subs.get_mut(&req_id) {
-      for &(time, price, size) in ticks_data {
-        state.ticks.push(HistoricalTick::MidPoint { time, price, size });
-      }
-      if done {
-        state.completed = true;
-        info!("Historical Ticks (MidPoint) end received for request {}. Notifying waiter.", req_id);
-        self.request_cond.notify_all();
+    if let Some(state) = subs.get_mut(&req_id) {
+      match state {
+        MarketStream::HistoricalTicks(state) => {
+          for &(time, price, size) in ticks_data {
+            state.ticks.push(HistoricalTick::MidPoint { time, price, size });
+          }
+          if done {
+            state.completed = true;
+            info!("Historical Ticks (MidPoint) end received for request {}. Notifying waiter.", req_id);
+            self.request_cond.notify_all();
 
-        let mut obs_ticks_data = Vec::with_capacity(ticks_data.len());
-        for td in ticks_data {
-          let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
-          obs_ticks_data.push((ot, td.1, td.2));
-        }
+            let mut obs_ticks_data = Vec::with_capacity(ticks_data.len());
+            for td in ticks_data {
+              let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
+              obs_ticks_data.push((ot, td.1, td.2));
+            }
 
-        // Notify observers
-        let observers = self.historical_ticks_observers.read();
-        for observer in observers.values() {
-          observer.on_historical_ticks_midpoint(req_id, &obs_ticks_data, done);
+            // Notify observers
+            let observers = self.historical_ticks_observers.read();
+            for observer in observers.values() {
+              observer.on_historical_ticks_midpoint(req_id, &obs_ticks_data, done);
+            }
+          }
+        },
+        MarketStream::TickByTick(state) => {
+          for &(time, mid_point, size) in ticks_data {
+            let ot = Utc.timestamp_opt(time, 0).single().unwrap();
+            let tick = (ot, mid_point, size);
+            let observers = self.tick_by_tick_observers.read();
+            for observer in observers.values() {
+              observer.on_historical_ticks_midpoint(req_id, &[tick], done);
+            }
+          }
+        },
+        _ => {
+          warn!("Received historical_ticks (MidPoint) for non-Tick subscription ID: {}", req_id)
         }
       }
     } else {
-      warn!("Received historical_ticks (MidPoint) for unknown or non-HistoricalTicks subscription ID: {}", req_id);
+      warn!("Received historical_ticks (MidPoint) for unknown subscription ID: {}", req_id);
     }
   }
 
@@ -3744,36 +3784,52 @@ impl MarketDataHandler for DataMarketManager {
   fn historical_ticks_bid_ask(&self, req_id: i32, ticks_data: &[(i64, TickAttribBidAsk, f64, f64, f64, f64)], done: bool) {
     debug!("Handler: Historical Ticks BidAsk: ID={}, Count={}, Done={}", req_id, ticks_data.len(), done);
     let mut subs = self.subscriptions.lock();
-    if let Some(MarketStream::HistoricalTicks(state)) = subs.get_mut(&req_id) {
-      for &(time, ref tick_attrib_bid_ask, price_bid, price_ask, size_bid, size_ask) in ticks_data {
-        state.ticks.push(HistoricalTick::BidAsk {
-          time,
-          tick_attrib_bid_ask: tick_attrib_bid_ask.clone(),
-          price_bid,
-          price_ask,
-          size_bid,
-          size_ask,
-        });
-      }
-      if done {
-        state.completed = true;
-        info!("Historical Ticks (BidAsk) end received for request {}. Notifying waiter.", req_id);
-        self.request_cond.notify_all();
+    if let Some(state) = subs.get_mut(&req_id) {
+      match state {
+        MarketStream::HistoricalTicks(state) => {
+          for &(time, ref tick_attrib_bid_ask, price_bid, price_ask, size_bid, size_ask) in ticks_data {
+            state.ticks.push(HistoricalTick::BidAsk {
+              time,
+              tick_attrib_bid_ask: tick_attrib_bid_ask.clone(),
+              price_bid,
+              price_ask,
+              size_bid,
+              size_ask,
+            });
+          }
+          if done {
+            state.completed = true;
+            info!("Historical Ticks (BidAsk) end received for request {}. Notifying waiter.", req_id);
+            self.request_cond.notify_all();
 
-        let mut obs_ticks_data = Vec::with_capacity(ticks_data.len());
-        for td in ticks_data {
-          let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
-          obs_ticks_data.push((ot, td.1.clone(), td.2, td.3, td.4, td.5));
-        }
+            let mut obs_ticks_data = Vec::with_capacity(ticks_data.len());
+            for td in ticks_data {
+              let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
+              obs_ticks_data.push((ot, td.1.clone(), td.2, td.3, td.4, td.5));
+            }
 
-        // Notify observers
-        let observers = self.historical_ticks_observers.read();
-        for observer in observers.values() {
-          observer.on_historical_ticks_bid_ask(req_id, &obs_ticks_data, done);
-        }
+            // Notify observers
+            let observers = self.historical_ticks_observers.read();
+            for observer in observers.values() {
+              observer.on_historical_ticks_bid_ask(req_id, &obs_ticks_data, done);
+            }
+          }
+        },
+        MarketStream::TickByTick(state) => {
+          for td in ticks_data {
+            let td = td.clone();
+            let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
+            let tick = (ot, td.1, td.2, td.3, td.4, td.5);
+            let observers = self.tick_by_tick_observers.read();
+            for observer in observers.values() {
+              observer.on_historical_ticks_bid_ask(req_id, &[tick.clone()], done);
+            }
+          }
+        },
+        _ => warn!("Received historical_ticks_bid_ask for non-Ticks subscription ID: {}", req_id)
       }
     } else {
-      warn!("Received historical_ticks_bid_ask for unknown or non-HistoricalTicks subscription ID: {}", req_id);
+      warn!("Received historical_ticks_bid_ask for unknown subscription ID: {}", req_id);
     }
   }
 
@@ -3781,36 +3837,52 @@ impl MarketDataHandler for DataMarketManager {
   fn historical_ticks_last(&self, req_id: i32, ticks_data: &[(i64, TickAttribLast, f64, f64, String, String)], done: bool) {
     debug!("Handler: Historical Ticks Last: ID={}, Count={}, Done={}", req_id, ticks_data.len(), done);
     let mut subs = self.subscriptions.lock();
-    if let Some(MarketStream::HistoricalTicks(state)) = subs.get_mut(&req_id) {
-      for &(time, ref tick_attrib_last, price, size, ref exchange, ref special_conditions) in ticks_data {
-        state.ticks.push(HistoricalTick::Trade {
-          time,
-          price,
-          size,
-          tick_attrib_last: tick_attrib_last.clone(),
-          exchange: exchange.clone(),
-          special_conditions: special_conditions.clone(),
-        });
-      }
-      if done {
-        state.completed = true;
-        info!("Historical Ticks (Last) end received for request {}. Notifying waiter.", req_id);
-        self.request_cond.notify_all();
+    if let Some(state) = subs.get_mut(&req_id) {
+      match state {
+        MarketStream::HistoricalTicks(state) => {
+          for &(time, ref tick_attrib_last, price, size, ref exchange, ref special_conditions) in ticks_data {
+            state.ticks.push(HistoricalTick::Trade {
+              time,
+              price,
+              size,
+              tick_attrib_last: tick_attrib_last.clone(),
+              exchange: exchange.clone(),
+              special_conditions: special_conditions.clone(),
+            });
+          }
+          if done {
+            state.completed = true;
+            info!("Historical Ticks (Last) end received for request {}. Notifying waiter.", req_id);
+            self.request_cond.notify_all();
 
-        let mut obs_ticks_data = Vec::with_capacity(ticks_data.len());
-        for td in ticks_data {
-          let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
-          obs_ticks_data.push((ot, td.1.clone(), td.2, td.3, td.4.clone(), td.5.clone()));
-        }
+            let mut obs_ticks_data = Vec::with_capacity(ticks_data.len());
+            for td in ticks_data {
+              let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
+              obs_ticks_data.push((ot, td.1.clone(), td.2, td.3, td.4.clone(), td.5.clone()));
+            }
 
-        // Notify observers
-        let observers = self.historical_ticks_observers.read();
-        for observer in observers.values() {
-          observer.on_historical_ticks_last(req_id, &obs_ticks_data, done);
-        }
+            // Notify observers
+            let observers = self.historical_ticks_observers.read();
+            for observer in observers.values() {
+              observer.on_historical_ticks_last(req_id, &obs_ticks_data, done);
+            }
+          }
+        },
+        MarketStream::TickByTick(state) => {
+          for td in ticks_data {
+            let td = td.clone();
+            let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
+            let tick = (ot, td.1, td.2, td.3, td.4, td.5);
+            let observers = self.tick_by_tick_observers.read();
+            for observer in observers.values() {
+              observer.on_historical_ticks_last(req_id, &[tick.clone()], done);
+            }
+          }
+        },
+        _ => warn!("Received historical_ticks_last for non-Ticks subscription ID: {}", req_id)
       }
     } else {
-      warn!("Received historical_ticks_last for unknown or non-HistoricalTicks subscription ID: {}", req_id);
+      warn!("Received historical_ticks_last for unknown subscription ID: {}", req_id);
     }
   }
 

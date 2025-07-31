@@ -66,6 +66,30 @@ pub trait TickByTickObserver: Send + Sync {
 
   /// Called when midpoint tick data is received.
   fn on_tick_by_tick_mid_point(&self, req_id: i32, time: DateTime<Utc>, mid_point: f64) {}
+
+  // --- The following are called when number_of_ticks > 0.
+  fn on_historical_ticks_midpoint(&self, req_id: i32, ticks: &[(DateTime<Utc>, f64, f64)], done: bool) {}
+
+  /// Called when historical bid/ask ticks are received.
+  /// `ticks` is a slice of (time, TickAttribBidAsk, price_bid, price_ask, size_bid, size_ask).
+  fn on_historical_ticks_bid_ask(
+    &self,
+    req_id: i32,
+    ticks: &[(DateTime<Utc>, TickAttribBidAsk, f64, f64, f64, f64)],
+    done: bool,
+  ) {}
+
+  /// Called when historical last ticks are received.
+  /// `ticks` is a slice of (time, TickAttribLast, price, size, exchange, special_conditions).
+  fn on_historical_ticks_last(
+    &self,
+    req_id: i32,
+    ticks: &[(DateTime<Utc>, TickAttribLast, f64, f64, String, String)],
+    done: bool,
+  ) {}
+
+  // --
+
   /// Called when an error occurs related to this observer's data type.
   fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {}
 }

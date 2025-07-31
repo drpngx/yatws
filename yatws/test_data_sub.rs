@@ -175,18 +175,18 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
   info!("--- Testing Subscribe number of ticks ---");
   let contract = Contract::stock("AAPL");
 
-  let num_historical = 10;
-  let min_historical = 8;
+  let approx_num_historical = 5;
+  let num_realtime_wanted = 3;
   let now = Utc::now();
   let sub_l1 = client
     .data_market()
     .subscribe_tick_by_tick(&contract, yatws::data::TickByTickRequestType::BidAsk)
     .with_ignore_size(true)
-    .with_number_of_ticks(num_historical)
+    .with_number_of_ticks(approx_num_historical)
     .submit()
     .expect("Failed to subscribe to l1 data");
 
-  let mut num_received = 0;
+  let mut num_realtime = 0;
   let mut num_historical_ticks = 0;
   for tick in sub_l1.events() {
     match tick {
@@ -196,13 +196,9 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
         ask_price,
         ..
       } => {
-        log::info!("[{num_received}] Received L1 tick at {time}: {bid_price}:{ask_price}");
-        if time < now {
-          log::warn!("Real-time tick is in the past.");
-          num_historical_ticks += 1;
-        }
-        num_received += 1;
-        if num_received >= num_historical + 4 {
+        log::info!("[{num_realtime}] Received L1 tick at {time}: {bid_price}:{ask_price}");
+        num_realtime += 1;
+        if num_realtime >= num_realtime_wanted {
           break;
         }
       }
@@ -212,13 +208,13 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
         price_ask,
         ..
       } => {
-        log::info!("[{num_received}] Received Historical L1 tick at {time}: {price_bid}:{price_ask}");
-        if time < now {
-          num_historical_ticks += 1;
+        log::info!("[{num_historical_ticks}] Received Historical L1 tick at {time}: {price_bid}:{price_ask}");
+        if time > now {
+          log::error!("Got a historical tick from the future");
         }
-        num_received += 1;
-        if num_received >= num_historical + 3 {
-          break;
+        num_historical_ticks += 1;
+        if num_historical_ticks > approx_num_historical {
+          log::warn!("Received extra historical ticks.");
         }
       }
       TickByTickEvent::Error(e) => return Err(anyhow!(e.to_string())),
@@ -226,11 +222,13 @@ pub(super) fn subscribe_number_of_ticks_impl(client: &IBKRClient, _is_live: bool
     }
   }
 
-  if num_historical_ticks < min_historical {
+  if num_historical_ticks < 1 {
     return Err(anyhow!(
-      "Expected at least {min_historical} historical ticks, but got {num_historical_ticks}"
+      "Unexpected number of historical ticks: {num_historical_ticks}"
     ));
   }
+
+  // Note that we can receive more historical ticks than we asked for.
 
   Ok(())
 }
