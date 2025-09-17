@@ -261,58 +261,83 @@ mod test_cases {
 }
 
 // --- Test Registration ---
-// Associate canonical names with the implementation functions in the module.
-// Tests will run in the order specified by the order number when using "all"
-submit_test!(1, "time", test_cases::time_impl);
-submit_test!(2, "account-details", test_cases::account_details_impl);
-submit_test!(3, "order-market", test_cases::order_market_impl);
-submit_test!(4, "order-limit", test_cases::order_limit_impl);
-submit_test!(5, "order-many", test_cases::order_many_impl);
-submit_test!(6, "current-quote", test_cases::current_quote_impl);
-submit_test!(7, "realtime-data", test_cases::realtime_data_impl);
-submit_test!(8, "realtime-bars-blocking", test_cases::realtime_bars_blocking_impl);
-submit_test!(9, "market-data-blocking", test_cases::market_data_blocking_impl);
-submit_test!(10, "tick-by-tick-blocking", test_cases::tick_by_tick_blocking_impl);
-submit_test!(11, "market-depth-blocking", test_cases::market_depth_blocking_impl);
-submit_test!(12, "historical-data", test_cases::historical_data_impl);
-submit_test!(13, "cleanup-orders", test_cases::cleanup_orders_impl);
-submit_test!(14, "order-global-cancel", test_cases::order_global_cancel_impl);
-submit_test!(15, "order-exercise-option", test_cases::order_exercise_option_impl);
-submit_test!(16, "order-what-if", test_cases::order_what_if_impl);
-submit_test!(17, "box-spread-yield", test_cases::box_spread_yield_impl);
-submit_test!(18, "financial-reports", test_cases::financial_reports_impl);
-submit_test!(19, "historical-news", test_cases::historical_news_impl);
-submit_test!(20, "scanner", test_cases::scanner_impl);
-submit_test!(21, "option-calculations", test_cases::option_calculations_impl);
-submit_test!(22, "histogram-data", test_cases::histogram_data_impl);
-submit_test!(23, "historical-ticks", test_cases::historical_ticks_impl);
-submit_test!(24, "historical-schedule", test_cases::historical_schedule_impl);
-submit_test!(25, "account-subscription", test_cases::account_subscription_impl);
-submit_test!(26, "observe-market-data", test_cases::observe_market_data_impl);
-submit_test!(27, "subscribe-market-data", test_cases::subscribe_market_data_impl);
-submit_test!(28, "subscribe-historical-combined", test_cases::subscribe_historical_combined_impl);
-submit_test!(29, "subscribe-news-bulletins", test_cases::subscribe_news_bulletins_impl);
-submit_test!(30, "subscribe-historical-news", test_cases::subscribe_historical_news_impl);
-submit_test!(31, "subscribe-real-time-bars", test_cases::subscribe_real_time_bars_impl);
-submit_test!(32, "subscribe-tick-by-tick", test_cases::subscribe_tick_by_tick_impl);
-submit_test!(33, "subscribe-market-depth", test_cases::subscribe_market_depth_impl);
-submit_test!(34, "observe-realtime-bars", test_cases::observe_realtime_bars_impl);
-submit_test!(35, "observe-tick-by-tick", test_cases::observe_tick_by_tick_impl);
-submit_test!(36, "observe-market-depth", test_cases::observe_market_depth_impl);
-submit_test!(37, "observe-historical-data", test_cases::observe_historical_data_impl);
-submit_test!(38, "observe-historical-ticks", test_cases::observe_historical_ticks_impl);
-submit_test!(39, "multi-subscription-mixed", test_cases::multi_subscription_mixed_impl);
-submit_test!(40, "options-strategy-builder", test_cases::options_strategy_builder_test_impl);
-submit_test!(41, "order-builder", test_cases::order_builder_test_impl);
-submit_test!(42, "contract-details", test_cases::contract_details_impl);
-submit_test!(43, "option-chain-params", test_cases::option_chain_params_impl);
-submit_test!(44, "reference-data", test_cases::reference_data_impl);
-submit_test!(45, "subscribe-historical-keep-up-to-date", test_cases::subscribe_historical_keep_up_to_date_impl);
-submit_test!(46, "order-modify", test_cases::order_modify_impl);
-submit_test!(47, "subscribe-number-of-ticks", test_cases::subscribe_number_of_ticks_impl);
-submit_test!(48, "order-subscription", test_cases::order_subscription_impl);
-// Add more tests here: submit_test!(49, "new-test-name", test_cases::new_test_impl);
-// submit_test!(999, "wsh-events", test_cases::wsh_events_impl);
+// Tests are organized by category with non-contiguous ID ranges:
+// 1000s: General/Infrastructure tests
+// 2000s: Order Management tests
+// 3000s: Market Data tests
+// 4000s: Options tests
+// 5000s: News tests
+// 6000s: Reference Data tests
+// 7000s: Subscription/Observer Pattern tests
+// 8000s: Financial/Reports tests
+
+// === 1000s: General/Infrastructure Tests ===
+submit_test!(1001, "time", test_cases::time_impl);
+submit_test!(1002, "account-details", test_cases::account_details_impl);
+submit_test!(1003, "account-subscription", test_cases::account_subscription_impl);
+submit_test!(1099, "cleanup-orders", test_cases::cleanup_orders_impl);
+
+// === 2000s: Order Management Tests ===
+submit_test!(2001, "order-market", test_cases::order_market_impl);
+submit_test!(2002, "order-limit", test_cases::order_limit_impl);
+submit_test!(2003, "order-many", test_cases::order_many_impl);
+submit_test!(2004, "order-global-cancel", test_cases::order_global_cancel_impl);
+submit_test!(2005, "order-exercise-option", test_cases::order_exercise_option_impl);
+submit_test!(2006, "order-what-if", test_cases::order_what_if_impl);
+submit_test!(2007, "order-modify", test_cases::order_modify_impl);
+submit_test!(2008, "order-subscription", test_cases::order_subscription_impl);
+submit_test!(2009, "order-builder", test_cases::order_builder_test_impl);
+
+// === 3000s: Market Data Tests ===
+submit_test!(3001, "current-quote", test_cases::current_quote_impl);
+submit_test!(3002, "realtime-data", test_cases::realtime_data_impl);
+submit_test!(3003, "realtime-bars-blocking", test_cases::realtime_bars_blocking_impl);
+submit_test!(3004, "market-data-blocking", test_cases::market_data_blocking_impl);
+submit_test!(3005, "tick-by-tick-blocking", test_cases::tick_by_tick_blocking_impl);
+submit_test!(3006, "market-depth-blocking", test_cases::market_depth_blocking_impl);
+submit_test!(3007, "historical-data", test_cases::historical_data_impl);
+submit_test!(3008, "scanner", test_cases::scanner_impl);
+submit_test!(3009, "histogram-data", test_cases::histogram_data_impl);
+submit_test!(3010, "historical-ticks", test_cases::historical_ticks_impl);
+submit_test!(3011, "historical-schedule", test_cases::historical_schedule_impl);
+
+// === 4000s: Options Tests ===
+submit_test!(4001, "option-calculations", test_cases::option_calculations_impl);
+submit_test!(4002, "options-strategy-builder", test_cases::options_strategy_builder_test_impl);
+submit_test!(4003, "box-spread-yield", test_cases::box_spread_yield_impl);
+
+// === 5000s: News Tests ===
+submit_test!(5001, "historical-news", test_cases::historical_news_impl);
+
+// === 6000s: Reference Data Tests ===
+submit_test!(6001, "contract-details", test_cases::contract_details_impl);
+submit_test!(6002, "option-chain-params", test_cases::option_chain_params_impl);
+submit_test!(6003, "reference-data", test_cases::reference_data_impl);
+
+// === 7000s: Subscription/Observer Pattern Tests ===
+submit_test!(7001, "observe-market-data", test_cases::observe_market_data_impl);
+submit_test!(7002, "subscribe-market-data", test_cases::subscribe_market_data_impl);
+submit_test!(7003, "subscribe-historical-combined", test_cases::subscribe_historical_combined_impl);
+submit_test!(7004, "subscribe-news-bulletins", test_cases::subscribe_news_bulletins_impl);
+submit_test!(7005, "subscribe-historical-news", test_cases::subscribe_historical_news_impl);
+submit_test!(7006, "subscribe-real-time-bars", test_cases::subscribe_real_time_bars_impl);
+submit_test!(7007, "subscribe-tick-by-tick", test_cases::subscribe_tick_by_tick_impl);
+submit_test!(7008, "subscribe-market-depth", test_cases::subscribe_market_depth_impl);
+submit_test!(7009, "observe-realtime-bars", test_cases::observe_realtime_bars_impl);
+submit_test!(7010, "observe-tick-by-tick", test_cases::observe_tick_by_tick_impl);
+submit_test!(7011, "observe-market-depth", test_cases::observe_market_depth_impl);
+submit_test!(7012, "observe-historical-data", test_cases::observe_historical_data_impl);
+submit_test!(7013, "observe-historical-ticks", test_cases::observe_historical_ticks_impl);
+submit_test!(7014, "multi-subscription-mixed", test_cases::multi_subscription_mixed_impl);
+submit_test!(7015, "subscribe-historical-keep-up-to-date", test_cases::subscribe_historical_keep_up_to_date_impl);
+submit_test!(7016, "subscribe-number-of-ticks", test_cases::subscribe_number_of_ticks_impl);
+
+// === 8000s: Financial/Reports Tests ===
+submit_test!(8001, "financial-reports", test_cases::financial_reports_impl);
+
+// === Future Extensions ===
+// submit_test!(9001, "wsh-events", test_cases::wsh_events_impl);
+// Add more tests here: submit_test!(NNNN, "new-test-name", test_cases::new_test_impl);
 
 // --- Helper Functions ---
 
