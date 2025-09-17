@@ -442,7 +442,7 @@ impl TickByTickSubscriptionBuilder {
     // Request live tick-by-tick data
     manager.internal_request_tick_by_tick_data(req_id, &self.contract, self.params.tick_type, self.params.number_of_ticks, self.params.ignore_size)?;
 
-    Ok(TickByTickSubscription { state, _params: self.params, req_id, observer_id })
+    Ok(TickByTickSubscription { state, _params: self.params, req_id, observer_id: Some(observer_id) })
   }
 }
 impl MarketDataSubscription for TickByTickSubscription {
