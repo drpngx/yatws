@@ -3761,7 +3761,7 @@ impl MarketDataHandler for DataMarketManager {
             }
           }
         },
-        MarketStream::TickByTick(state) => {
+        MarketStream::TickByTick(_state) => {
           for &(time, mid_point, size) in ticks_data {
             let ot = Utc.timestamp_opt(time, 0).single().unwrap();
             let tick = (ot, mid_point, size);
@@ -3815,7 +3815,7 @@ impl MarketDataHandler for DataMarketManager {
             }
           }
         },
-        MarketStream::TickByTick(state) => {
+        MarketStream::TickByTick(_state) => {
           for td in ticks_data {
             let td = td.clone();
             let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();
@@ -3868,7 +3868,7 @@ impl MarketDataHandler for DataMarketManager {
             }
           }
         },
-        MarketStream::TickByTick(state) => {
+        MarketStream::TickByTick(_state) => {
           for td in ticks_data {
             let td = td.clone();
             let ot = Utc.timestamp_opt(td.0, 0).single().unwrap();

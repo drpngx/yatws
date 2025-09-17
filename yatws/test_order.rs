@@ -232,7 +232,7 @@ pub(super) fn order_modify_impl(client: &IBKRClient, is_live: bool) -> Result<()
   info!("Waiting for order {} to be submitted...", order_id);
   match order_mgr.try_wait_order_submitted(&order_id, submit_timeout) {
     Ok(status) => info!("Order {} submitted with status: {:?}", order_id, status),
-    Err(e) => {
+    Err(_e) => {
       //let _ = order_mgr.cancel_order(&order_id);
       //return Err(e).context("Waiting for order submission failed");
       log::warn!("order not submitted, continuing");

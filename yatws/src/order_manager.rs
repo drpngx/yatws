@@ -93,7 +93,6 @@ pub enum OrderEvent {
 
 /// Internal state for order subscriptions.
 struct OrderSubscriptionState {
-  order_id: String,
   completed: AtomicBool,
   active: AtomicBool,
   events_queue: Mutex<VecDeque<OrderEvent>>,
@@ -101,9 +100,8 @@ struct OrderSubscriptionState {
 }
 
 impl OrderSubscriptionState {
-  fn new(order_id: String) -> Self {
+  fn new(_order_id: String) -> Self {
     Self {
-      order_id,
       completed: AtomicBool::new(false),
       active: AtomicBool::new(true),
       events_queue: Mutex::new(VecDeque::new()),

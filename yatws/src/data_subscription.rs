@@ -14,7 +14,7 @@ use crate::data_market_manager::DataMarketManager;
 use crate::data_market_manager::DataMarketManagerTrait as DataMarketManager; // For testing/mocking
 
 use crate::data_observer::{
-  HistoricalDataObserver, HistoricalTicksObserver, MarketDataObserver, MarketDepthObserver, ObserverId,
+  HistoricalDataObserver, MarketDataObserver, MarketDepthObserver, ObserverId,
   RealTimeBarsObserver, TickByTickObserver,
 };
 
@@ -413,7 +413,7 @@ pub enum TickByTickEvent {
   Error(IBKRError),
 }
 #[derive(Debug)]
-pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>>, params: TickByTickParams, req_id: i32, observer_id: Option<ObserverId> }
+pub struct TickByTickSubscription { state: Arc<SubscriptionState<TickByTickEvent, DataMarketManager>>, _params: TickByTickParams, req_id: i32, observer_id: Option<ObserverId> }
 pub struct TickByTickSubscriptionBuilder { manager_weak: Weak<DataMarketManager>, contract: Contract, params: TickByTickParams }
 impl TickByTickSubscriptionBuilder {
   pub(crate) fn new(manager_weak: Weak<DataMarketManager>, contract: Contract, tick_type: TickByTickRequestType) -> Self { Self { manager_weak, contract, params: TickByTickParams { tick_type, number_of_ticks: 0, ignore_size: false, market_data_type: None } } }
@@ -429,11 +429,9 @@ impl TickByTickSubscriptionBuilder {
     let state = Arc::new(SubscriptionState::<TickByTickEvent, DataMarketManager>::new(req_id, self.contract.clone(), Arc::downgrade(&manager)));
     let observer = TickByTickInternalObserver { state: Arc::clone(&state) };
 
-    let mut observer_id = None;
-
     // Always register for live tick-by-tick data, even if historical was requested
-    observer_id = Some(manager.observe_tick_by_tick(observer));
-    state.set_observer_id(observer_id.unwrap());
+    let observer_id = manager.observe_tick_by_tick(observer);
+    state.set_observer_id(observer_id);
 
     let mdt_to_set = self.params.market_data_type.unwrap_or(MarketDataType::RealTime);
     // Attempt to set MDT, log warning on failure but proceed.
@@ -444,7 +442,7 @@ impl TickByTickSubscriptionBuilder {
     // Request live tick-by-tick data
     manager.internal_request_tick_by_tick_data(req_id, &self.contract, self.params.tick_type, self.params.number_of_ticks, self.params.ignore_size)?;
 
-    Ok(TickByTickSubscription { state, params: self.params, req_id, observer_id })
+    Ok(TickByTickSubscription { state, _params: self.params, req_id, observer_id })
   }
 }
 impl MarketDataSubscription for TickByTickSubscription {
@@ -506,7 +504,7 @@ impl TickByTickObserver for TickByTickInternalObserver {
     &self,
     req_id: i32,
     ticks: &[(DateTime<Utc>, TickAttribBidAsk, f64, f64, f64, f64)],
-    done: bool,
+    _done: bool,
   ) {
     if req_id != self.state.req_id { return; }
     for &(time, ref tick_attrib_bid_ask, price_bid, price_ask, size_bid, size_ask) in ticks {
@@ -525,7 +523,7 @@ impl TickByTickObserver for TickByTickInternalObserver {
     &self,
     req_id: i32,
     ticks: &[(DateTime<Utc>, TickAttribLast, f64, f64, String, String)],
-    done: bool,
+    _done: bool,
   ) {
     if req_id != self.state.req_id { return; }
     for (time, tick_attrib_last, price, size, exchange, special_conditions) in ticks {

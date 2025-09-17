@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, anyhow};
 use log::{debug, error, info, warn};
 use std::time::Duration;
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use yatws::{
   IBKRError,
   IBKRClient,
