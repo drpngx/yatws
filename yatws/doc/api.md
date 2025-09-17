@@ -461,6 +461,63 @@ Checks margin and commission impact of a potential order without placing it (Wha
 
 Retrieves a list of all orders currently known to the `OrderManager` that are in a terminal state (e.g., Filled, Cancelled).
 
+### `OrderManager::subscribe_new_order(&self, contract: Contract, request: OrderRequest) -> Result<OrderSubscription, IBKRError>`
+
+Places an order and returns a subscription to track its lifecycle events. This method combines order placement with event subscription in a race-condition-free manner.
+
+-   `contract`: The `Contract` to trade.
+-   `request`: The `OrderRequest` detailing order parameters.
+-   **Returns**: `OrderSubscription` that provides an iterator over `OrderEvent`s.
+-   **Errors**: If order placement fails, subscription setup fails, or critical section lock cannot be acquired.
+
+The subscription automatically terminates when the order reaches a terminal state (Filled, Cancelled, etc.) or encounters an error.
+
+## OrderSubscription
+
+**File:** `yatws/src/order_manager.rs`
+
+Represents an active subscription to order lifecycle events. Provides an iterator interface for consuming order updates.
+
+### `OrderSubscription::new(order_id: String, subscription_state: Arc<OrderSubscriptionState>) -> Self`
+
+Creates a new order subscription (typically called internally by `subscribe_new_order`).
+
+### `OrderSubscription::order_id(&self) -> &str`
+
+Returns the order ID that this subscription is tracking.
+
+### `OrderSubscription::events(&self) -> OrderSubscriptionIterator`
+
+Returns an iterator over `OrderEvent`s for this subscription.
+
+## OrderSubscriptionIterator
+
+**File:** `yatws/src/order_manager.rs`
+
+Iterator that yields `OrderEvent`s until the order reaches a terminal state or an error occurs.
+
+### `OrderSubscriptionIterator::next(&mut self) -> Option<OrderEvent>`
+
+Blocks until the next `OrderEvent` is available or the subscription terminates.
+
+### `OrderSubscriptionIterator::try_next(&mut self, timeout: Duration) -> Option<OrderEvent>`
+
+Attempts to get the next `OrderEvent` within the specified timeout. Returns `None` if timeout occurs or subscription terminates.
+
+## OrderEvent Enum
+
+**File:** `yatws/src/order_manager.rs`
+
+```rust
+pub enum OrderEvent {
+    Update(Order),
+    Error(IBKRError),
+}
+```
+
+-   `Update(Order)`: Order state has been updated. Contains the current `Order` state.
+-   `Error(IBKRError)`: An error occurred related to this order.
+
 ### OrderObserver Trait
 
 **File:** `yatws/src/order_manager.rs`

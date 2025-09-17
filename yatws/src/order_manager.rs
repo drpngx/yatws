@@ -64,10 +64,11 @@
 
 use parking_lot::{RwLock, Mutex, Condvar};
 use std::sync::Arc;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use chrono::Utc;
 use log::{debug, error, info, warn};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::order::{Order, OrderRequest, OrderUpdates, OrderState, OrderStatus, OrderCancel};
 use crate::contract::{Contract, SecType};
@@ -78,6 +79,181 @@ use crate::protocol_encoder::Encoder;
 use crate::protocol_decoder::ClientErrorCode; // Added import
 use crate::min_server_ver::min_server_ver; // Added for REQ_GLOBAL_CANCEL
 // Removed unused import: crate::parser_order;
+
+// --- Order Subscription Infrastructure ---
+
+/// Events emitted by order subscriptions.
+#[derive(Debug, Clone)]
+pub enum OrderEvent {
+  /// Order state was updated (status change, fills, etc.)
+  Update(Order),
+  /// An error occurred with this order
+  Error(IBKRError),
+}
+
+/// Internal state for order subscriptions.
+struct OrderSubscriptionState {
+  order_id: String,
+  completed: AtomicBool,
+  active: AtomicBool,
+  events_queue: Mutex<VecDeque<OrderEvent>>,
+  condvar: Condvar,
+}
+
+impl OrderSubscriptionState {
+  fn new(order_id: String) -> Self {
+    Self {
+      order_id,
+      completed: AtomicBool::new(false),
+      active: AtomicBool::new(true),
+      events_queue: Mutex::new(VecDeque::new()),
+      condvar: Condvar::new(),
+    }
+  }
+
+  fn push_event(&self, event: OrderEvent) {
+    if !self.active.load(Ordering::SeqCst) {
+      return;
+    }
+    let mut queue = self.events_queue.lock();
+    queue.push_back(event);
+    self.condvar.notify_one();
+  }
+
+  fn pop_event_with_timeout(&self, timeout: Option<Duration>) -> Option<OrderEvent> {
+    let mut queue = self.events_queue.lock();
+    loop {
+      if let Some(event) = queue.pop_front() {
+        return Some(event);
+      }
+      if (!self.active.load(Ordering::SeqCst) || self.completed.load(Ordering::SeqCst)) && queue.is_empty() {
+        return None;
+      }
+
+      if let Some(t) = timeout {
+        if self.condvar.wait_for(&mut queue, t).timed_out() {
+          return None;
+        }
+      } else {
+        self.condvar.wait(&mut queue);
+      }
+    }
+  }
+
+  fn pop_all_available_events(&self) -> Vec<OrderEvent> {
+    let mut queue = self.events_queue.lock();
+    queue.drain(..).collect()
+  }
+
+  fn set_completed(&self) {
+    self.completed.store(true, Ordering::SeqCst);
+    self.active.store(false, Ordering::SeqCst);
+    self.condvar.notify_all();
+  }
+}
+
+/// A subscription to order events for a specific order.
+pub struct OrderSubscription {
+  state: Arc<OrderSubscriptionState>,
+  order_id: String,
+}
+
+impl OrderSubscription {
+  fn new(order_id: String, state: Arc<OrderSubscriptionState>) -> Self {
+    Self { state, order_id }
+  }
+
+  /// Returns the order ID this subscription is tracking.
+  pub fn order_id(&self) -> &str {
+    &self.order_id
+  }
+
+  /// Checks if the subscription is completed (order reached terminal state or error).
+  pub fn is_completed(&self) -> bool {
+    self.state.completed.load(Ordering::SeqCst)
+  }
+
+  /// Creates an iterator for order events.
+  pub fn events(self) -> OrderSubscriptionIterator {
+    OrderSubscriptionIterator {
+      state: self.state,
+      default_timeout: None,
+    }
+  }
+
+  /// Creates an iterator with a default timeout for blocking operations.
+  pub fn events_with_timeout(self, timeout: Duration) -> OrderSubscriptionIterator {
+    OrderSubscriptionIterator {
+      state: self.state,
+      default_timeout: Some(timeout),
+    }
+  }
+}
+
+/// Iterator for order events.
+pub struct OrderSubscriptionIterator {
+  state: Arc<OrderSubscriptionState>,
+  default_timeout: Option<Duration>,
+}
+
+impl OrderSubscriptionIterator {
+  /// Attempts to get the next event with a specific timeout.
+  pub fn try_next(&mut self, timeout: Duration) -> Option<OrderEvent> {
+    self.state.pop_event_with_timeout(Some(timeout))
+  }
+
+  /// Collects all currently available events without blocking.
+  pub fn collect_available(&mut self) -> Vec<OrderEvent> {
+    self.state.pop_all_available_events()
+  }
+}
+
+impl Iterator for OrderSubscriptionIterator {
+  type Item = OrderEvent;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    self.state.pop_event_with_timeout(self.default_timeout)
+  }
+}
+
+/// Internal observer that forwards order events to subscriptions.
+struct OrderSubscriptionObserver {
+  order_id: String,
+  subscription_states: Vec<Arc<OrderSubscriptionState>>,
+}
+
+impl OrderObserver for OrderSubscriptionObserver {
+  fn on_order_update(&self, order: &Order) {
+    if order.id != self.order_id {
+      return;
+    }
+
+    let event = OrderEvent::Update(order.clone());
+
+    // Check if order reached terminal state
+    let is_terminal = order.state.is_terminal();
+
+    for state in &self.subscription_states {
+      state.push_event(event.clone());
+      if is_terminal {
+        state.set_completed();
+      }
+    }
+  }
+
+  fn on_order_error(&self, order_id: &str, error: &IBKRError) {
+    if order_id != self.order_id {
+      return;
+    }
+
+    let event = OrderEvent::Error(error.clone());
+
+    for state in &self.subscription_states {
+      state.push_event(event.clone());
+      state.set_completed(); // Errors terminate the subscription
+    }
+  }
+}
 
 
 /// Manages order lifecycle, including placement, status tracking, modification, and cancellation.
@@ -102,6 +278,10 @@ pub struct OrderManager {
   // Flag and Condvar for waiting on openOrderEnd after a refresh request
   open_order_end_flag: Mutex<bool>,
   open_order_end_condvar: Condvar,
+  // Order subscription tracking
+  order_subscriptions: RwLock<HashMap<String, Vec<Arc<OrderSubscriptionState>>>>,
+  // Critical section lock to prevent race conditions between order placement and subscription registration
+  order_subscription_lock: Mutex<()>,
 }
 
 impl OrderManager {
@@ -122,6 +302,8 @@ impl OrderManager {
       order_update_condvars: RwLock::new(HashMap::new()),
       open_order_end_flag: Mutex::new(false), // Initialize flag
       open_order_end_condvar: Condvar::new(), // Initialize condvar
+      order_subscriptions: RwLock::new(HashMap::new()),
+      order_subscription_lock: Mutex::new(()),
     });
 
     let manager_clone = manager.clone();
@@ -294,6 +476,112 @@ impl OrderManager {
 
     info!("Place order request sent for ID: {}", order_id_str);
     Ok(order_id_str)
+  }
+
+  /// Places an order and returns a subscription to receive order events.
+  ///
+  /// This method combines order placement with subscription creation. It places the order
+  /// using the same logic as `place_order` but returns an `OrderSubscription` that can be
+  /// used to iterate over order events (updates and errors).
+  ///
+  /// The subscription will automatically terminate when the order reaches a terminal state
+  /// (Filled, Cancelled, etc.) or when an error occurs.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for the instrument to trade.
+  /// * `request` - The [`OrderRequest`] detailing the order parameters.
+  ///
+  /// # Returns
+  /// An [`OrderSubscription`] that provides an iterator over [`OrderEvent`]s.
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if the initial `nextValidId` is not available, if there's an
+  /// encoding issue, or if the message fails to send.
+  ///
+  /// # Example
+  /// ```no_run
+  /// # use yatws::{IBKRClient, IBKRError, OrderBuilder, order::OrderSide};
+  /// # fn main() -> Result<(), IBKRError> {
+  /// # let client = IBKRClient::new("127.0.0.1", 4002, 101, None)?;
+  /// # let order_mgr = client.orders();
+  /// let (contract, order_req) = OrderBuilder::new(OrderSide::Buy, 1.0)
+  ///     .market()
+  ///     .for_stock("AAPL")
+  ///     .build()?;
+  ///
+  /// let subscription = order_mgr.subscribe_new_order(contract, order_req)?;
+  /// println!("Order placed with subscription for ID: {}", subscription.order_id());
+  ///
+  /// // Iterate over order events
+  /// for event in subscription.events() {
+  ///     match event {
+  ///         OrderEvent::Update(order) => {
+  ///             println!("Order {} status: {:?}", order.id, order.state.status);
+  ///             if order.state.is_terminal() {
+  ///                 break;
+  ///             }
+  ///         }
+  ///         OrderEvent::Error(err) => {
+  ///             eprintln!("Order error: {:?}", err);
+  ///             break;
+  ///         }
+  ///     }
+  /// }
+  /// # Ok(())
+  /// # }
+  /// ```
+  pub fn subscribe_new_order(&self, contract: Contract, request: OrderRequest) -> Result<OrderSubscription, IBKRError> {
+    info!("Subscribing to new order: {:?} x {:.0} for {}", request.side, request.quantity, contract.symbol);
+
+    // Hold critical section lock to prevent race condition between order placement and observer registration
+    let critical_section = self.order_subscription_lock.lock();
+
+    // Place the order using existing logic
+    let order_id = self.place_order(contract, request)?;
+
+    // Create subscription state
+    let subscription_state = Arc::new(OrderSubscriptionState::new(order_id.clone()));
+
+    // Register the subscription state with the order
+    {
+      let mut subscriptions = self.order_subscriptions.write();
+      subscriptions.entry(order_id.clone())
+        .or_insert_with(Vec::new)
+        .push(Arc::clone(&subscription_state));
+    }
+
+    // Create and register the observer
+    {
+      let observer = Box::new(OrderSubscriptionObserver {
+        order_id: order_id.clone(),
+        subscription_states: vec![Arc::clone(&subscription_state)],
+      });
+      self.add_observer(observer);
+    }
+
+    // Send initial state if order exists
+    if let Some(order) = self.get_order(&order_id) {
+      let initial_event = OrderEvent::Update(order.clone());
+      subscription_state.push_event(initial_event);
+
+      // If order is already terminal, mark subscription as completed
+      if order.state.is_terminal() {
+        subscription_state.set_completed();
+      }
+
+      // If order has an error, send error event and complete
+      if let Some(error) = &order.state.error {
+        let error_event = OrderEvent::Error(error.clone());
+        subscription_state.push_event(error_event);
+        subscription_state.set_completed();
+      }
+    }
+
+    // Explicitly release the critical section lock
+    drop(critical_section);
+
+    info!("Created order subscription for ID: {}", order_id);
+    Ok(OrderSubscription::new(order_id, subscription_state))
   }
 
   /// Requests the cancellation of an existing order.
@@ -1253,6 +1541,28 @@ impl OrderManager {
       }
     }
 
+    // Complete all active order subscriptions
+    // This ensures subscription iterators terminate gracefully during shutdown
+    {
+      let subscriptions = self.order_subscriptions.read();
+      let subscription_count: usize = subscriptions.values().map(|v| v.len()).sum();
+
+      if subscription_count > 0 {
+        info!("OrderManager: Completing {} order subscriptions during cleanup", subscription_count);
+
+        for (order_id, states) in subscriptions.iter() {
+          for state in states {
+            if state.active.load(Ordering::SeqCst) {
+              state.set_completed();
+              debug!("OrderManager: Completed subscription for order {} during cleanup", order_id);
+            }
+          }
+        }
+      } else {
+        debug!("OrderManager: No active order subscriptions to complete");
+      }
+    }
+
     // Note: We intentionally do NOT clear the order book, perm_id_map, or condvars
     // because:
     // - We might still receive final status updates from TWS after sending cancels
@@ -1303,6 +1613,9 @@ impl OrderHandler for OrderManager {
       "Handler: Received orderStatus: ID={}, PermID={}, Status={:?}, Filled={}, Rem={}, AvgPx={}, LastPx={}, ClientId={}, WhyHeld={}",
       order_id_str, perm_id, order_status, filled, remaining, avg_fill_price, last_fill_price, client_id, why_held
     );
+
+    // Acquire critical section lock to prevent race conditions with subscription registration
+    let _critical_section = self.order_subscription_lock.lock();
 
     // Find the order by client ID
     let order_arc = {
@@ -1375,6 +1688,9 @@ impl OrderHandler for OrderManager {
     let order_id_str = order_id_int.to_string();
     info!("Handler: Received openOrder: ID={}, Symbol={}, Status={:?}", order_id_str, contract.symbol, order_state.status);
 
+    // Acquire critical section lock to prevent race conditions with subscription registration
+    let _critical_section = self.order_subscription_lock.lock();
+
     let now = Utc::now();
     let mut order_book = self.order_book.write(); // Lock book for potential insert/update
 
@@ -1409,8 +1725,9 @@ impl OrderHandler for OrderManager {
         // Overwrite the entire state first
         order.state = order_state.clone();
 
-        // Restore dynamic fields if the new status is not terminal and the old ones were set
-        if !order.state.status.is_terminal() {
+        // Restore dynamic fields if the previous status was not terminal
+        // This prevents openOrder from overwriting more recent orderStatus dynamic data
+        if !previous_status.is_terminal() {
           order.state.status = current_dynamic_state.0; // Keep potentially newer status
           order.state.filled_quantity = current_dynamic_state.1;
           order.state.remaining_quantity = current_dynamic_state.2;

@@ -8,6 +8,7 @@ use yatws::{
   IBKRClient,
   order::{OrderRequest, OrderSide, OrderType, TimeInForce, OrderStatus, OrderUpdates},
   OrderBuilder,
+  OrderEvent,
   contract::{Contract, SecType, OptionRight, DateOrMonth},
   data::MarketDataType,
 };
@@ -746,4 +747,130 @@ pub(super) fn order_what_if_impl(client: &IBKRClient, _is_live: bool) -> Result<
       Err(e.into())
     }
   }
+}
+
+pub(super) fn order_subscription_impl(client: &IBKRClient, is_live: bool) -> Result<()> {
+  info!("--- Testing Order Subscription ---");
+
+  if is_live {
+    warn!("This test will place a market order for 1 share of SPY that should execute immediately");
+    warn!("Ensure market is open for this test to work properly");
+    std::thread::sleep(Duration::from_secs(3));
+  }
+
+  let order_mgr = client.orders();
+
+  // Place a market order that should execute quickly
+  let (contract, order_request) = OrderBuilder::new(OrderSide::Buy, 1.0)
+    .market()
+    .for_stock("SPY")
+    .build()?;
+
+  info!("Creating order subscription for: {} {} {} (market order)",
+        order_request.side, order_request.quantity, contract.symbol);
+
+  // Create the subscription
+  let subscription = order_mgr.subscribe_new_order(contract.clone(), order_request)
+    .context("Failed to create order subscription")?;
+
+  info!("Order subscription created for ID: {}", subscription.order_id());
+
+  // Collect events
+  let mut events_received = 0;
+  let mut saw_pending_submit = false;
+  let mut saw_submitted = false;
+  let mut saw_filled = false;
+  let mut final_order_state = None;
+
+  info!("Collecting order events...");
+  let start_time = std::time::Instant::now();
+  let max_wait_time = if is_live { Duration::from_secs(30) } else { Duration::from_secs(5) };
+
+  for event in subscription.events() {
+    events_received += 1;
+
+    match event {
+      OrderEvent::Update(order) => {
+        info!("Event {}: Order {} status: {:?}, filled: {}, remaining: {}",
+              events_received, order.id, order.state.status,
+              order.state.filled_quantity, order.state.remaining_quantity);
+
+        match order.state.status {
+          OrderStatus::PendingSubmit => saw_pending_submit = true,
+          OrderStatus::Submitted => saw_submitted = true,
+          OrderStatus::Filled => {
+            saw_filled = true;
+            info!("Order filled! Filled quantity: {}", order.state.filled_quantity);
+          }
+          _ => {}
+        }
+
+        final_order_state = Some(order.state.clone());
+
+        // Stop if we reach a terminal state
+        if order.state.is_terminal() {
+          info!("Order reached terminal state: {:?}", order.state.status);
+          break;
+        }
+      }
+      OrderEvent::Error(err) => {
+        info!("Event {}: Order error: {:?}", events_received, err);
+        return Err(anyhow!("Order subscription received error: {:?}", err));
+      }
+    }
+
+    // Safety timeout
+    if start_time.elapsed() > max_wait_time {
+      warn!("Stopping event collection after {:?}", max_wait_time);
+      break;
+    }
+  }
+
+  info!("Received {} events total", events_received);
+
+  // Always attempt to clean up position, regardless of what we observed
+  info!("Attempting to clean up any SPY position created by this test...");
+  let cleanup_result = attempt_cleanup(client, &contract);
+  match cleanup_result {
+    Ok(()) => info!("Position cleanup completed successfully"),
+    Err(e) => {
+      warn!("Position cleanup encountered issues: {:?}", e);
+      warn!("Manual intervention may be required to close SPY position");
+    }
+  }
+
+  // Validate we received the expected events
+  if events_received == 0 {
+    return Err(anyhow!("No events received from order subscription"));
+  }
+
+  if !saw_pending_submit && !saw_submitted {
+    return Err(anyhow!("Expected to see PendingSubmit or Submitted status, but didn't"));
+  }
+
+  // Check if the order filled (this is expected in live mode, but not required for test to pass)
+  if is_live && !saw_filled {
+    warn!("Market order did not fill in live mode - this may indicate markets are closed or illiquid");
+    warn!("For SPY, this is unusual during market hours");
+  }
+
+  info!("Order subscription test completed successfully");
+  info!("  - Received {} events", events_received);
+  info!("  - Saw PendingSubmit: {}", saw_pending_submit);
+  info!("  - Saw Submitted: {}", saw_submitted);
+  info!("  - Saw Filled: {}", saw_filled);
+
+  if let Some(final_state) = final_order_state {
+    info!("  - Final order status: {:?}", final_state.status);
+    info!("  - Final filled quantity: {}", final_state.filled_quantity);
+
+    // Additional validation - check that filled + remaining = original quantity
+    let total_accounted = final_state.filled_quantity + final_state.remaining_quantity;
+    if (total_accounted - 1.0).abs() > f64::EPSILON {
+      warn!("Quantity accounting mismatch: filled ({}) + remaining ({}) != original (1.0)",
+            final_state.filled_quantity, final_state.remaining_quantity);
+    }
+  }
+
+  Ok(())
 }

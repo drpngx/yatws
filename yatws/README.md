@@ -117,6 +117,46 @@ let status = client.orders().try_wait_order_executed(
 )?;
 ```
 
+### Order Subscription Pattern
+
+For tracking order lifecycle with real-time updates:
+
+```rust
+use yatws::{OrderBuilder, OrderSide, TimeInForce};
+use yatws::order_manager::OrderEvent;
+use std::time::Duration;
+
+// Create order specification
+let (contract, order_request) = OrderBuilder::new(OrderSide::Buy, 100.0)
+    .for_stock("AAPL")
+    .market()
+    .with_tif(TimeInForce::Day)
+    .build()?;
+
+// Subscribe to order lifecycle events
+let order_subscription = client.orders().subscribe_new_order(contract, order_request)?;
+let mut order_events = order_subscription.events();
+
+// Process order events until completion or error
+while let Some(event) = order_events.try_next(Duration::from_secs(1)) {
+    match event {
+        OrderEvent::Update(order) => {
+            println!("Order {} status: {:?}, filled: {}",
+                     order.id, order.state.status, order.state.filled_quantity);
+
+            if order.state.status.is_terminal() {
+                println!("Order completed with status: {:?}", order.state.status);
+                break;
+            }
+        }
+        OrderEvent::Error(error) => {
+            eprintln!("Order error: {:?}", error);
+            break;
+        }
+    }
+}
+```
+
 ### Market Data
 
 ```rust
