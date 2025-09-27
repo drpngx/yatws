@@ -301,6 +301,10 @@ submit_test!(3009, "histogram-data", test_cases::histogram_data_impl);
 submit_test!(3010, "historical-ticks", test_cases::historical_ticks_impl);
 submit_test!(3011, "historical-schedule", test_cases::historical_schedule_impl);
 submit_test!(3012, "shortability", test_cases::shortability_impl);
+#[cfg(feature = "shortinv")]
+submit_test!(3013, "short-inventory", test_cases::short_inventory_impl);
+#[cfg(feature = "shortinv")]
+submit_test!(3014, "short-margin", test_cases::short_margin_impl);
 
 // === 4000s: Options Tests ===
 submit_test!(4001, "option-calculations", test_cases::option_calculations_impl);

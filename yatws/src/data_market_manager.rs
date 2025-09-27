@@ -103,6 +103,13 @@ use crate::data_observer::{ // Added for observers
 use crate::rate_limiter::CounterRateLimiter;
 use log::{debug, info, trace, warn};
 
+#[cfg(feature = "shortinv")]
+use suppaftp::{FtpStream, Mode};
+#[cfg(feature = "shortinv")]
+use std::io::Read;
+#[cfg(feature = "shortinv")]
+use csv::ReaderBuilder;
+
 
 // --- Helper Trait for Generic Waiting ---
 
@@ -317,6 +324,139 @@ impl TryIntoStateHelper<OptionCalculationState> for MarketStream {
   fn try_into_state_helper_mut(&mut self) -> Option<&mut OptionCalculationState> {
     match self { MarketStream::OptionCalc(s) => Some(s), _ => None }
   }
+}
+
+#[cfg(feature = "shortinv")]
+/// Represents different markets for short inventory data (txt files)
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShortMarket {
+    Australia,
+    Austria,
+    Belgium,
+    British,
+    Canada,
+    Dutch,
+    France,
+    Germany,
+    HongKong,
+    India,
+    Italy,
+    Japan,
+    Mexico,
+    Singapore,
+    Spain,
+    Swedish,
+    Swiss,
+    USA,
+    /// Custom filename
+    Custom(String),
+}
+
+#[cfg(feature = "shortinv")]
+impl ShortMarket {
+    /// Convert the enum to the corresponding filename on the FTP server
+    pub fn to_filename(&self) -> String {
+        match self {
+            ShortMarket::Australia => "australia.txt".to_string(),
+            ShortMarket::Austria => "austria.txt".to_string(),
+            ShortMarket::Belgium => "belgium.txt".to_string(),
+            ShortMarket::British => "british.txt".to_string(),
+            ShortMarket::Canada => "canada.txt".to_string(),
+            ShortMarket::Dutch => "dutch.txt".to_string(),
+            ShortMarket::France => "france.txt".to_string(),
+            ShortMarket::Germany => "germany.txt".to_string(),
+            ShortMarket::HongKong => "hongkong.txt".to_string(),
+            ShortMarket::India => "india.txt".to_string(),
+            ShortMarket::Italy => "italy.txt".to_string(),
+            ShortMarket::Japan => "japan.txt".to_string(),
+            ShortMarket::Mexico => "mexico.txt".to_string(),
+            ShortMarket::Singapore => "singapore.txt".to_string(),
+            ShortMarket::Spain => "spain.txt".to_string(),
+            ShortMarket::Swedish => "swedish.txt".to_string(),
+            ShortMarket::Swiss => "swiss.txt".to_string(),
+            ShortMarket::USA => "usa.txt".to_string(),
+            ShortMarket::Custom(filename) => filename.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "shortinv")]
+/// Represents different markets for margin data (dat files)
+#[derive(Debug, Clone, PartialEq)]
+pub enum MarginMarket {
+    /// Australian stock margin details
+    Australia,
+    /// Canadian stock margin details
+    Canada,
+    /// Hong Kong stock margin details
+    HongKong,
+    /// Indian stock margin details
+    India,
+    /// Japanese stock margin details
+    Japan,
+    /// Singapore stock margin details
+    Singapore,
+    /// UK stock margin details
+    UKL,
+    /// US stock margin details
+    US,
+    /// Custom filename
+    Custom(String),
+}
+
+#[cfg(feature = "shortinv")]
+impl MarginMarket {
+    /// Convert the enum to the corresponding filename on the FTP server
+    pub fn to_filename(&self) -> String {
+        match self {
+            MarginMarket::Australia => "stockmargin_final_dtls.IB-AU.dat".to_string(),
+            MarginMarket::Canada => "stockmargin_final_dtls.IB-CAN.dat".to_string(),
+            MarginMarket::HongKong => "stockmargin_final_dtls.IB-HK.dat".to_string(),
+            MarginMarket::India => "stockmargin_final_dtls.IB-IN.dat".to_string(),
+            MarginMarket::Japan => "stockmargin_final_dtls.IB-JP.dat".to_string(),
+            MarginMarket::Singapore => "stockmargin_final_dtls.IB-SG.dat".to_string(),
+            MarginMarket::UKL => "stockmargin_final_dtls.IB-UKL.dat".to_string(),
+            MarginMarket::US => "stockmargin_final_dtls.IBLLC-US.dat".to_string(),
+            MarginMarket::Custom(filename) => filename.clone(),
+        }
+    }
+}
+
+#[cfg(feature = "shortinv")]
+/// Short inventory data from txt files
+#[derive(Debug, Clone)]
+pub struct ShortInventoryData {
+    pub symbol: String,
+    pub currency: String,
+    pub name: String,
+    pub con: String,
+    pub isin: String,
+    pub rebate_rate: f64,
+    pub fee_rate: f64,
+    pub available: i64,
+    pub figi: String,
+}
+
+#[cfg(feature = "shortinv")]
+/// Short margin data from dat files
+#[derive(Debug, Clone)]
+pub struct ShortMarginData {
+    pub symbol: String,
+    pub currency: String,
+    pub name: String,
+    pub con: String,
+    pub isin: String,
+    pub cusip: String,
+    pub long_maintenance_margin: f64,
+    pub long_initial_margin: f64,
+    pub short_margin: f64,
+    pub exchange: String,
+    pub short_initial_margin: f64,
+    pub note: String,
+    pub long_concentration_maintenance_margin: f64,
+    pub long_concentration_initial_margin: f64,
+    pub short_concentration_maintenance_margin: f64,
+    pub short_concentration_initial_margin: f64,
 }
 
 
@@ -3404,6 +3544,237 @@ impl DataMarketManager {
 
     // Always return Ok to avoid failing shutdown due to cleanup errors
     Ok(())
+  }
+
+  // --- Short Inventory Functions ---
+
+  #[cfg(feature = "shortinv")]
+  /// Fetches short inventory data from Interactive Brokers FTP server
+  ///
+  /// # Arguments
+  /// * `market` - The market to fetch short inventory data for
+  ///
+  /// # Returns
+  /// A vector of `ShortInventoryData` containing rebate rates, fee rates, and available shares
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if FTP connection fails, file download fails, or parsing fails
+  pub fn get_short_inventory(&self, market: ShortMarket) -> Result<Vec<ShortInventoryData>, IBKRError> {
+    let filename = market.to_filename();
+    let file_content = self.fetch_from_ftp(&filename)?;
+    self.parse_short_inventory(&file_content)
+  }
+
+  #[cfg(feature = "shortinv")]
+  /// Fetches short margin data from Interactive Brokers FTP server
+  ///
+  /// # Arguments
+  /// * `market` - The market to fetch margin data for
+  ///
+  /// # Returns
+  /// A vector of `ShortMarginData` containing margin requirements
+  ///
+  /// # Errors
+  /// Returns `IBKRError` if FTP connection fails, file download fails, or parsing fails
+  pub fn get_short_margin(&self, market: MarginMarket) -> Result<Vec<ShortMarginData>, IBKRError> {
+    let filename = market.to_filename();
+    let file_content = self.fetch_from_ftp(&filename)?;
+    self.parse_short_margin(&file_content)
+  }
+
+  #[cfg(feature = "shortinv")]
+  /// Internal helper to fetch a file from the IB FTP server
+  fn fetch_from_ftp(&self, filename: &str) -> Result<String, IBKRError> {
+    use std::io::Read;
+
+    info!("Connecting to FTP server ftp2.interactivebrokers.com for file: {}", filename);
+
+    // Connect to the FTP server
+    let mut ftp_stream = FtpStream::connect("ftp2.interactivebrokers.com:21")
+      .map_err(|e| IBKRError::InternalError(format!("Failed to connect to FTP server: {}", e)))?;
+
+    // Login with shortstock user (no password)
+    ftp_stream.login("shortstock", "")
+      .map_err(|e| IBKRError::InternalError(format!("Failed to login to FTP server: {}", e)))?;
+
+    // Set binary mode for reliable file transfer
+    ftp_stream.transfer_type(suppaftp::types::FileType::Binary)
+      .map_err(|e| IBKRError::InternalError(format!("Failed to set transfer type: {}", e)))?;
+
+    // Retrieve the file using retr_as_buffer
+    let cursor = ftp_stream.retr_as_buffer(filename)
+      .map_err(|e| IBKRError::InternalError(format!("Failed to retrieve file {}: {}", filename, e)))?;
+
+    // Extract the Vec<u8> from the cursor and convert to string
+    let file_content = String::from_utf8(cursor.into_inner())
+      .map_err(|e| IBKRError::InternalError(format!("Failed to convert file content to UTF-8: {}", e)))?;
+
+    // Logout and close connection
+    let _ = ftp_stream.quit();
+
+    info!("Successfully downloaded {} ({} bytes)", filename, file_content.len());
+    Ok(file_content)
+  }
+
+  #[cfg(feature = "shortinv")]
+  /// Parse short inventory data from txt file content
+  fn parse_short_inventory(&self, content: &str) -> Result<Vec<ShortInventoryData>, IBKRError> {
+    let mut results = Vec::new();
+    let mut lines = content.lines();
+
+    // Skip the BOF header line (#BOF|date|time)
+    if let Some(first_line) = lines.next() {
+      if !first_line.starts_with("#BOF|") {
+        return Err(IBKRError::ParseError("Invalid file format: missing BOF header".to_string()));
+      }
+    }
+
+    // Skip the column header line (#SYM|CUR|NAME|...)
+    if let Some(header_line) = lines.next() {
+      if !header_line.starts_with("#SYM|") {
+        return Err(IBKRError::ParseError("Invalid file format: missing column headers".to_string()));
+      }
+    }
+
+    // Parse data lines
+    for (line_num, line) in lines.enumerate() {
+      if line.trim().is_empty() {
+        continue;
+      }
+
+      let fields: Vec<&str> = line.split('|').collect();
+      if fields.len() < 9 {
+        warn!("Skipping line {} with {} fields (expected at least 9): {}", line_num + 3, fields.len(), line);
+        continue;
+      }
+
+      // Handle trailing pipe which creates an extra empty field
+      if fields.len() == 10 && fields[9].is_empty() {
+        // This is expected format with trailing pipe
+      } else if fields.len() != 9 {
+        warn!("Skipping line {} with {} fields (expected 9 or 10 with trailing pipe): {}", line_num + 3, fields.len(), line);
+        continue;
+      }
+
+      // Handle rebate rate field - some entries might have non-numeric values
+      let rebate_rate = match fields[5].trim() {
+        "" | "NA" | "N/A" | "n/a" | "-" => 0.0, // Non-numeric indicators default to 0.0
+        value => value.parse::<f64>()
+          .map_err(|e| IBKRError::ParseError(format!("Invalid rebate rate on line {} (value: '{}'): {}", line_num + 3, value, e)))?
+      };
+
+      // Handle fee rate field - some entries might have non-numeric values
+      let fee_rate = match fields[6].trim() {
+        "" | "NA" | "N/A" | "n/a" | "-" => 0.0, // Non-numeric indicators default to 0.0
+        value => value.parse::<f64>()
+          .map_err(|e| IBKRError::ParseError(format!("Invalid fee rate on line {} (value: '{}'): {}", line_num + 3, value, e)))?
+      };
+
+      // Handle available field - some entries might have non-numeric values or comparison operators
+      let available = match fields[7].trim() {
+        "" => 0, // Empty field defaults to 0
+        "N/A" | "n/a" | "-" => 0, // Common non-numeric indicators
+        value if value.starts_with('>') => {
+          // Handle ">10000000" format - extract the numeric part
+          value[1..].parse::<i64>().unwrap_or(0)
+        },
+        value if value.starts_with('<') => {
+          // Handle "<1000" format - extract the numeric part
+          value[1..].parse::<i64>().unwrap_or(0)
+        },
+        value => value.parse::<i64>()
+          .map_err(|e| IBKRError::ParseError(format!("Invalid available count on line {} (value: '{}'): {}", line_num + 3, value, e)))?
+      };
+
+      results.push(ShortInventoryData {
+        symbol: fields[0].to_string(),
+        currency: fields[1].to_string(),
+        name: fields[2].to_string(),
+        con: fields[3].to_string(),
+        isin: fields[4].to_string(),
+        rebate_rate,
+        fee_rate,
+        available,
+        figi: fields[8].to_string(),
+      });
+    }
+
+    info!("Parsed {} short inventory records", results.len());
+    Ok(results)
+  }
+
+  #[cfg(feature = "shortinv")]
+  /// Parse short margin data from dat file content
+  fn parse_short_margin(&self, content: &str) -> Result<Vec<ShortMarginData>, IBKRError> {
+    let mut results = Vec::new();
+    let mut lines = content.lines();
+
+    // Skip the BOF header line (#BOF|date|time)
+    if let Some(first_line) = lines.next() {
+      if !first_line.starts_with("#BOF|") {
+        return Err(IBKRError::ParseError("Invalid file format: missing BOF header".to_string()));
+      }
+    }
+
+    // Skip the column header line (#SYM|CUR|NAME|...)
+    if let Some(header_line) = lines.next() {
+      if !header_line.starts_with("#SYM|") {
+        return Err(IBKRError::ParseError("Invalid file format: missing column headers".to_string()));
+      }
+    }
+
+    // Parse data lines
+    for (line_num, line) in lines.enumerate() {
+      if line.trim().is_empty() {
+        continue;
+      }
+
+      let fields: Vec<&str> = line.split('|').collect();
+      if fields.len() != 16 {
+        warn!("Skipping line {} with {} fields (expected 16): {}", line_num + 3, fields.len(), line);
+        continue;
+      }
+
+      // Helper function to parse margin fields with non-numeric value handling
+      let parse_margin_field = |field_idx: usize, field_name: &str| -> Result<f64, IBKRError> {
+        match fields[field_idx].trim() {
+          "" | "NA" | "N/A" | "n/a" | "-" | "Default" | "default" => Ok(0.0),
+          value => value.parse::<f64>()
+            .map_err(|e| IBKRError::ParseError(format!("Invalid {} on line {} (value: '{}'): {}", field_name, line_num + 3, value, e)))
+        }
+      };
+
+      let long_maintenance_margin = parse_margin_field(6, "long maintenance margin")?;
+      let long_initial_margin = parse_margin_field(7, "long initial margin")?;
+      let short_margin = parse_margin_field(8, "short margin")?;
+      let short_initial_margin = parse_margin_field(10, "short initial margin")?;
+      let long_concentration_maintenance_margin = parse_margin_field(12, "long concentration maintenance margin")?;
+      let long_concentration_initial_margin = parse_margin_field(13, "long concentration initial margin")?;
+      let short_concentration_maintenance_margin = parse_margin_field(14, "short concentration maintenance margin")?;
+      let short_concentration_initial_margin = parse_margin_field(15, "short concentration initial margin")?;
+
+      results.push(ShortMarginData {
+        symbol: fields[0].to_string(),
+        currency: fields[1].to_string(),
+        name: fields[2].to_string(),
+        con: fields[3].to_string(),
+        isin: fields[4].to_string(),
+        cusip: fields[5].to_string(),
+        long_maintenance_margin,
+        long_initial_margin,
+        short_margin,
+        exchange: fields[9].to_string(),
+        short_initial_margin,
+        note: fields[11].to_string(),
+        long_concentration_maintenance_margin,
+        long_concentration_initial_margin,
+        short_concentration_maintenance_margin,
+        short_concentration_initial_margin,
+      });
+    }
+
+    info!("Parsed {} short margin records", results.len());
+    Ok(results)
   }
 
 }

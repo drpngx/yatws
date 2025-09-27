@@ -625,3 +625,75 @@ pub(super) fn shortability_impl(client: &IBKRClient, _is_live: bool) -> Result<(
     }
   }
 }
+
+#[cfg(feature = "shortinv")]
+pub(super) fn short_inventory_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+  use yatws::data_market_manager::ShortMarket;
+
+  info!("--- Testing Get Short Inventory ---");
+  let data_mgr = client.data_market();
+
+  // Test with USA market as it typically has the most data
+  let market = ShortMarket::USA;
+
+  info!("Requesting short inventory data for market: {:?}", market);
+
+  match data_mgr.get_short_inventory(market) {
+    Ok(inventory_data) => {
+      info!("Successfully received {} short inventory records", inventory_data.len());
+
+      if inventory_data.is_empty() {
+        warn!("Received 0 short inventory records. This might be okay depending on market conditions.");
+      } else {
+        // Log details of first few records
+        for (i, record) in inventory_data.iter().enumerate().take(3) {
+          info!(
+            "  Record {}: Symbol={}, Currency={}, Available={}, RebateRate={:.4}, FeeRate={:.4}",
+            i + 1, record.symbol, record.currency, record.available, record.rebate_rate, record.fee_rate
+          );
+        }
+      }
+      Ok(())
+    }
+    Err(e) => {
+      error!("Failed to get short inventory data: {:?}", e);
+      Err(e.into())
+    }
+  }
+}
+
+#[cfg(feature = "shortinv")]
+pub(super) fn short_margin_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+  use yatws::data_market_manager::MarginMarket;
+
+  info!("--- Testing Get Short Margin ---");
+  let data_mgr = client.data_market();
+
+  // Test with US market as it typically has the most data
+  let market = MarginMarket::US;
+
+  info!("Requesting short margin data for market: {:?}", market);
+
+  match data_mgr.get_short_margin(market) {
+    Ok(margin_data) => {
+      info!("Successfully received {} short margin records", margin_data.len());
+
+      if margin_data.is_empty() {
+        warn!("Received 0 short margin records. This might be okay depending on market conditions.");
+      } else {
+        // Log details of first few records
+        for (i, record) in margin_data.iter().enumerate().take(3) {
+          info!(
+            "  Record {}: Symbol={}, Currency={}, Exchange={}, ShortMargin={:.2}, ShortInitialMargin={:.2}",
+            i + 1, record.symbol, record.currency, record.exchange, record.short_margin, record.short_initial_margin
+          );
+        }
+      }
+      Ok(())
+    }
+    Err(e) => {
+      error!("Failed to get short margin data: {:?}", e);
+      Err(e.into())
+    }
+  }
+}

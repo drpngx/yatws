@@ -54,11 +54,13 @@ rust_library(
         "@crates//:async-trait",
         "@crates//:bitmask-enum",
     ],
+    crate_features = ["shortinv"],
     deps = [
         "@crates//:bincode",
         "@crates//:byteorder",
         "@crates//:chrono",
         "@crates//:chrono-tz",
+        "@crates//:csv",
         "@crates//:crossbeam",
         "@crates//:crossbeam-channel",
         "@crates//:env_logger",
@@ -75,6 +77,7 @@ rust_library(
         "@crates//:serde",
         "@crates//:serde_json",
         "@crates//:socket2",
+        "@crates//:suppaftp",
         "@crates//:thiserror",
         "@crates//:tokio",
         "@crates//:uuid",
@@ -139,5 +142,6 @@ rust_binary(
         "@crates//:once_cell",
         "@crates//:rand",
     ],
+    crate_features = ["shortinv"],
     visibility = ["//visibility:public"],
 )
