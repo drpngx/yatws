@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt; // Add this
 use std::str::FromStr; // Add this
-use log::warn;
 use num_enum::TryFromPrimitive;
 use chrono::{DateTime, Utc};
 
