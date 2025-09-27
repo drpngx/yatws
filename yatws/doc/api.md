@@ -893,6 +893,13 @@ Requests a single snapshot quote (Bid, Ask, Last). Blocking call.
 -   **Returns**: `Quote` tuple `(Option<f64>, Option<f64>, Option<f64>)`.
 -   **Errors**: `IBKRError::Timeout` or other request/send issues.
 
+### `DataMarketManager::get_shortability(&self, contract: &Contract, market_data_type: Option<MarketDataType>, timeout: Duration) -> Result<Shortability, IBKRError>`
+
+Requests the shortability status for a contract. Blocking call. This is based on generic tick 236, which provides a numeric status indicating if the contract is shortable, hard to borrow, or not shortable.
+-   `market_data_type`: Optional. Default `RealTime`.
+-   **Returns**: `Shortability` enum (`Shortable`, `HardToBorrow`, `NotShortable`).
+-   **Errors**: `IBKRError::Timeout` if the data is not received, or other request/send issues.
+
 ### `DataMarketManager::request_real_time_bars(&self, contract: &Contract, what_to_show: WhatToShow, use_rth: bool, real_time_bars_options:
 &[(String, String)]) -> Result<i32, IBKRError>`
 

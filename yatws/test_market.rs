@@ -595,3 +595,33 @@ pub(super) fn historical_schedule_impl(client: &IBKRClient, _is_live: bool) -> R
     }
   }
 }
+
+pub(super) fn shortability_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
+  info!("--- Testing Get Shortability ---");
+  let data_mgr = client.data_market();
+  let data_ref_mgr = client.data_ref();
+  // Using a stock that is known to have shortable info. TSLA is a good candidate.
+  let contract = Contract::stock("TSLA");
+  let timeout = Duration::from_secs(20);
+
+  info!("Requesting contract details for {} to find primary exchange...", contract.symbol);
+  let details = data_ref_mgr.get_contract_details(&contract)
+      .context("Failed to get contract details for TSLA")?;
+  let primary_detail = details.first().ok_or_else(|| anyhow!("No contract details found for TSLA"))?;
+  let detailed_contract = &primary_detail.contract;
+  info!("Found primary exchange '{}' for {}", detailed_contract.exchange, detailed_contract.symbol);
+
+  info!("Requesting shortability for {} on exchange {} with timeout {:?}", detailed_contract.symbol, detailed_contract.exchange, timeout);
+
+  match data_mgr.get_shortability(detailed_contract, Some(MarketDataType::Delayed), timeout) {
+    Ok(shortability) => {
+      info!("Successfully received shortability for {}: {:?}", detailed_contract.symbol, shortability);
+      // Any value is a success.
+      Ok(())
+    }
+    Err(e) => {
+      error!("Failed to get shortability for {}: {:?}", detailed_contract.symbol, e);
+      Err(e.into())
+    }
+  }
+}

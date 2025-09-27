@@ -4,8 +4,31 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt; // Add this
 use std::str::FromStr; // Add this
+use log::warn;
 use num_enum::TryFromPrimitive;
 use chrono::{DateTime, Utc};
+
+
+
+/// Represents the shortability status of a contract, based on the user's threshold logic.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Shortability {
+  Shortable,
+  HardToBorrow,
+  NotShortable,
+}
+
+impl From<f64> for Shortability {
+  fn from(value: f64) -> Self {
+    if value < 1.5 {
+      Shortability::NotShortable
+    } else if value < 2.5 {
+      Shortability::HardToBorrow
+    } else {
+      Shortability::Shortable
+    }
+  }
+}
 
 /// Enum representing the different types of market data ticks.
 /// Based on `https://interactivebrokers.github.io/tws-api/tick_types.html`.
@@ -432,6 +455,7 @@ pub struct MarketDataInfo {
   pub option_computation: Option<TickOptionComputationData>,
   // Tick News
   pub latest_news_time: Option<i64>, // Unix timestamp
+  pub shortability: Option<Shortability>, // Parsed from tick 236
   // Snapshot specific
   pub snapshot_permissions: Option<i32>,
   pub snapshot_end_received: bool, // Flag for snapshot completion
@@ -494,6 +518,7 @@ impl MarketDataInfo {
       short_term_volume_10_min: None,
       option_computation: None,
       latest_news_time: None,
+      shortability: None,
       snapshot_permissions: None,
       snapshot_end_received: false,
       is_blocking_quote_request: false, // Default to false

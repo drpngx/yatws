@@ -1,4 +1,5 @@
 # Test
+- implement the `tick_generic` handler with full info.
 - update doc of interface
 - test DateOrMonth for options/futures query
 - test if a future can be defined solely by the month (place order)

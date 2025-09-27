@@ -366,6 +366,14 @@
 //!     Duration::from_secs(5)
 //! )?;
 //!
+//! // Get shortability status
+//! let shortability = client.data_market().get_shortability(
+//!     &contract,
+//!     None,
+//!     Duration::from_secs(10)
+//! )?;
+//! println!("Shortability: {:?}", shortability);
+//!
 //! // Get historical data
 //! use yatws::data::DurationUnit;
 //! use yatws::contract::{BarSize, WhatToShow};

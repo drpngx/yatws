@@ -300,6 +300,7 @@ submit_test!(3008, "scanner", test_cases::scanner_impl);
 submit_test!(3009, "histogram-data", test_cases::histogram_data_impl);
 submit_test!(3010, "historical-ticks", test_cases::historical_ticks_impl);
 submit_test!(3011, "historical-schedule", test_cases::historical_schedule_impl);
+submit_test!(3012, "shortability", test_cases::shortability_impl);
 
 // === 4000s: Options Tests ===
 submit_test!(4001, "option-calculations", test_cases::option_calculations_impl);

@@ -78,7 +78,7 @@ use crate::data::{
   RealTimeBarInfo,
   TickAttrib, TickAttribBidAsk, TickAttribLast, TickByTickData, HistoricalTick,
   TickByTickInfo,
-  TickOptionComputationData, TickType, HistogramEntry, HistogramDataRequestState, HistoricalTicksRequestState,
+  TickOptionComputationData, Shortability, TickType, HistogramEntry, HistogramDataRequestState, HistoricalTicksRequestState,
   HistoricalDataRequestState, ScannerInfoState, GenericTickType, TickByTickRequestType, DurationUnit, TimePeriodUnit,
 };
 use crate::data_subscription::{
@@ -1313,6 +1313,49 @@ impl DataMarketManager {
     let _ = self.cancel_market_data(req_id);
 
     result
+  }
+
+  /// Requests and parses the shortable status for a contract.
+  /// This is a blocking call.
+  ///
+  /// This corresponds to generic tick type 236 (Shortable), which returns a string
+  /// with details about shortability that this function parses into a struct.
+  ///
+  /// # Arguments
+  /// * `contract` - The [`Contract`] for which to request shortable status.
+  /// * `market_data_type` - Optional [`MarketDataType`] (e.g., RealTime, Delayed).
+  /// * `timeout` - Maximum duration to wait for the data.
+  ///
+  /// # Returns
+  /// A `ShortableInfo` struct containing the parsed shortability details.
+  ///
+  /// # Errors
+  /// Returns `IBKRError::Timeout` if the data is not received within the timeout.
+  /// Returns `IBKRError::InternalError` if the data is not found in the response.
+  pub fn get_shortability(
+    &self,
+    contract: &Contract,
+    market_data_type: Option<MarketDataType>,
+    timeout: Duration
+  ) -> Result<Shortability, IBKRError> {
+    info!("Requesting shortability for: Contract={}", contract.symbol);
+
+    // We request generic tick 236 (Shortable).
+    let result_state = self.get_market_data(
+      contract,
+      &[GenericTickType::Shortable], // Request tick 236
+      false, // Streaming request, not a snapshot
+      false,
+      &[],
+      market_data_type, // Use the provided market data type
+      timeout,
+      |state| state.shortability.is_some()
+    )?;
+
+    result_state.shortability
+        .ok_or_else(|| {
+            IBKRError::InternalError("Shortability status not found in response, though completion condition was met.".to_string())
+        })
   }
 
 
@@ -3493,6 +3536,7 @@ impl MarketDataHandler for DataMarketManager {
                                }
         },
         TickType::BidExchange | TickType::AskExchange | TickType::LastExchange => state.last_exchange = Some(value.to_string()),
+
         _ => trace!("Unhandled string tick_type {:?} in tick_string", tick_type),
       }
 
@@ -3515,7 +3559,10 @@ impl MarketDataHandler for DataMarketManager {
         TickType::OptionHistoricalVolatility | TickType::RtHistoricalVolatility => { /* Store vol separately? */ },
         TickType::OptionImpliedVolatility => { /* Store vol separately? */ },
         TickType::IndexFuturePremium => { /* Store premium separately? */ },
-        TickType::Shortable => { /* Store shortable status separately? */ },
+        TickType::Shortable => {
+          state.shortability = Some(Shortability::from(value));
+          self.request_cond.notify_all();
+        },
         TickType::Halted => state.halted = Some(value != 0.0), // 0=Not Halted, 1/2=Halted, -1=Unknown
         TickType::TradeCount => state.trade_count = Some(value as i64),
         TickType::TradeRate => state.trade_rate = Some(value),
