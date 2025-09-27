@@ -606,7 +606,7 @@ pub(super) fn shortability_impl(client: &IBKRClient, _is_live: bool) -> Result<(
 
   info!("Requesting contract details for {} to find primary exchange...", contract.symbol);
   let details = data_ref_mgr.get_contract_details(&contract)
-      .context("Failed to get contract details for TSLA")?;
+    .context("Failed to get contract details for TSLA")?;
   let primary_detail = details.first().ok_or_else(|| anyhow!("No contract details found for TSLA"))?;
   let detailed_contract = &primary_detail.contract;
   info!("Found primary exchange '{}' for {}", detailed_contract.exchange, detailed_contract.symbol);

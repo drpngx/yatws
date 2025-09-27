@@ -900,6 +900,22 @@ Requests the shortability status for a contract. Blocking call. This is based on
 -   **Returns**: `Shortability` enum (`Shortable`, `HardToBorrow`, `NotShortable`).
 -   **Errors**: `IBKRError::Timeout` if the data is not received, or other request/send issues.
 
+### `DataMarketManager::get_short_inventory(&self, market: ShortMarket) -> Result<Vec<ShortInventoryData>, IBKRError>` (shortinv feature)
+
+Fetches short inventory data from Interactive Brokers FTP server for the specified market. Downloads and parses txt files containing rebate rates, fee rates, and available shares for shortable securities.
+-   `market`: `ShortMarket` enum specifying which market's data to fetch (e.g., `USA`, `Canada`, `Germany`)
+-   **Returns**: `Vec<ShortInventoryData>` containing parsed inventory records
+-   **Errors**: `IBKRError::InternalError` for FTP/network issues, `IBKRError::ParseError` for file format issues
+-   **Requires**: `shortinv` feature flag enabled
+
+### `DataMarketManager::get_short_margin(&self, market: MarginMarket) -> Result<Vec<ShortMarginData>, IBKRError>` (shortinv feature)
+
+Fetches short margin data from Interactive Brokers FTP server for the specified market. Downloads and parses dat files containing margin requirements for securities.
+-   `market`: `MarginMarket` enum specifying which market's data to fetch (e.g., `US`, `Canada`, `HongKong`)
+-   **Returns**: `Vec<ShortMarginData>` containing parsed margin requirement records
+-   **Errors**: `IBKRError::InternalError` for FTP/network issues, `IBKRError::ParseError` for file format issues
+-   **Requires**: `shortinv` feature flag enabled
+
 ### `DataMarketManager::request_real_time_bars(&self, contract: &Contract, what_to_show: WhatToShow, use_rth: bool, real_time_bars_options:
 &[(String, String)]) -> Result<i32, IBKRError>`
 
@@ -1178,6 +1194,75 @@ Each subscription builder provides a fluent interface for configuring the subscr
 
 ```rust
 pub type Quote = (Option<f64>, Option<f64>, Option<f64>); // (Bid, Ask, Last)
+```
+
+### Short Inventory Data Structures (shortinv feature)
+
+**File:** `yatws/src/data_market_manager.rs`
+
+#### ShortMarket Enum
+
+Represents different markets for short inventory data (txt files from IB FTP server).
+
+```rust
+pub enum ShortMarket {
+    Australia, Austria, Belgium, British, Canada, Dutch, France, Germany,
+    HongKong, India, Italy, Japan, Mexico, Singapore, Spain, Swedish,
+    Swiss, USA, Custom(String)
+}
+```
+
+#### MarginMarket Enum
+
+Represents different markets for margin data (dat files from IB FTP server).
+
+```rust
+pub enum MarginMarket {
+    Australia, Canada, HongKong, India, Japan, Singapore, UKL, US, Custom(String)
+}
+```
+
+#### ShortInventoryData Struct
+
+Contains short inventory information from txt files.
+
+```rust
+pub struct ShortInventoryData {
+    pub symbol: String,
+    pub currency: String,
+    pub name: String,
+    pub con: String,          // Contract ID
+    pub isin: String,         // ISIN identifier
+    pub rebate_rate: f64,     // Rebate rate for short selling
+    pub fee_rate: f64,        // Fee rate for borrowing
+    pub available: i64,       // Available shares for shorting
+    pub figi: String,         // FIGI identifier
+}
+```
+
+#### ShortMarginData Struct
+
+Contains margin requirement information from dat files.
+
+```rust
+pub struct ShortMarginData {
+    pub symbol: String,
+    pub currency: String,
+    pub name: String,
+    pub con: String,          // Contract ID
+    pub isin: String,         // ISIN identifier
+    pub cusip: String,        // CUSIP identifier
+    pub long_maintenance_margin: f64,
+    pub long_initial_margin: f64,
+    pub short_margin: f64,
+    pub exchange: String,
+    pub short_initial_margin: f64,
+    pub note: String,
+    pub long_concentration_maintenance_margin: f64,
+    pub long_concentration_initial_margin: f64,
+    pub short_concentration_maintenance_margin: f64,
+    pub short_concentration_initial_margin: f64,
+}
 ```
 
 ---
