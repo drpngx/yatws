@@ -628,7 +628,7 @@ pub(super) fn shortability_impl(client: &IBKRClient, _is_live: bool) -> Result<(
 
 #[cfg(feature = "shortinv")]
 pub(super) fn short_inventory_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
-  use yatws::data_market_manager::ShortMarket;
+  use yatws::data::ShortMarket;
 
   info!("--- Testing Get Short Inventory ---");
   let data_mgr = client.data_market();
@@ -664,7 +664,7 @@ pub(super) fn short_inventory_impl(client: &IBKRClient, _is_live: bool) -> Resul
 
 #[cfg(feature = "shortinv")]
 pub(super) fn short_margin_impl(client: &IBKRClient, _is_live: bool) -> Result<()> {
-  use yatws::data_market_manager::MarginMarket;
+  use yatws::data::MarginMarket;
 
   info!("--- Testing Get Short Margin ---");
   let data_mgr = client.data_market();

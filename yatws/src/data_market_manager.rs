@@ -81,6 +81,7 @@ use crate::data::{
   TickOptionComputationData, Shortability, TickType, HistogramEntry, HistogramDataRequestState, HistoricalTicksRequestState,
   HistoricalDataRequestState, ScannerInfoState, GenericTickType, TickByTickRequestType, DurationUnit, TimePeriodUnit,
 };
+
 use crate::data_subscription::{
   TickDataSubscriptionBuilder, RealTimeBarSubscriptionBuilder, TickByTickSubscriptionBuilder,
   MarketDepthSubscriptionBuilder, HistoricalDataSubscriptionBuilder, MultiSubscriptionBuilder,
@@ -104,11 +105,9 @@ use crate::rate_limiter::CounterRateLimiter;
 use log::{debug, info, trace, warn};
 
 #[cfg(feature = "shortinv")]
-use suppaftp::{FtpStream, Mode};
+use suppaftp::FtpStream;
 #[cfg(feature = "shortinv")]
-use std::io::Read;
-#[cfg(feature = "shortinv")]
-use csv::ReaderBuilder;
+use crate::data::{ShortMarginData, ShortInventoryData, MarginMarket, ShortMarket};
 
 
 // --- Helper Trait for Generic Waiting ---
@@ -325,140 +324,6 @@ impl TryIntoStateHelper<OptionCalculationState> for MarketStream {
     match self { MarketStream::OptionCalc(s) => Some(s), _ => None }
   }
 }
-
-#[cfg(feature = "shortinv")]
-/// Represents different markets for short inventory data (txt files)
-#[derive(Debug, Clone, PartialEq)]
-pub enum ShortMarket {
-  Australia,
-  Austria,
-  Belgium,
-  British,
-  Canada,
-  Dutch,
-  France,
-  Germany,
-  HongKong,
-  India,
-  Italy,
-  Japan,
-  Mexico,
-  Singapore,
-  Spain,
-  Swedish,
-  Swiss,
-  USA,
-  /// Custom filename
-  Custom(String),
-}
-
-#[cfg(feature = "shortinv")]
-impl ShortMarket {
-  /// Convert the enum to the corresponding filename on the FTP server
-  pub fn to_filename(&self) -> String {
-    match self {
-      ShortMarket::Australia => "australia.txt".to_string(),
-      ShortMarket::Austria => "austria.txt".to_string(),
-      ShortMarket::Belgium => "belgium.txt".to_string(),
-      ShortMarket::British => "british.txt".to_string(),
-      ShortMarket::Canada => "canada.txt".to_string(),
-      ShortMarket::Dutch => "dutch.txt".to_string(),
-      ShortMarket::France => "france.txt".to_string(),
-      ShortMarket::Germany => "germany.txt".to_string(),
-      ShortMarket::HongKong => "hongkong.txt".to_string(),
-      ShortMarket::India => "india.txt".to_string(),
-      ShortMarket::Italy => "italy.txt".to_string(),
-      ShortMarket::Japan => "japan.txt".to_string(),
-      ShortMarket::Mexico => "mexico.txt".to_string(),
-      ShortMarket::Singapore => "singapore.txt".to_string(),
-      ShortMarket::Spain => "spain.txt".to_string(),
-      ShortMarket::Swedish => "swedish.txt".to_string(),
-      ShortMarket::Swiss => "swiss.txt".to_string(),
-      ShortMarket::USA => "usa.txt".to_string(),
-      ShortMarket::Custom(filename) => filename.clone(),
-    }
-  }
-}
-
-#[cfg(feature = "shortinv")]
-/// Represents different markets for margin data (dat files)
-#[derive(Debug, Clone, PartialEq)]
-pub enum MarginMarket {
-  /// Australian stock margin details
-  Australia,
-  /// Canadian stock margin details
-  Canada,
-  /// Hong Kong stock margin details
-  HongKong,
-  /// Indian stock margin details
-  India,
-  /// Japanese stock margin details
-  Japan,
-  /// Singapore stock margin details
-  Singapore,
-  /// UK stock margin details
-  UKL,
-  /// US stock margin details
-  US,
-  /// Custom filename
-  Custom(String),
-}
-
-#[cfg(feature = "shortinv")]
-impl MarginMarket {
-  /// Convert the enum to the corresponding filename on the FTP server
-  pub fn to_filename(&self) -> String {
-    match self {
-      MarginMarket::Australia => "stockmargin_final_dtls.IB-AU.dat".to_string(),
-      MarginMarket::Canada => "stockmargin_final_dtls.IB-CAN.dat".to_string(),
-      MarginMarket::HongKong => "stockmargin_final_dtls.IB-HK.dat".to_string(),
-      MarginMarket::India => "stockmargin_final_dtls.IB-IN.dat".to_string(),
-      MarginMarket::Japan => "stockmargin_final_dtls.IB-JP.dat".to_string(),
-      MarginMarket::Singapore => "stockmargin_final_dtls.IB-SG.dat".to_string(),
-      MarginMarket::UKL => "stockmargin_final_dtls.IB-UKL.dat".to_string(),
-      MarginMarket::US => "stockmargin_final_dtls.IBLLC-US.dat".to_string(),
-      MarginMarket::Custom(filename) => filename.clone(),
-    }
-  }
-}
-
-#[cfg(feature = "shortinv")]
-/// Short inventory data from txt files
-#[derive(Debug, Clone)]
-pub struct ShortInventoryData {
-  pub symbol: String,
-  pub currency: String,
-  pub name: String,
-  pub con: String,
-  pub isin: String,
-  pub rebate_rate: f64,
-  pub fee_rate: f64,
-  pub available: i64,
-  pub figi: String,
-}
-
-#[cfg(feature = "shortinv")]
-/// Short margin data from dat files
-#[derive(Debug, Clone)]
-pub struct ShortMarginData {
-  pub symbol: String,
-  pub currency: String,
-  pub name: String,
-  pub con: String,
-  pub isin: String,
-  pub cusip: String,
-  pub long_maintenance_margin: f64,
-  pub long_initial_margin: f64,
-  pub short_margin: f64,
-  pub exchange: String,
-  pub short_initial_margin: f64,
-  pub note: String,
-  pub long_concentration_maintenance_margin: f64,
-  pub long_concentration_initial_margin: f64,
-  pub short_concentration_maintenance_margin: f64,
-  pub short_concentration_initial_margin: f64,
-}
-
 
 /// Manages requests for real-time and historical market data from TWS.
 ///

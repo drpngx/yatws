@@ -51,8 +51,9 @@ mockall = "0.13.1"
 serial_test = "3.2.0"
 tempfile = "3.19.1"
 
-# [features]
+[features]
 # shortinv = ["dep:suppaftp", "dep:csv"]
+shortinv = []
 
 [lib]
 name = "yatws"
@@ -64,3 +65,4 @@ path = "tws_snoop.rs"
 [[bin]]
 name = "gen_goldens"
 path = "gen_goldens.rs"
+required-features = ["shortinv"]

@@ -377,12 +377,12 @@
 //! // Get short inventory data (requires shortinv feature)
 //! #[cfg(feature = "shortinv")]
 //! {
-//!     use yatws::data_market_manager::ShortMarket;
+//!     use yatws::data::ShortMarket;
 //!     let inventory = client.data_market().get_short_inventory(ShortMarket::USA)?;
 //!     println!("Found {} shortable stocks", inventory.len());
 //!
 //!     // Get margin requirements
-//!     use yatws::data_market_manager::MarginMarket;
+//!     use yatws::data::MarginMarket;
 //!     let margin_data = client.data_market().get_short_margin(MarginMarket::US)?;
 //!     println!("Found {} margin entries", margin_data.len());
 //! }
