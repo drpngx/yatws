@@ -126,7 +126,12 @@ impl MarginMarket {
 }
 
 #[cfg(feature = "shortinv")]
-/// Short inventory data from txt files
+/// Short inventory data from txt files.
+/// Example:
+/// ```
+/// #SYM|CUR|NAME|CON|ISIN|REBATERATE|FEERATE|AVAILABLE|FIGI|
+/// AABB|USD|ASIA BROADBAND INC|75216559|XXXXXXXL1008|-0.4137|4.5037|>10000000|BBG000CWNRN5|
+/// ```
 #[derive(Debug, Clone)]
 pub struct ShortInventoryData {
   pub symbol: String,
@@ -136,12 +141,19 @@ pub struct ShortInventoryData {
   pub isin: String,
   pub rebate_rate: f64,
   pub fee_rate: f64,
+  // Capped at the limit, for instance `<1000` is translated to 1000.
   pub available: i64,
   pub figi: String,
 }
 
 #[cfg(feature = "shortinv")]
-/// Short margin data from dat files
+/// Short margin data from dat files.
+///
+/// Example:
+/// ```
+/// #SYM|CUR|NAME|CON|ISIN|CUSIP|LongMaintenanceMargin|LongInitialMargin|ShortMargin|Exchange|ShortInitialMargin|Note|LongConcentrationMaintenanceMargin|LongConcentrationInitialMargin|ShortConcentrationMaintenanceMargin|ShortConcentrationInitialMargin
+/// 000001|CNH|PING AN BANK CO LTD-A|257310549|||50|60|200|SEHKSZSE|200||43|54|200|220
+/// ```
 #[derive(Debug, Clone)]
 pub struct ShortMarginData {
   pub symbol: String,
