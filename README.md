@@ -24,14 +24,5 @@ This library was born out of the need to place orders in rapid succession in res
 - **Rate limits**: pace the requests in accordance with IBKR rules
 - **Session Recording/Replay**: Record TWS interactions for testing and debugging
 
-## Installation
-
-Add this to your `Cargo.toml`:
-
-```toml
-[dependencies]
-yatws = "0.1.5"    # Replace with actual version
-```
-
 ## Reading Further
 For more information, see the [crate `README`](https://github.com/drpngx/yatws/yatws/README.md).
