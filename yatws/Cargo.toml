@@ -11,45 +11,45 @@ keywords = ["finance", "trading", "interactive-brokers", "tws"]
 categories = ["api-bindings", "finance"]
 
 [dependencies]
-anyhow = "1.0.98"
-async-trait = "0.1.88"
+anyhow = "1.0.100"
+async-trait = "0.1.89"
 bincode = "2.0.1"
 bitmask-enum = "2.2.5"
 byteorder = "1.5.0"
-chrono = { version = "0.4.39", features = ["std", "serde"] }
-chrono-tz = "0.10.1"
-clap = { version = "4.5.31", features = ["derive"] }
+chrono = { version = "0.4.42", features = ["std", "serde"] }
+chrono-tz = "0.10.4"
+clap = { version = "4.5.53", features = ["derive"] }
 crossbeam = "0.8.4"
 crossbeam-channel = "0.5.15"
-env_logger = "0.11.6"
+env_logger = "0.11.8"
 futures = "0.3.31"
-glob = "0.3.2"
-inventory = "0.3.20"
+glob = "0.3.3"
+inventory = "0.3.21"
 lazy_static = "1.5.0"
-log = "0.4.26"
-num_enum = "0.7.3"
+log = "0.4.29"
+num_enum = "0.7.5"
 num-traits = "0.2.19"
 once_cell = "1.21.3"
-parking_lot = "0.12.3"
-rand = "0.9.1"
+parking_lot = "0.12.5"
+rand = "0.9.2"
 rusqlite = { version = "0.37.0", features = ["vtab", "functions", "window", "blob", "bundled", "rusqlite-macros"] }
-rust_decimal = "1.37.1"
-serde = { version = "1.0.218", features = ["derive"] }
-serde_json = { version = "1.0.140", features = ["raw_value"] }
-socket2 = { version = "0.6.0", features = ["all"] }
-thiserror = "2.0.12"
-time = { version = "0.3.39", features = ["macros", "parsing", "serde", "serde-human-readable"] }
-tokio = { version = "1.43.0", features = ["full"] }
-uuid = { version = "1.16.0", features = ["v4"] }
-quick-xml = { version = "0.38.0", features = ["serialize"] }
-suppaftp = { version = "7.0.4" }
-csv = { version = "1.3.1" }
+rust_decimal = "1.39.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.145", features = ["raw_value"] }
+socket2 = { version = "0.6.1", features = ["all"] }
+thiserror = "2.0.17"
+time = { version = "0.3.44", features = ["macros", "parsing", "serde", "serde-human-readable"] }
+tokio = { version = "1.48.0", features = ["full"] }
+uuid = { version = "1.19.0", features = ["v4"] }
+quick-xml = { version = "0.38.4", features = ["serialize"] }
+suppaftp = { version = "7.0.7" }
+csv = { version = "1.4.0" }
 
 [dev-dependencies]
 tokio-test = "0.4.4"
-mockall = "0.13.1"
+mockall = "0.14.0"
 serial_test = "3.2.0"
-tempfile = "3.19.1"
+tempfile = "3.23.0"
 
 [features]
 # shortinv = ["dep:suppaftp", "dep:csv"]
