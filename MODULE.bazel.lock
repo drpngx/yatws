@@ -218,7 +218,7 @@
     "@@rules_python+//python/extensions:pip.bzl%pip": {
       "general": {
         "bzlTransitiveDigest": "f5Qzs2yYj0xwctl1u0wyr5j4kfFou/jJ18L3DrUh9wg=",
-        "usagesDigest": "miEcL4ELf+wYUnv/UR8wHuIgTEUc6QyWCo1W87uLHpE=",
+        "usagesDigest": "1jWgMmGGlxur8Us5Wg/OiT51rqBVNzN74jN/QDddWkU=",
         "recordedFileInputs": {
           "@@//requirements_lock.txt": "3755c3bb16588c85eddf454b53d27259ea16653db96079b4d8776582631cf38d",
           "@@protobuf+//python/requirements.txt": "983be60d3cec4b319dcab6d48aeb3f5b2f7c3350f26b3a9e97486c37967c73c5",
@@ -2967,11 +2967,11 @@
     "@@rules_rust+//crate_universe:extensions.bzl%crate": {
       "general": {
         "bzlTransitiveDigest": "Ux2cPmBAxGYBjgaCccNSBi1HUK22wI+tM1lGNpU29GI=",
-        "usagesDigest": "XHh8UrpRsG3lPrwh6huC6fgydAGlXowJCD3T9fRS5PE=",
+        "usagesDigest": "kPQimew5CY2W2nH2Je6aOHwr/smiNlLw0LnKEddVFXU=",
         "recordedFileInputs": {
           "@@//Cargo.lock": "e31dd1e8735dccad4b1a6398aa287c87b09a0a99964821f64b0d3ecfa634e000",
           "@@//Cargo.toml": "a0aaa2c2f548500dfe6bf3e43d451846a2a138492111af2c390853f5876831e8",
-          "@@//yatws/Cargo.toml": "950b926df6f8bb2730959d641248a3a8fcb66fdef341df89219aeff8bc9eeb09"
+          "@@//yatws/Cargo.toml": "feb3f60ad5b217eed0ee7892a3fe896a3b8443ebf5b50d873fd9c1af315a27c2"
         },
         "recordedDirentsInputs": {},
         "envVariables": {
