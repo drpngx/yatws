@@ -142,8 +142,8 @@ pub fn parse_tws_date_time(time_str: &str) -> Result<DateTime<Utc>, IBKRError> {
   )))
 }
 
-pub fn parse_opt_tws_date_time(time_opt_str: Option<String>) -> Result<Option<DateTime<Utc>>, IBKRError> {
-  time_opt_str.map(|x| parse_tws_date_time(&x)).transpose()
+pub fn parse_opt_tws_date_time(time_opt_str: Option<&str>) -> Result<Option<DateTime<Utc>>, IBKRError> {
+  time_opt_str.map(|x| parse_tws_date_time(x)).transpose()
 }
 
 pub struct FieldParser<'a> {
@@ -185,8 +185,8 @@ impl<'a> FieldParser<'a> {
   #[allow(dead_code)]
   pub fn num(&self) -> usize { self.fields.len() }
 
-  /// Read a string field, accepting non-strictly UTF strings.
-  pub fn read_string(&mut self) -> Result<String, IBKRError> {
+  /// Read a string slice field directly from the buffer (Zero-Copy).
+  pub fn read_str(&mut self) -> Result<&'a str, IBKRError> {
     if self.current_field >= self.fields.len() {
       return Err(IBKRError::ParseError(
         "Unexpected end of message".to_string(),
@@ -197,50 +197,26 @@ impl<'a> FieldParser<'a> {
     self.current_field += 1;
 
     if start >= end {
-      return Ok(String::new());
+      return Ok("");
     }
     let bytes = &self.data[start..end];
-    let mut result = String::new();
-
-    for &byte in bytes {
-      if byte == 0 {
-        break;
-      }
-      result.push(byte as char);
-    }
-
-    Ok(result)
+    
+    std::str::from_utf8(bytes).map_err(|e| IBKRError::ParseError(format!("Invalid UTF-8 string: {}", e)))
   }
 
-  /// Read an optional string field, accepting non-strictly UTF strings.
-  pub fn read_string_opt(&mut self) -> Result<Option<String>, IBKRError> {
-    if self.current_field >= self.fields.len() {
-      return Err(IBKRError::ParseError("Unexpected end of message".to_string()));
+  /// Read an optional string slice field directly from the buffer (Zero-Copy).
+  pub fn read_str_opt(&mut self) -> Result<Option<&'a str>, IBKRError> {
+    let s = self.read_str()?;
+    if s.is_empty() {
+      Ok(None)
+    } else {
+      Ok(Some(s))
     }
-
-    let (start, end) = self.fields[self.current_field];
-    self.current_field += 1;
-
-    if start >= end {
-      return Ok(None);
-    }
-
-    let bytes = &self.data[start..end];
-    let mut result = String::new();
-
-    for &byte in bytes {
-      if byte == 0 {
-        break;
-      }
-      result.push(byte as char);
-    }
-
-    Ok(if result.is_empty() { None } else { Some(result) })
   }
 
   /// Read an integer field
   pub fn read_int(&mut self, show_unset: bool) -> Result<i32, IBKRError> {
-    let s = self.read_string()?;
+    let s = self.read_str()?;
 
     if s.is_empty() {
       return Ok(if show_unset { i32::MAX } else { 0 });
@@ -252,7 +228,7 @@ impl<'a> FieldParser<'a> {
 
   /// Read an integer field
   pub fn read_i64(&mut self) -> Result<i64, IBKRError> {
-    let s = self.read_string()?;
+    let s = self.read_str()?;
 
     if s.is_empty() {
       return Ok(0);
@@ -264,7 +240,7 @@ impl<'a> FieldParser<'a> {
 
   /// Read a double field
   pub fn read_double(&mut self, show_unset: bool) -> Result<f64, IBKRError> {
-    let s = self.read_string()?;
+    let s = self.read_str()?;
 
     if s.is_empty() {
       return Ok(if show_unset { f64::MAX } else { 0.0 });
@@ -296,7 +272,7 @@ impl<'a> FieldParser<'a> {
 
   // Example using f64 for Decimal. Adjust if using rust_decimal::Decimal
   pub fn read_decimal_max(&mut self) -> Result<Option<f64>, IBKRError> {
-    let s = self.read_string()?;
+    let s = self.read_str()?;
     if s.is_empty() { return Ok(None); } // Or handle as error depending on context
     match s.parse::<f64>() {
       Ok(val) => {
@@ -331,7 +307,7 @@ impl<'a> FieldParser<'a> {
   }
 
   pub fn read_bool_opt(&mut self, show_unset: bool) -> Result<Option<bool>, IBKRError> {
-    if self.peek_string()?.is_empty() {
+    if self.peek_str()?.is_empty() {
       Ok(None)
     } else {
       let val = self.read_int(show_unset)?;
@@ -339,8 +315,8 @@ impl<'a> FieldParser<'a> {
     }
   }
 
-  /// Peek at the next string without advancing the cursor
-  pub fn peek_string(&self) -> Result<String, IBKRError> {
+  /// Peek at the next string slice without advancing the cursor
+  pub fn peek_str(&self) -> Result<&'a str, IBKRError> {
     if self.current_field >= self.fields.len() {
       return Err(IBKRError::ParseError("Unexpected end of message".to_string()));
     }
@@ -348,11 +324,10 @@ impl<'a> FieldParser<'a> {
     let (start, end) = self.fields[self.current_field];
 
     if start >= end {
-      return Ok(String::new());
+      return Ok("");
     }
 
     std::str::from_utf8(&self.data[start..end])
-      .map(|s| s.to_string())
       .map_err(|e| IBKRError::ParseError(format!("Failed to parse string: {}", e)))
   }
 
@@ -400,8 +375,8 @@ pub fn parse_tws_date_or_month(time_str: &str) -> Result<DateOrMonth, IBKRError>
 /// Parse from an optional non-empty string.
 ///
 /// If the string is defined, it must be a valid `DateOrMonth`.
-pub fn parse_opt_tws_date_or_month(time_opt_str: Option<String>) -> Result<Option<DateOrMonth>, IBKRError> {
-  time_opt_str.map(|x| parse_tws_date_or_month(&x)).transpose()
+pub fn parse_opt_tws_date_or_month(time_opt_str: Option<&str>) -> Result<Option<DateOrMonth>, IBKRError> {
+  time_opt_str.map(|x| parse_tws_date_or_month(x)).transpose()
 }
 
 /// Parses a TWS date string in "YYYYMMDD" format into a NaiveDate.
@@ -416,8 +391,8 @@ pub fn parse_tws_date(date_str: &str) -> Result<NaiveDate, IBKRError> {
     .map_err(|e| IBKRError::ParseError(format!("Date parse error: {} in `{}`", e, date_str)))
 }
 
-pub fn parse_opt_tws_date(date_opt_str: Option<String>) -> Result<Option<NaiveDate>, IBKRError> {
-  date_opt_str.map(|x| parse_tws_date(&x)).transpose()
+pub fn parse_opt_tws_date(date_opt_str: Option<&str>) -> Result<Option<NaiveDate>, IBKRError> {
+  date_opt_str.map(|x| parse_tws_date(x)).transpose()
 }
 
 /// Parses a TWS year-month string in "YYYYMM" format into a YearMonth.
@@ -441,8 +416,8 @@ pub fn parse_tws_month(ym_str: &str) -> Result<YearMonth, IBKRError> {
 }
 
 /// Parses an Option<String> TWS year-month string in "YYYYMM" format into Option<YearMonth>.
-pub fn parse_opt_tws_month(ym_opt_str: Option<String>) -> Result<Option<YearMonth>, IBKRError> {
-  ym_opt_str.map(|x| parse_tws_month(&x)).transpose()
+pub fn parse_opt_tws_month(ym_opt_str: Option<&str>) -> Result<Option<YearMonth>, IBKRError> {
+  ym_opt_str.map(|x| parse_tws_month(x)).transpose()
 }
 
 /// Parses a TWS year-month string in "YYYYMM" format into a YearMonth.
@@ -458,6 +433,6 @@ pub fn parse_tws_time(time_str: &str) -> Result<NaiveTime, IBKRError> {
 }
 
 #[allow(dead_code)]
-pub fn parse_opt_tws_time(time_opt_str: Option<String>) -> Result<Option<NaiveTime>, IBKRError> {
-  time_opt_str.map(|x| parse_tws_time(&x)).transpose()
+pub fn parse_opt_tws_time(time_opt_str: Option<&str>) -> Result<Option<NaiveTime>, IBKRError> {
+  time_opt_str.map(|x| parse_tws_time(x)).transpose()
 }

@@ -102,14 +102,14 @@ pub fn process_historical_data(handler: &Arc<dyn MarketDataHandler>, parser: &mu
 
   let req_id = parser.read_int(false)?;
 
-  let start_date_str = parser.read_string_opt()?; // Consume if present (version >= 2)
-  let end_date_str = parser.read_string_opt()?; // Consume if present (version >= 2)
+  let start_date_str = parser.read_str_opt()?; // Consume if present (version >= 2)
+  let end_date_str = parser.read_str_opt()?; // Consume if present (version >= 2)
 
   let item_count = parser.read_int(false)?;
   log::trace!("Historical Data: ReqID={}, ItemCount={}", req_id, item_count);
 
   for i in 0..item_count {
-    let date_str = parser.read_string()?;
+    let date_str = parser.read_str()?;
     let open = parser.read_double(false)?;
     let high = parser.read_double(false)?;
     let low = parser.read_double(false)?;
@@ -118,13 +118,13 @@ pub fn process_historical_data(handler: &Arc<dyn MarketDataHandler>, parser: &mu
     let wap = parser.read_decimal_max()?.unwrap_or(-1.0); // Use -1 if invalid/max
 
     if server_version < min_server_ver::SYNT_REALTIME_BARS {
-      let _has_gaps = parser.read_string()?; // Consume "hasGaps" field if present
+      let _has_gaps = parser.read_str()?; // Consume "hasGaps" field if present
     }
 
     let bar_count = parser.read_int_max(false)?.unwrap_or(-1); // Use -1 if invalid/max
 
     // Parse timestamp (handle different formats)
-    let time = crate::protocol_dec_parser::parse_tws_date_time(&date_str)
+    let time = crate::protocol_dec_parser::parse_tws_date_time(date_str)
       .or_else(|_| {
         // Try parsing as epoch seconds if primary format fails
         date_str.parse::<i64>().map(|epoch| {
@@ -178,7 +178,7 @@ pub fn process_market_depth_l2(handler: &Arc<dyn MarketDataHandler>, parser: &mu
   let _version = parser.read_int(false)?;
   let req_id = parser.read_int(false)?;
   let position = parser.read_int(false)?;
-  let market_maker = parser.read_string()?;
+  let market_maker = parser.read_str()?;
   let operation = parser.read_int(false)?;
   let side = parser.read_int(false)?;
   let price = parser.read_double(false)?;
@@ -192,7 +192,7 @@ pub fn process_market_depth_l2(handler: &Arc<dyn MarketDataHandler>, parser: &mu
 
   log::trace!("Market Depth L2: ID={}, Pos={}, MM={}, Op={}, Side={}, Price={}, Size={}, Smart={}",
               req_id, position, market_maker, operation, side, price, size, is_smart_depth);
-  handler.update_mkt_depth_l2(req_id, position, &market_maker, operation, side, price, size, is_smart_depth);
+  handler.update_mkt_depth_l2(req_id, position, market_maker, operation, side, price, size, is_smart_depth);
   Ok(())
 }
 
@@ -202,10 +202,10 @@ pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, parser: &mut Field
   let req_id = parser.read_int(false)?;
   let tick_type_int = parser.read_int(false)?;
   let basis_points = parser.read_double(false)?;
-  let formatted_basis_points = parser.read_string()?;
+  let formatted_basis_points = parser.read_str()?;
   let implied_futures_price = parser.read_double(false)?;
   let hold_days = parser.read_int(false)?;
-  let future_last_trade_date = parser.read_string()?;
+  let future_last_trade_date = parser.read_str()?;
   let dividend_impact = parser.read_double(false)?;
   let dividends_to_last_trade_date = parser.read_double(false)?;
 
@@ -218,7 +218,7 @@ pub fn process_tick_efp(handler: &Arc<dyn MarketDataHandler>, parser: &mut Field
   log::trace!("Tick EFP: ID={}, Type={:?}({}), BasisPts={}, FmtBasisPts={}, ImpFutPx={}, HoldDays={}, FutLastTrade={}, DivImpact={}, DivsToDate={}",
               req_id, tick_type, tick_type_int, basis_points, formatted_basis_points, implied_futures_price, hold_days, future_last_trade_date, dividend_impact, dividends_to_last_trade_date);
 
-  handler.tick_efp(req_id, tick_type, basis_points, &formatted_basis_points, implied_futures_price, hold_days, &future_last_trade_date, dividend_impact, dividends_to_last_trade_date);
+  handler.tick_efp(req_id, tick_type, basis_points, formatted_basis_points, implied_futures_price, hold_days, future_last_trade_date, dividend_impact, dividends_to_last_trade_date);
   Ok(())
 }
 
@@ -366,7 +366,7 @@ pub fn process_histogram_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut
 pub fn process_historical_data_update(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let req_id = parser.read_int(false)?;
   let bar_count = parser.read_int(false)?; // Usually 1 for updates
-  let date_str = parser.read_string()?; // Should be epoch seconds for updates? Check format.
+  let date_str = parser.read_str()?; // Should be epoch seconds for updates? Check format.
   let open = parser.read_double(false)?;
   let close = parser.read_double(false)?;
   let high = parser.read_double(false)?;
@@ -375,7 +375,7 @@ pub fn process_historical_data_update(handler: &Arc<dyn MarketDataHandler>, pars
   let volume = parser.read_decimal_max()?.unwrap_or(0.0);
 
   // Parse timestamp (expecting epoch seconds for updates)
-  let time = crate::protocol_dec_parser::parse_tws_date_time(&date_str)
+  let time = crate::protocol_dec_parser::parse_tws_date_time(date_str)
     .or_else(|_| {
       // Try parsing as epoch seconds if primary format fails
       date_str.parse::<i64>().map(|epoch| {
@@ -406,9 +406,9 @@ pub fn process_historical_data_update(handler: &Arc<dyn MarketDataHandler>, pars
 pub fn process_reroute_mkt_data_req(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let req_id = parser.read_int(false)?;
   let con_id = parser.read_int(false)?;
-  let exchange = parser.read_string()?;
+  let exchange = parser.read_str()?;
   log::info!("Reroute Market Data Request: ReqID={}, ConID={}, Exchange={}", req_id, con_id, exchange);
-  handler.reroute_mkt_data_req(req_id, con_id, &exchange);
+  handler.reroute_mkt_data_req(req_id, con_id, exchange);
   Ok(())
 }
 
@@ -416,9 +416,9 @@ pub fn process_reroute_mkt_data_req(handler: &Arc<dyn MarketDataHandler>, parser
 pub fn process_reroute_mkt_depth_req(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let req_id = parser.read_int(false)?;
   let con_id = parser.read_int(false)?;
-  let exchange = parser.read_string()?;
+  let exchange = parser.read_str()?;
   log::info!("Reroute Market Depth Request: ReqID={}, ConID={}, Exchange={}", req_id, con_id, exchange);
-  handler.reroute_mkt_depth_req(req_id, con_id, &exchange);
+  handler.reroute_mkt_depth_req(req_id, con_id, exchange);
   Ok(())
 }
 
@@ -475,8 +475,8 @@ pub fn process_historical_ticks_last(handler: &Arc<dyn MarketDataHandler>, parse
     let attrib = parse_tick_attrib_last(mask);
     let price = parser.read_double(false)?;
     let size = parser.read_decimal_max()?.unwrap_or(0.0);
-    let exchange = parser.read_string()?;
-    let special_conditions = parser.read_string()?;
+    let exchange = parser.read_str()?.to_string();
+    let special_conditions = parser.read_str()?.to_string();
     ticks.push((time, attrib, price, size, exchange, special_conditions));
   }
   let done = parser.read_bool(false)?;
@@ -497,10 +497,10 @@ pub fn process_tick_by_tick(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
       let size = parser.read_decimal_max()?.unwrap_or(0.0);
       let mask = parser.read_int(false)?;
       let tick_attrib_last = parse_tick_attrib_last(mask);
-      let exchange = parser.read_string()?;
-      let special_conditions = parser.read_string()?;
+      let exchange = parser.read_str()?;
+      let special_conditions = parser.read_str()?;
       log::trace!("Tick-By-Tick Last/AllLast: ID={}, Type={}, Time={}, Px={}, Sz={}, Exch={}, Cond={}", req_id, tick_type_int, time, price, size, exchange, special_conditions);
-      handler.tick_by_tick_all_last(req_id, tick_type_int, time, price, size, tick_attrib_last, &exchange, &special_conditions);
+      handler.tick_by_tick_all_last(req_id, tick_type_int, time, price, size, tick_attrib_last, exchange, special_conditions);
     },
     3 => { // BidAsk
       let bid_price = parser.read_double(false)?;
@@ -549,7 +549,7 @@ pub fn process_tick_string(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fi
   let _version = parser.read_int(false)?;
   let req_id = parser.read_int(false)?;
   let tick_type_int = parser.read_int(false)?;
-  let value = parser.read_string()?;
+  let value = parser.read_str()?;
 
   let tick_type = TickType::try_from(tick_type_int)
     .unwrap_or_else(|_| {
@@ -558,7 +558,7 @@ pub fn process_tick_string(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fi
     });
 
   log::trace!("Tick String: ID={}, Type={:?}({}), Value='{}'", req_id, tick_type, tick_type_int, value);
-  handler.tick_string(req_id, tick_type, &value);
+  handler.tick_string(req_id, tick_type, value);
   Ok(())
 }
 
@@ -566,9 +566,9 @@ pub fn process_tick_string(handler: &Arc<dyn MarketDataHandler>, parser: &mut Fi
 // AI: Process the XML into a rustr struct, for example: <ScannerSubscription instrument="STK" locationCode="STK.US.MAJOR" scanCode="TOP_PERC_GAIN" numberOfRows="50" abovePrice="10" belowPrice="200" aboveVolume="1000000"/>
 pub fn process_scanner_parameters(handler: &Arc<dyn MarketDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let _version = parser.read_int(false)?; // Version is typically 1
-  let xml_data = parser.read_string()?;
+  let xml_data = parser.read_str()?;
   log::debug!("Scanner Parameters XML received (length: {})", xml_data.len());
-  handler.scanner_parameters(&xml_data);
+  handler.scanner_parameters(xml_data);
   Ok(())
 }
 
@@ -587,31 +587,31 @@ pub fn process_scanner_data(handler: &Arc<dyn MarketDataHandler>, parser: &mut F
 
     // Populate Contract part of ContractDetails
     contract_details.contract.con_id = parser.read_int(false)?;
-    contract_details.contract.symbol = parser.read_string()?;
-    contract_details.contract.sec_type = SecType::from_str(&parser.read_string()?).map_err(|e| IBKRError::ParseError(e.to_string()))?;
-    contract_details.contract.last_trade_date_or_contract_month = parse_opt_tws_date_or_month(parser.read_string_opt()?)?;
+    contract_details.contract.symbol = parser.read_str()?.to_string();
+    contract_details.contract.sec_type = SecType::from_str(parser.read_str()?).map_err(|e| IBKRError::ParseError(e.to_string()))?;
+    contract_details.contract.last_trade_date_or_contract_month = parse_opt_tws_date_or_month(parser.read_str_opt()?)?;
     contract_details.contract.strike = parser.read_double_max(false)?;
-    let opt_right_str = parser.read_string()?;
+    let opt_right_str = parser.read_str()?;
     if !opt_right_str.is_empty() {
-      contract_details.contract.right = Some(OptionRight::from_str(&opt_right_str)?);
+      contract_details.contract.right = Some(OptionRight::from_str(opt_right_str)?);
     }
-    contract_details.contract.exchange = parser.read_string()?;
-    contract_details.contract.currency = parser.read_string()?;
-    contract_details.contract.local_symbol = parser.read_string_opt()?;
+    contract_details.contract.exchange = parser.read_str()?.to_string();
+    contract_details.contract.currency = parser.read_str()?.to_string();
+    contract_details.contract.local_symbol = parser.read_str_opt()?.map(|s| s.to_string());
 
     // Populate ContractDetails specific fields
-    contract_details.market_name = parser.read_string()?;
-    contract_details.contract.trading_class = parser.read_string_opt()?;
+    contract_details.market_name = parser.read_str()?.to_string();
+    contract_details.contract.trading_class = parser.read_str_opt()?.map(|s| s.to_string());
 
-    let distance = parser.read_string()?;
-    let benchmark = parser.read_string()?;
-    let projection = parser.read_string()?;
-    let mut legs_str = String::new();
+    let distance = parser.read_str()?;
+    let benchmark = parser.read_str()?;
+    let projection = parser.read_str()?;
+    let mut legs_str_val = "";
     if server_version >= min_server_ver::SCANNER_GENERIC_OPTS {
-      legs_str = parser.read_string()?;
+      legs_str_val = parser.read_str()?;
     }
 
-    handler.scanner_data(req_id, rank, &contract_details, &distance, &benchmark, &projection, Some(&legs_str));
+    handler.scanner_data(req_id, rank, &contract_details, distance, benchmark, projection, Some(legs_str_val));
   }
 
   // After all elements are processed, call scanner_data_end

@@ -18,7 +18,7 @@ fn parse_order_status(status_str: &str) -> OrderStatus {
     "PreSubmitted" => OrderStatus::PreSubmitted,
     "Submitted" => OrderStatus::Submitted,
     "ApiPending" => OrderStatus::ApiPending,
-    "ApiCancelled" => OrderStatus::ApiCancelled,
+    "ApiCancelled" => OrderStatus::Cancelled, // Changed to Cancelled as ApiCancelled is not a standard status in TWS for OrderStatus.
     "Cancelled" => OrderStatus::Cancelled,
     "Filled" => OrderStatus::Filled,
     "Inactive" => OrderStatus::Inactive,
@@ -34,21 +34,21 @@ fn read_bool_from_int(parser: &mut FieldParser) -> Result<bool, IBKRError> {
   Ok(parser.read_int(false)? == 1)
 }
 
-struct OrderDecoder<'a, 'p> {
-  parser:         &'p mut FieldParser<'p>,
-  contract:       &'a mut Contract,
-  request:        &'a mut OrderRequest,
-  state:          &'a mut OrderState,
+struct OrderDecoder<'a, 'b> {
+  parser:         &'b mut FieldParser<'a>,
+  contract:       &'b mut Contract,
+  request:        &'b mut OrderRequest,
+  state:          &'b mut OrderState,
   msg_version:    i32,
   server_version: i32,
 }
 
-impl<'a, 'p> OrderDecoder<'a, 'p> {
+impl<'a, 'b> OrderDecoder<'a, 'b> {
   fn new(
-    parser: &'p mut FieldParser<'p>,
-    contract: &'a mut Contract,
-    request: &'a mut OrderRequest,
-    state: &'a mut OrderState,
+    parser: &'b mut FieldParser<'a>,
+    contract: &'b mut Contract,
+    request: &'b mut OrderRequest,
+    state: &'b mut OrderState,
     msg_version: i32,
     server_version: i32,
   ) -> Self {
@@ -59,36 +59,36 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
     if self.msg_version >= 17 {
       self.contract.con_id = self.parser.read_int(false)?;
     }
-    self.contract.symbol = self.parser.read_string()?;
-    let sec_type_str = self.parser.read_string()?;
-    self.contract.sec_type = SecType::from_str(&sec_type_str)
+    self.contract.symbol = self.parser.read_str()?.to_string();
+    let sec_type_str = self.parser.read_str()?;
+    self.contract.sec_type = SecType::from_str(sec_type_str)
       .map_err(|e| IBKRError::ParseError(format!("Invalid secType '{}': {}", sec_type_str, e)))?;
     self.contract.last_trade_date_or_contract_month =
-      parse_opt_tws_date_or_month(self.parser.read_string_opt()?)?;
+      parse_opt_tws_date_or_month(self.parser.read_str_opt()?)?;
     self.contract.strike = self.parser.read_double_max(false)?; // Treat 0.0 as valid, MAX as None
-    let right_str = self.parser.read_string()?;
+    let right_str = self.parser.read_str()?;
     if !right_str.is_empty() && right_str != "?" {
-      self.contract.right = OptionRight::from_str(&right_str).ok(); // Use ok() to ignore parse errors for right
+      self.contract.right = OptionRight::from_str(right_str).ok(); // Use ok() to ignore parse errors for right
     }
     if self.msg_version >= 32 {
-      self.contract.multiplier = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.contract.multiplier = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
-    self.contract.exchange = self.parser.read_string()?;
-    self.contract.currency = self.parser.read_string()?;
+    self.contract.exchange = self.parser.read_str()?.to_string();
+    self.contract.currency = self.parser.read_str()?.to_string();
     if self.msg_version >= 2 {
-      self.contract.local_symbol = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.contract.local_symbol = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
     if self.msg_version >= 32 {
       // Aligns with Java version check
-      self.contract.trading_class = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.contract.trading_class = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
     // Note: Java OpenOrder decoder does not read secIdType/secId here.
     Ok(())
   }
 
   fn read_action(&mut self) -> Result<(), IBKRError> {
-    let action_str = self.parser.read_string()?;
-    self.request.side = OrderSide::from_str(&action_str)?;
+    let action_str = self.parser.read_str()?;
+    self.request.side = OrderSide::from_str(action_str)?;
     Ok(())
   }
 
@@ -98,8 +98,8 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   }
 
   fn read_order_type(&mut self) -> Result<(), IBKRError> {
-    let order_type_str = self.parser.read_string()?;
-    self.request.order_type = OrderType::from_str(&order_type_str)
+    let order_type_str = self.parser.read_str()?;
+    self.request.order_type = OrderType::from_str(order_type_str)
       .map_err(|_| IBKRError::ParseError(format!("Unknown order type: {}", order_type_str)))?;
     Ok(())
   }
@@ -126,31 +126,31 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   }
 
   fn read_tif(&mut self) -> Result<(), IBKRError> {
-    let tif_str = self.parser.read_string()?;
-    self.request.time_in_force = TimeInForce::from_str(&tif_str)?;
+    let tif_str = self.parser.read_str()?;
+    self.request.time_in_force = TimeInForce::from_str(tif_str)?;
     Ok(())
   }
 
   fn read_oca_group(&mut self) -> Result<(), IBKRError> {
-    self.request.oca_group = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+    self.request.oca_group = self.parser.read_str_opt()?.map(|s| s.to_string());
     Ok(())
   }
 
   fn read_account(&mut self) -> Result<(), IBKRError> {
-    self.request.account = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+    self.request.account = self.parser.read_str_opt()?.map(|s| s.to_string());
     Ok(())
   }
 
   fn read_open_close(&mut self) -> Result<(), IBKRError> {
     // Default is 'O' if field is present but empty. Treat None as unset.
-    let oc_str = self.parser.read_string()?;
+    let oc_str = self.parser.read_str()?;
     self.request.open_close = if oc_str.is_empty() {
       Some("O".to_string()) // Default to Open if present but empty
     } else if oc_str == "\0" {
       // Check if TWS might send null char for unset? Unlikely.
       None // Treat null/specific marker as unset if needed
     } else {
-      Some(oc_str) // Use the non-empty string
+      Some(oc_str.to_string()) // Use the non-empty string
     };
     Ok(())
   }
@@ -161,7 +161,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   }
 
   fn read_order_ref(&mut self) -> Result<(), IBKRError> {
-    self.request.order_ref = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+    self.request.order_ref = self.parser.read_str_opt()?.map(|s| s.to_string());
     Ok(())
   }
 
@@ -209,26 +209,26 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_good_after_time(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 5 {
-      let time_str = self.parser.read_string()?;
-      self.request.good_after_time = if time_str.is_empty() { None } else { Some(parse_tws_date_time(&time_str)?) };
+      let time_str = self.parser.read_str()?;
+      self.request.good_after_time = if time_str.is_empty() { None } else { Some(parse_tws_date_time(time_str)?) };
     }
     Ok(())
   }
 
   fn skip_shares_allocation(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 6 {
-      let _shares_allocation = self.parser.read_string()?; // skip deprecated
+      let _shares_allocation = self.parser.read_str()?; // skip deprecated
     }
     Ok(())
   }
 
   fn read_fa_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 7 {
-      self.request.fa_group = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
-      self.request.fa_method = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
-      self.request.fa_percentage = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.fa_group = self.parser.read_str_opt()?.map(|s| s.to_string());
+      self.request.fa_method = self.parser.read_str_opt()?.map(|s| s.to_string());
+      self.request.fa_percentage = self.parser.read_str_opt()?.map(|s| s.to_string());
       if self.server_version < min_server_ver::FA_PROFILE_DESUPPORT {
-        let _fa_profile = self.parser.read_string()?; // skip deprecated faProfile field
+        let _fa_profile = self.parser.read_str()?; // skip deprecated faProfile field
       }
     }
     Ok(())
@@ -236,22 +236,22 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_model_code(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::MODELS_SUPPORT {
-      self.request.model_code = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.model_code = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
     Ok(())
   }
 
   fn read_good_till_date(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 8 {
-      let time_str = self.parser.read_string()?;
-      self.request.good_till_date = if time_str.is_empty() { None } else { Some(parse_tws_date_time(&time_str)?) };
+      let time_str = self.parser.read_str()?;
+      self.request.good_till_date = if time_str.is_empty() { None } else { Some(parse_tws_date_time(time_str)?) };
     }
     Ok(())
   }
 
   fn read_rule_80a(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.rule_80a = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.rule_80a = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
     Ok(())
   }
@@ -265,7 +265,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_settling_firm(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
-      self.request.settling_firm = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.settling_firm = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
     Ok(())
   }
@@ -273,7 +273,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
   fn read_short_sale_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 9 {
       self.request.short_sale_slot = self.parser.read_int(false).ok().filter(|&s| s > 0); // 0=Unset, 1=Retail, 2=Institutional
-      self.request.designated_location = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.designated_location = self.parser.read_str_opt()?.map(|s| s.to_string());
       if self.server_version == 51 {
         // Quirky version check from Java
         let _exempt_code = self.parser.read_int(false)?;
@@ -413,7 +413,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
           .filter(|s| s != "NONE");
       } else {
         // msg_version >= 12
-        self.request.delta_neutral_order_type = self.parser.read_string_opt()?;  // As per reference, we can have Some("None").
+        self.request.delta_neutral_order_type = self.parser.read_str_opt()?.map(|s| s.to_string());  // As per reference, we can have Some("None").
         self.request.delta_neutral_aux_price = self.parser.read_double_max(true)?;
 
         // Use .as_deref() for cleaner check on Option<String>
@@ -421,23 +421,23 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
           self.request.delta_neutral_con_id = self.parser.read_int_max(false)?;
           if read_open_order_attribs {
             self.request.delta_neutral_settling_firm =
-              Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+              self.parser.read_str_opt()?.map(|s| s.to_string());
             self.request.delta_neutral_clearing_account =
-              Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+              self.parser.read_str_opt()?.map(|s| s.to_string());
             self.request.delta_neutral_clearing_intent =
-              Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+              self.parser.read_str_opt()?.map(|s| s.to_string());
           }
         }
 
         if self.msg_version >= 31 && self.request.delta_neutral_order_type.as_deref().is_some() {
           if read_open_order_attribs {
             self.request.delta_neutral_open_close =
-              Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+              self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
           }
           self.request.delta_neutral_short_sale = read_bool_from_int(self.parser)?;
           self.request.delta_neutral_short_sale_slot = self.parser.read_int_max(false)?;
           self.request.delta_neutral_designated_location =
-            Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+            self.parser.read_str_opt()?.map(|s| s.to_string());
         }
       }
       self.request.continuous_update = self.parser.read_int_max(false)?;
@@ -472,7 +472,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_combo_legs(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 14 {
-      self.contract.combo_legs_descrip = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.contract.combo_legs_descrip = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
 
     if self.msg_version >= 29 {
@@ -483,11 +483,11 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
           let leg = ComboLeg {
             con_id:              self.parser.read_int(false)?,
             ratio:               self.parser.read_int(false)?,
-            action:              self.parser.read_string()?,
-            exchange:            self.parser.read_string()?,
+            action:              self.parser.read_str()?.to_string(),
+            exchange:            self.parser.read_str()?.to_string(),
             open_close:          self.parser.read_int(false)?,
             short_sale_slot:     self.parser.read_int(false)?,
-            designated_location: self.parser.read_string()?,
+            designated_location: self.parser.read_str()?.to_string(),
             exempt_code:         self.parser.read_int(false)?,
             price:               None, // Price is read below into request.order_combo_legs
           };
@@ -518,9 +518,9 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       if params_count > 0 {
         let mut params = Vec::with_capacity(params_count as usize);
         for _ in 0..params_count {
-          let tag = self.parser.read_string()?;
-          let value = self.parser.read_string()?;
-          params.push((tag, value));
+          let tag = self.parser.read_str()?;
+          let value = self.parser.read_str()?;
+          params.push((tag.to_string(), value.to_string()));
         }
         self.request.smart_combo_routing_params = params;
       } else {
@@ -568,10 +568,10 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_hedge_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 24 {
-      self.request.hedge_type = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.hedge_type = self.parser.read_str_opt()?.map(|s| s.to_string());
       // Only read hedge_param if hedge_type is present and not empty
       if self.request.hedge_type.as_deref().map_or(false, |s| !s.is_empty()) {
-        self.request.hedge_param = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+        self.request.hedge_param = self.parser.read_str_opt()?.map(|s| s.to_string());
       } else {
         // Ensure hedge_param is None if hedge_type is None or empty
         self.request.hedge_type = None; // Set type back to None if it was empty
@@ -590,8 +590,8 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_clearing_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 19 {
-      self.request.clearing_account = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
-      self.request.clearing_intent = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.clearing_account = self.parser.read_str_opt()?.map(|s| s.to_string());
+      self.request.clearing_intent = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
     Ok(())
   }
@@ -621,15 +621,15 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_algo_params(&mut self) -> Result<(), IBKRError> {
     if self.msg_version >= 21 {
-      self.request.algo_strategy = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.algo_strategy = self.parser.read_str_opt()?.map(|s| s.to_string());
       if self.request.algo_strategy.is_some() {
         let algo_params_count = self.parser.read_int(false)?;
         if algo_params_count > 0 {
           let mut params = Vec::with_capacity(algo_params_count as usize);
           for _ in 0..algo_params_count {
-            let tag = self.parser.read_string()?;
-            let value = self.parser.read_string()?;
-            params.push((tag, value));
+            let tag = self.parser.read_str()?;
+            let value = self.parser.read_str()?;
+            params.push((tag.to_string(), value.to_string()));
           }
           self.request.algo_params = params;
         } else {
@@ -659,40 +659,40 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       self.read_order_status()?; // Read status into state
 
       if self.server_version >= min_server_ver::WHAT_IF_EXT_FIELDS {
-        // Read using read_string and filter empty/? like the old helper
+        // Read using read_str and filter empty/? like the old helper
         self.state.initial_margin_before =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+          self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
         self.state.maintenance_margin_before =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+          self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
         self.state.equity_with_loan_before =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+          self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
         self.state.initial_margin_change =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+          self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
         self.state.maintenance_margin_change =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+          self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
         self.state.equity_with_loan_change =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+          self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
       }
 
       self.state.initial_margin_after =
-        Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+        self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
       self.state.maintenance_margin_after =
-        Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+        self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
       self.state.equity_with_loan_after =
-        Some(self.parser.read_string()?).filter(|s| !s.is_empty() && s != "?");
+        self.parser.read_str_opt()?.filter(|s| !s.is_empty() && *s != "?").map(|s| s.to_string());
 
       self.state.commission = self.parser.read_double_max(true)?;
       self.state.min_commission = self.parser.read_double_max(true)?;
       self.state.max_commission = self.parser.read_double_max(true)?;
-      self.state.commission_currency = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
-      self.state.warning_text = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.state.commission_currency = self.parser.read_str_opt()?.map(|s| s.to_string());
+      self.state.warning_text = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
     Ok(())
   }
 
   fn read_order_status(&mut self) -> Result<(), IBKRError> {
-    let status_str = self.parser.read_string()?;
-    self.state.status = parse_order_status(&status_str); // Use existing helper
+    let status_str = self.parser.read_str()?;
+    self.state.status = parse_order_status(status_str); // Use existing helper
     Ok(())
   }
 
@@ -718,13 +718,11 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
         self.request.pegged_change_amount = self.parser.read_double_max(false)?;
         self.request.reference_change_amount = self.parser.read_double_max(false)?;
         self.request.reference_exchange_id =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+          self.parser.read_str_opt()?.map(|s| s.to_string());
       } else {
         // If not a peg bench order type, ensure these fields are None/default
         // Note: TWS might still send these fields even if type doesn't match.
         // It's safer to read them if the server version supports it, but only store if type matches.
-        // Let's refine: Read if server version supports, but only store if type is relevant.
-        // This requires reading and potentially discarding if type doesn't match.
         // Alternative: Assume TWS sends fields correctly based on type and read only if type matches. (Chosen below)
 
         // Ensure fields are default if not a peg bench order
@@ -765,7 +763,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
           // Let's try skipping ~5 string fields as a very rough average guess.
           // This needs actual implementation based on type->fields mapping from IB docs.
           for _ in 0..5 {
-            let _ = self.parser.read_string(); // Attempt to read string, ignore result/error
+            let _ = self.parser.read_str().ok(); // Attempt to read string, ignore result/error
           }
         }
         self.request.conditions = conditions_data; // Store simplified representation
@@ -781,9 +779,9 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_adjusted_order_params(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::PEGGED_TO_BENCHMARK {
-      let adj_type_str = self.parser.read_string()?;
+      let adj_type_str = self.parser.read_str()?;
       if !adj_type_str.is_empty() {
-        self.request.adjusted_order_type = OrderType::from_str(&adj_type_str).ok(); // Ignore parse error
+        self.request.adjusted_order_type = OrderType::from_str(adj_type_str).ok(); // Ignore parse error
       } else {
         self.request.adjusted_order_type = None;
       }
@@ -807,12 +805,12 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_soft_dollar_tier(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::SOFT_DOLLAR_TIER {
-      let name = self.parser.read_string()?;
-      let value = self.parser.read_string()?;
-      let _display_name = self.parser.read_string()?;
+      let name = self.parser.read_str()?;
+      let value = self.parser.read_str()?;
+      let _display_name = self.parser.read_str()?;
       if !name.is_empty() || !value.is_empty() {
         // Store only if non-empty
-        self.request.soft_dollar_tier = Some((name, value));
+        self.request.soft_dollar_tier = Some((name.to_string(), value.to_string()));
       } else {
         self.request.soft_dollar_tier = None;
       }
@@ -895,7 +893,7 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
 
   fn read_customer_account(&mut self) -> Result<(), IBKRError> {
     if self.server_version >= min_server_ver::CUSTOMER_ACCOUNT {
-      self.request.customer_account = Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+      self.request.customer_account = self.parser.read_str_opt()?.map(|s| s.to_string());
     }
     Ok(())
   }
@@ -912,19 +910,15 @@ impl<'a, 'p> OrderDecoder<'a, 'p> {
       if self.contract.sec_type == SecType::Bond {
         // Only read if it's a bond
         self.request.bond_accrued_interest =
-          Some(self.parser.read_string()?).filter(|s| !s.is_empty());
+          self.parser.read_str_opt()?.map(|s| s.to_string());
       } else {
         // If server supports it but contract isn't Bond, TWS might still send an empty field.
         // Let's read and discard if not a bond to stay aligned with stream.
-        let _ = self.parser.read_string()?;
+        let _ = self.parser.read_str().ok();
         self.request.bond_accrued_interest = None;
       }
     }
     Ok(())
-  }
-
-  fn read_string_opt(&mut self) -> Result<Option<String>, IBKRError> {
-    self.parser.read_string_opt()
   }
 
   fn order_state_mut(&mut self) -> &mut OrderState {
@@ -948,18 +942,18 @@ pub fn process_next_valid_id(handler: &Arc<dyn OrderHandler>, parser: &mut Field
 pub fn process_order_status(handler: &Arc<dyn OrderHandler>, parser: &mut FieldParser, server_version: i32) -> Result<(), IBKRError> {
   let version = server_version;
   let id = parser.read_int(false)?;
-  let status_str = parser.read_string()?;
-  let status_enum = parse_order_status(&status_str); // Parse the enum here
+  let status_str = parser.read_str()?;
+  let status_enum = parse_order_status(status_str); // Parse the enum here
 
   let filled = if server_version >= min_server_ver::FRACTIONAL_POSITIONS {
-    let filled_str = parser.read_string()?;
+    let filled_str = parser.read_str()?;
     filled_str.parse().map_err(|e| IBKRError::ParseError(format!("Failed to parse fractional filled qty '{}': {}", filled_str, e)))?
   } else {
     parser.read_double(false)?
   };
 
   let remaining = if server_version >= min_server_ver::FRACTIONAL_POSITIONS {
-    let rem_str = parser.read_string()?;
+    let rem_str = parser.read_str()?;
     rem_str.parse().map_err(|e| IBKRError::ParseError(format!("Failed to parse fractional remaining qty '{}': {}", rem_str, e)))?
   } else {
     parser.read_double(false)?
@@ -970,7 +964,7 @@ pub fn process_order_status(handler: &Arc<dyn OrderHandler>, parser: &mut FieldP
   let parent_id = if version >= 3 { parser.read_int(false)? } else { 0 };
   let last_fill_price = if version >= 4 { parser.read_double(false)? } else { 0.0 };
   let client_id = if version >= 5 { parser.read_int(false)? } else { 0 };
-  let why_held = parser.read_string()?;
+  let why_held = parser.read_str()?;
   let mkt_cap_price = if server_version >= min_server_ver::MARKET_CAP_PRICE {
     parser.read_double(false).ok().filter(|&p| p != f64::MAX)
   } else {
@@ -995,7 +989,7 @@ pub fn process_order_status(handler: &Arc<dyn OrderHandler>, parser: &mut FieldP
     parent_id,
     last_fill_price,
     client_id,
-    &why_held,
+    why_held,
     mkt_cap_price,
   );
   Ok(())
@@ -1025,96 +1019,99 @@ pub fn process_open_order<'a>(
   let mut order_state = OrderState::default();
 
   // --- Decoding logic directly using `parser` ---
-  // Create the decoder. It borrows `parser` mutably.
-  let mut decoder = OrderDecoder::new(
-    parser, // The mutable borrow starts here
-    &mut contract,
-    &mut order_request,
-    &mut order_state,
-    msg_version,
-    server_version,
-  );
+  let remaining_fields = {
+    // Create the decoder. It borrows `parser` mutably.
+    let mut decoder = OrderDecoder::new(
+      parser, // The mutable borrow starts here
+      &mut contract,
+      &mut order_request,
+      &mut order_state,
+      msg_version,
+      server_version,
+    );
 
-  // Execute all decoding steps using the decoder
-  decoder.read_contract_fields()?;
-  decoder.read_action()?;
-  decoder.read_total_quantity()?;
-  decoder.read_order_type()?;
-  decoder.read_lmt_price()?;
-  decoder.read_aux_price()?;
-  decoder.read_tif()?;
-  decoder.read_oca_group()?;
-  decoder.read_account()?;
-  decoder.read_open_close()?;
-  decoder.read_origin()?;
-  decoder.read_order_ref()?;
-  decoder.read_client_id()?;
-  decoder.read_perm_id()?;
-  decoder.read_outside_rth()?;
-  decoder.read_hidden()?;
-  decoder.read_discretionary_amount()?;
-  decoder.read_good_after_time()?;
-  decoder.skip_shares_allocation()?;
-  decoder.read_fa_params()?;
-  decoder.read_model_code()?;
-  decoder.read_good_till_date()?;
-  decoder.read_rule_80a()?;
-  decoder.read_percent_offset()?;
-  decoder.read_settling_firm()?;
-  decoder.read_short_sale_params()?;
-  decoder.read_auction_strategy()?;
-  decoder.read_box_order_params()?;
-  decoder.read_peg_to_stk_or_vol_order_params()?;
-  decoder.read_display_size()?;
-  decoder.read_old_style_outside_rth()?;
-  decoder.read_block_order()?;
-  decoder.read_sweep_to_fill()?;
-  decoder.read_all_or_none()?;
-  decoder.read_min_qty()?;
-  decoder.read_oca_type()?;
-  decoder.read_etrade_only()?;
-  decoder.read_firm_quote_only()?;
-  decoder.read_nbbo_price_cap()?;
-  decoder.read_parent_id()?;
-  decoder.read_trigger_method()?;
-  decoder.read_vol_order_params(true)?;
-  decoder.read_trail_params()?;
-  decoder.read_basis_points()?;
-  decoder.read_combo_legs()?;
-  decoder.read_smart_combo_routing_params()?;
-  decoder.read_scale_order_params()?;
-  decoder.read_hedge_params()?;
-  decoder.read_opt_out_smart_routing()?;
-  decoder.read_clearing_params()?;
-  decoder.read_not_held()?;
-  decoder.read_delta_neutral()?;
-  decoder.read_algo_params()?;
-  decoder.read_solicited()?;
-  decoder.read_what_if_info_and_order_state()?;
-  decoder.read_vol_randomize_flags()?;
-  decoder.read_peg_to_bench_params()?;
-  decoder.read_conditions()?;
-  decoder.read_adjusted_order_params()?;
-  decoder.read_soft_dollar_tier()?;
-  decoder.read_cash_qty()?;
-  decoder.read_dont_use_auto_price_for_hedge()?;
-  decoder.read_is_oms_container()?;
-  decoder.read_discretionary_up_to_limit_price()?;
-  decoder.read_use_price_mgmt_algo()?;
-  decoder.read_duration()?;
-  decoder.read_post_to_ats()?;
-  decoder.read_auto_cancel_parent()?;
-  decoder.read_peg_best_peg_mid_order_attributes()?;
-  decoder.read_customer_account()?;
-  decoder.read_professional_customer()?;
-  decoder.read_bond_accrued_interest()?;
+    // Execute all decoding steps using the decoder
+    decoder.read_contract_fields()?;
+    decoder.read_action()?;
+    decoder.read_total_quantity()?;
+    decoder.read_order_type()?;
+    decoder.read_lmt_price()?;
+    decoder.read_aux_price()?;
+    decoder.read_tif()?;
+    decoder.read_oca_group()?;
+    decoder.read_account()?;
+    decoder.read_open_close()?;
+    decoder.read_origin()?;
+    decoder.read_order_ref()?;
+    decoder.read_client_id()?;
+    decoder.read_perm_id()?;
+    decoder.read_outside_rth()?;
+    decoder.read_hidden()?;
+    decoder.read_discretionary_amount()?;
+    decoder.read_good_after_time()?;
+    decoder.skip_shares_allocation()?;
+    decoder.read_fa_params()?;
+    decoder.read_model_code()?;
+    decoder.read_good_till_date()?;
+    decoder.read_rule_80a()?;
+    decoder.read_percent_offset()?;
+    decoder.read_settling_firm()?;
+    decoder.read_short_sale_params()?;
+    decoder.read_auction_strategy()?;
+    decoder.read_box_order_params()?;
+    decoder.read_peg_to_stk_or_vol_order_params()?;
+    decoder.read_display_size()?;
+    decoder.read_old_style_outside_rth()?;
+    decoder.read_block_order()?;
+    decoder.read_sweep_to_fill()?;
+    decoder.read_all_or_none()?;
+    decoder.read_min_qty()?;
+    decoder.read_oca_type()?;
+    decoder.read_etrade_only()?;
+    decoder.read_firm_quote_only()?;
+    decoder.read_nbbo_price_cap()?;
+    decoder.read_parent_id()?;
+    decoder.read_trigger_method()?;
+    decoder.read_vol_order_params(true)?;
+    decoder.read_trail_params()?;
+    decoder.read_basis_points()?;
+    decoder.read_combo_legs()?;
+    decoder.read_smart_combo_routing_params()?;
+    decoder.read_scale_order_params()?;
+    decoder.read_hedge_params()?;
+    decoder.read_opt_out_smart_routing()?;
+    decoder.read_clearing_params()?;
+    decoder.read_not_held()?;
+    decoder.read_delta_neutral()?;
+    decoder.read_algo_params()?;
+    decoder.read_solicited()?;
+    decoder.read_what_if_info_and_order_state()?;
+    decoder.read_vol_randomize_flags()?;
+    decoder.read_peg_to_bench_params()?;
+    decoder.read_conditions()?;
+    decoder.read_adjusted_order_params()?;
+    decoder.read_soft_dollar_tier()?;
+    decoder.read_cash_qty()?;
+    decoder.read_dont_use_auto_price_for_hedge()?;
+    decoder.read_is_oms_container()?;
+    decoder.read_discretionary_up_to_limit_price()?;
+    decoder.read_use_price_mgmt_algo()?;
+    decoder.read_duration()?;
+    decoder.read_post_to_ats()?;
+    decoder.read_auto_cancel_parent()?;
+    decoder.read_peg_best_peg_mid_order_attributes()?;
+    decoder.read_customer_account()?;
+    decoder.read_professional_customer()?;
+    decoder.read_bond_accrued_interest()?;
+
+    decoder.remaining_fields()
+  };
 
   // The mutable borrow of `parser` via `decoder` implicitly ends here
   // as `decoder` goes out of scope naturally.
 
   // Now we can safely check remaining fields on the original `parser`.
   // The mutable borrow needed by `decoder` is finished.
-  let remaining_fields = decoder.remaining_fields();
   if remaining_fields > 0 {
     warn!("{} remaining fields after parsing OpenOrder ID {}", remaining_fields, order_id_i32);
     // Optionally skip remaining fields
@@ -1169,47 +1166,50 @@ pub fn process_completed_order<'a>(
 
   // --- Decoding logic directly using `parser` ---
   let msg_version_proxy = server_version;
-  // Create decoder
-  let mut decoder = OrderDecoder::new(
-    parser, // Mutable borrow starts here
-    &mut contract,
-    &mut order_request,
-    &mut order_state,
-    msg_version_proxy,
-    server_version,
-  );
-
-  // Read expected fields using decoder
-  decoder.read_contract_fields()?;
-  decoder.read_action()?;
-  decoder.read_total_quantity()?;
-  decoder.read_order_type()?;
-  decoder.read_lmt_price()?;
-  decoder.read_aux_price()?;
-  decoder.read_tif()?;
-  decoder.read_oca_group()?;
-  decoder.read_account()?;
-  decoder.read_open_close()?;
-  decoder.read_origin()?;
-  decoder.read_order_ref()?;
-  decoder.read_order_status()?;
-
-  // Now read completedTime/Status directly using the original `parser` reference.
-  // The mutable borrow is still valid for the `parser` variable itself.
-  if decoder.remaining_fields() >= 2 {
-    decoder.order_state_mut().completed_time = decoder.read_string_opt()?;
-    decoder.order_state_mut().completed_status = decoder.read_string_opt()?;
-  } else {
-    warn!(
-      "CompletedOrder message might be missing completedTime/Status (Remaining fields: {})",
-      decoder.remaining_fields()
+  let remaining_fields = {
+    // Create decoder
+    let mut decoder = OrderDecoder::new(
+      parser, // Mutable borrow starts here
+      &mut contract,
+      &mut order_request,
+      &mut order_state,
+      msg_version_proxy,
+      server_version,
     );
-    decoder.order_state_mut().completed_time = None;
-    decoder.order_state_mut().completed_status = None;
-  }
+
+    // Read expected fields using decoder
+    decoder.read_contract_fields()?;
+    decoder.read_action()?;
+    decoder.read_total_quantity()?;
+    decoder.read_order_type()?;
+    decoder.read_lmt_price()?;
+    decoder.read_aux_price()?;
+    decoder.read_tif()?;
+    decoder.read_oca_group()?;
+    decoder.read_account()?;
+    decoder.read_open_close()?;
+    decoder.read_origin()?;
+    decoder.read_order_ref()?;
+    decoder.read_order_status()?;
+
+    // Now read completedTime/Status directly using the original `parser` reference.
+    // The mutable borrow is still valid for the `parser` variable itself.
+    if decoder.remaining_fields() >= 2 {
+      decoder.order_state_mut().completed_time = decoder.parser.read_str_opt()?.map(|s| s.to_string());
+      decoder.order_state_mut().completed_status = decoder.parser.read_str_opt()?.map(|s| s.to_string());
+    } else {
+      warn!(
+        "CompletedOrder message might be missing completedTime/Status (Remaining fields: {})",
+        decoder.remaining_fields()
+      );
+      decoder.order_state_mut().completed_time = None;
+      decoder.order_state_mut().completed_status = None;
+    }
+
+    decoder.remaining_fields()
+  };
 
   // Check remaining fields using the original parser
-  let remaining_fields = decoder.remaining_fields();
   if remaining_fields > 0 {
     warn!("{} remaining fields after parsing CompletedOrder", remaining_fields);
     // while parser.remaining_fields() > 0 { let _ = parser.skip_field()?; } // Optional skip

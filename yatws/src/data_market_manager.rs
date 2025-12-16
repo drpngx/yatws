@@ -3450,7 +3450,7 @@ impl DataMarketManager {
   #[cfg(feature = "shortinv")]
   /// Internal helper to fetch a file from the IB FTP server
   fn fetch_from_ftp(&self, filename: &str) -> Result<String, IBKRError> {
-    use std::io::Read;
+
 
     info!("Connecting to FTP server ftp2.interactivebrokers.com for file: {}", filename);
 

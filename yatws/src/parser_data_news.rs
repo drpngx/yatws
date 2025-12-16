@@ -13,9 +13,9 @@ pub fn process_news_article(handler: &Arc<dyn NewsDataHandler>, parser: &mut Fie
   let _version = parser.read_int(false)?; // Version unused currently
   let req_id = parser.read_int(false)?;
   let article_type = parser.read_int(false)?;
-  let article_text = parser.read_string()?;
+  let article_text = parser.read_str()?;
   debug!("News Article: ReqID={}, Type={}", req_id, article_type);
-  handler.news_article(req_id, article_type, &article_text);
+  handler.news_article(req_id, article_type, article_text);
   Ok(())
 }
 
@@ -25,8 +25,8 @@ pub fn process_news_providers(handler: &Arc<dyn NewsDataHandler>, parser: &mut F
   let mut providers = Vec::with_capacity(num_providers as usize);
   for _ in 0..num_providers {
     providers.push(NewsProvider {
-      code: parser.read_string()?,
-      name: parser.read_string()?,
+      code: parser.read_str()?.to_string(),
+      name: parser.read_str()?.to_string(),
     });
   }
   debug!("News Providers: Count={}", providers.len());
@@ -37,12 +37,12 @@ pub fn process_news_providers(handler: &Arc<dyn NewsDataHandler>, parser: &mut F
 /// Process historical news message
 pub fn process_historical_news(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let req_id = parser.read_int(false)?;
-  let time = parser.read_string()?;
-  let provider_code = parser.read_string()?;
-  let article_id = parser.read_string()?;
-  let headline = parser.read_string()?;
-  debug!("Historical News: ReqID={}, Time={}, Provider={}, Article={}", req_id, time, provider_code, article_id);
-  handler.historical_news(req_id, &time, &provider_code, &article_id, &headline);
+  let time = parser.read_str()?;
+  let provider_code = parser.read_str()?;
+  let article_id = parser.read_str()?;
+  let headline = parser.read_str()?;
+  debug!("Historical News: ReqID={}, Time={}, Provider={}, Article={}, Headline={}", req_id, time, provider_code, article_id, headline);
+  handler.historical_news(req_id, time, provider_code, article_id, headline);
   Ok(())
 }
 
@@ -60,22 +60,22 @@ pub fn process_news_bulletins(handler: &Arc<dyn NewsDataHandler>, parser: &mut F
   let _version = parser.read_int(false)?; // Version unused currently
   let msg_id = parser.read_int(false)?;
   let msg_type = parser.read_int(false)?;
-  let news_message = parser.read_string()?;
-  let origin_exch = parser.read_string()?;
+  let news_message = parser.read_str()?;
+  let origin_exch = parser.read_str()?;
   debug!("News Bulletin: ID={}, Type={}, Origin={}", msg_id, msg_type, origin_exch);
-  handler.update_news_bulletin(msg_id, msg_type, &news_message, &origin_exch);
+  handler.update_news_bulletin(msg_id, msg_type, news_message, origin_exch);
   Ok(())
 }
 
 pub fn process_tick_news(handler: &Arc<dyn NewsDataHandler>, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let req_id = parser.read_int(false)?; // Ticker ID maps to Req ID
   let time_stamp = parser.read_i64()?;
-  let provider_code = parser.read_string()?;
-  let article_id = parser.read_string()?;
-  let headline = parser.read_string()?;
-  let extra_data = parser.read_string()?;
+  let provider_code = parser.read_str()?;
+  let article_id = parser.read_str()?;
+  let headline = parser.read_str()?;
+  let extra_data = parser.read_str()?;
 
   log::debug!("Tick News: ReqID={}, Time={}, Provider={}, Article={}, Headline={}", req_id, time_stamp, provider_code, article_id, headline);
-  handler.tick_news(req_id, time_stamp, &provider_code, &article_id, &headline, &extra_data);
+  handler.tick_news(req_id, time_stamp, provider_code, article_id, headline, extra_data);
   Ok(())
 }

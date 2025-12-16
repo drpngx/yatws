@@ -24,7 +24,7 @@ pub(crate) fn msg_to_string(data: &[u8]) -> String {
 /// Process a message based on its type. This is the entry point for message handling.
 pub fn process_message(handler: &mut MessageHandler, data: &[u8]) -> Result<(), IBKRError> {
   let mut parser = FieldParser::new(data);
-  let msg_type_str = parser.read_string()?; // Read the first field (message ID)
+  let msg_type_str = parser.read_str()?; // Read the first field (message ID)
   let msg_type = msg_type_str.parse::<i32>().map_err(|e| {
     log::error!("Failed to parse message type string '{}': {}", msg_type_str, e);
     IBKRError::ParseError(format!(
