@@ -211,7 +211,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::MarketDataFarmConnected | ClientErrorCode::HistoricalDataFarmDisconnected | ClientErrorCode::HistoricalDataFarmConnected |
     ClientErrorCode::HistoricalDataFarmInactive | ClientErrorCode::MarketDataFarmInactive | ClientErrorCode::OutsideRthAttributeIgnored |
     ClientErrorCode::TwsToServerConnectionBroken | ClientErrorCode::CrossSideWarning | ClientErrorCode::SecurityDefinitionDataFarmConnected |
-    ClientErrorCode::EtradeOnlyNotSupportedWarning | ClientErrorCode::FirmQuoteOnlyNotSupportedWarning | ClientErrorCode::NbboPriceCapAttributeNotSupported |
+    ClientErrorCode::EtradeOnlyNotSupportedWarning | ClientErrorCode::FirmQuoteOnlyNotSupportedWarning |
     ClientErrorCode::MaxMessagesPerSecondExceeded | ClientErrorCode::RequestIdNotInteger | ClientErrorCode::ParsingError |
     ClientErrorCode::RequestParsingErrorIgnored | ClientErrorCode::ErrorProcessingDdeRequest | ClientErrorCode::InvalidRequestTopic |
     ClientErrorCode::MaxApiPagesReached | ClientErrorCode::InvalidLogLevel | ClientErrorCode::ServerErrorCause |
