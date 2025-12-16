@@ -3403,7 +3403,7 @@ impl DataMarketManager {
           total_cancelled, cleanup_errors.len());
 
     // Log all errors but don't fail shutdown for cleanup errors
-    for (req_id, stream_type, ref error) in &cleanup_errors {
+    for (req_id, stream_type, error) in &cleanup_errors {
       warn!("Cleanup error for {} request {}: {:?}", stream_type, req_id, error);
     }
 

@@ -49,7 +49,6 @@ rust_library(
         "src/financial_advisor.rs",
         "src/financial_advisor_manager.rs",
     ],
-    edition = "2021",
     proc_macro_deps = [
         "@crates//:async-trait",
         "@crates//:bitmask-enum",
@@ -103,7 +102,6 @@ rust_doc(
 rust_binary(
     name = "tws_snoop",
     srcs = ["tws_snoop.rs"],
-    edition = "2021",
     deps = [
         ":yatws",
         "@crates//:byteorder",
@@ -129,7 +127,6 @@ rust_binary(
             "test_data_sub.rs",
             "test_data_obs.rs",
             ],
-    edition = "2021",
     deps = [
         ":yatws",
         "@crates//:anyhow",
