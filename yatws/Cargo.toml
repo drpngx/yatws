@@ -1,6 +1,6 @@
 [package]
 name = "yatws"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 authors = ["Patrick Nguyen <pub+yatws@drpng.com>"]
 description = "Yet Another TWS (Interactive Brokers TWS API) Implementation"
