@@ -1,0 +1,4 @@
+# third_party build file
+# This directory contains third-party build configurations
+
+package(default_visibility = ["//visibility:public"])

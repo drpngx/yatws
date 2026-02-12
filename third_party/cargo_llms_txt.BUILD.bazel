@@ -1,0 +1,20 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+rust_binary(
+    name = "cargo-llms-txt",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@dev_crates//:anyhow",
+        "@dev_crates//:chrono",
+        "@dev_crates//:clap",
+        "@dev_crates//:ignore",
+        "@dev_crates//:proc-macro2",
+        "@dev_crates//:quote",
+        "@dev_crates//:serde",
+        "@dev_crates//:syn",
+        "@dev_crates//:toml",
+        "@dev_crates//:walkdir",
+    ],
+)

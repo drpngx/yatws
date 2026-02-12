@@ -5,7 +5,7 @@ module(
 )
 
 ########## PYTHON
-bazel_dep(name = "rules_python", version="1.0.0")
+bazel_dep(name = "rules_python", version="1.8.3")
 # This only configures the python used during build. Use `py_runtime` for the executable.
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
 
@@ -24,7 +24,7 @@ pip.parse(
 use_repo(pip, "yatws_pip_deps")
 
 ########## RUST
-bazel_dep(name = "rules_rust", version = "0.62.0")
+bazel_dep(name = "rules_rust", version = "0.68.1")
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 # Pick one that works from here: https://releases.rs/
 rust.toolchain(edition = "2024", versions = ["1.92.0"])

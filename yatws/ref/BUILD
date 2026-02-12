@@ -1,5 +1,7 @@
 # Basic tests to check against the reference implementation.
 # Make sure you download the IBAPI and unpack it.
+load("@rules_python//python:defs.bzl", "py_binary")
+
 package(default_visibility = ["//visibility:public"])
 
 py_binary(

@@ -1,0 +1,1528 @@
+# yatws
+
+> Yet Another TWS (Interactive Brokers TWS API) Implementation
+
+**Version:** 0.1.7
+**Authors:** Patrick Nguyen <pub+yatws@drpng.com>
+**License:** MIT
+**Repository:** https://github.com/drpngx/yatws
+**Keywords:** finance, trading, interactive-brokers, tws, ibkr
+**Dependencies:**
+- log (0.4.29)
+- byteorder (1.5.0)
+- inventory (0.3.21)
+- thiserror (2.0.17)
+- serde_json (1.0.145) [features: raw_value]
+- bincode (2.0.1)
+- futures (0.3.31)
+- num-traits (0.2.19)
+- uuid (1.19.0) [features: v4]
+- crossbeam-channel (0.5.15)
+- tokio (1.48.0) [features: full]
+- csv (1.4.0)
+- rusqlite (0.37.0) [features: vtab, functions, window, blob, bundled, rusqlite-macros]
+- socket2 (0.6.1) [features: all]
+- lazy_static (1.5.0)
+- rand (0.9.2)
+- crossbeam (0.8.4)
+- time (0.3.44) [features: macros, parsing, serde, serde-human-readable]
+- parking_lot (0.12.5)
+- suppaftp (7.0.7)
+- once_cell (1.21.3)
+- glob (0.3.3)
+- serde (1.0.228) [features: derive]
+- chrono (0.4.42) [features: std, serde]
+- clap (4.5.53) [features: derive]
+- rust_decimal (1.39.0)
+- anyhow (1.0.100)
+- env_logger (0.11.8)
+- num_enum (0.7.5)
+- chrono-tz (0.10.4)
+- quick-xml (0.38.4) [features: serialize]
+- async-trait (0.1.89)
+- bitmask-enum (2.2.5)
+**Features:**
+- shortinv: []
+
+Generated: 2026-02-12 12:15:46 UTC  
+Created by: [cargo-llms-txt](https://github.com/masinc/cargo-llms-txt)
+
+## Core Documentation
+
+- [Complete API Documentation](llms-full.txt): Full public API documentation with detailed descriptions
+- [README](README.md): Project overview and getting started guide
+- [Cargo.toml](Cargo.toml): Project configuration and dependencies
+
+## Table of Contents
+
+### src/protocol_encoder.rs
+
+- pub enum OutgoingMessageType
+- pub fn identify_outgoing_type
+- impl TryFrom for OutgoingMessageType
+- pub struct Encoder
+- impl Encoder
+
+### src/protocol_dec_parser.rs
+
+- pub fn parse_tws_date_time
+- pub fn parse_opt_tws_date_time
+- pub struct FieldParser
+- impl FieldParser
+- pub fn parse_tws_date_or_month
+- pub fn parse_opt_tws_date_or_month
+- pub fn parse_tws_date
+- pub fn parse_opt_tws_date
+- pub fn parse_tws_month
+- pub fn parse_opt_tws_month
+- pub fn parse_tws_time
+- pub fn parse_opt_tws_time
+
+### src/financial_advisor_manager.rs
+
+- impl From for IBKRError
+- pub struct FinancialAdvisorManager
+- impl FinancialAdvisorManager
+- impl FinancialAdvisorHandler for FinancialAdvisorManager
+
+### src/data_subscription.rs
+
+- pub trait MarketDataSubscription
+- pub trait MarketDataIterator
+- impl std::fmt::Debug for SubscriptionState
+- impl SubscriptionState
+- impl Iterator for BaseIterator
+- impl MarketDataIterator for BaseIterator
+- pub struct TickDataParams
+- pub enum TickDataEvent
+- pub struct TickDataSubscription
+- pub struct TickDataSubscriptionBuilder
+- impl TickDataSubscriptionBuilder
+- impl TickDataSubscription
+- impl MarketDataSubscription for TickDataSubscription
+- impl Drop for TickDataSubscription
+- pub struct TickDataIterator
+- impl TickDataIterator
+- impl Iterator for TickDataIterator
+- impl MarketDataIterator for TickDataIterator
+- impl BaseIterator
+- impl MarketDataObserver for TickDataInternalObserver
+- pub struct RealTimeBarParams
+- pub type RealTimeBarEvent
+- pub struct RealTimeBarSubscription
+- pub struct RealTimeBarSubscriptionBuilder
+- impl RealTimeBarSubscriptionBuilder
+- impl MarketDataSubscription for RealTimeBarSubscription
+- impl Drop for RealTimeBarSubscription
+- pub struct RealTimeBarIterator
+- impl RealTimeBarIterator
+- impl Iterator for RealTimeBarIterator
+- impl MarketDataIterator for RealTimeBarIterator
+- impl RealTimeBarsObserver for RealTimeBarInternalObserver
+- pub struct TickByTickParams
+- pub enum TickByTickEvent
+- pub struct TickByTickSubscription
+- pub struct TickByTickSubscriptionBuilder
+- impl TickByTickSubscriptionBuilder
+- impl MarketDataSubscription for TickByTickSubscription
+- impl Drop for TickByTickSubscription
+- pub struct TickByTickIterator
+- impl TickByTickIterator
+- impl Iterator for TickByTickIterator
+- impl MarketDataIterator for TickByTickIterator
+- impl Clone for TickByTickInternalObserver
+- impl TickByTickObserver for TickByTickInternalObserver
+- pub struct MarketDepthParams
+- pub enum MarketDepthEvent
+- pub struct MarketDepthSubscription
+- pub struct MarketDepthSubscriptionBuilder
+- impl MarketDepthSubscriptionBuilder
+- impl MarketDataSubscription for MarketDepthSubscription
+- impl Drop for MarketDepthSubscription
+- pub struct MarketDepthIterator
+- impl MarketDepthIterator
+- impl Iterator for MarketDepthIterator
+- impl MarketDataIterator for MarketDepthIterator
+- impl MarketDepthObserver for MarketDepthInternalObserver
+- pub struct HistoricalDataParams
+- pub enum HistoricalDataEvent
+- pub struct HistoricalDataSubscription
+- pub struct HistoricalDataSubscriptionBuilder
+- impl HistoricalDataSubscriptionBuilder
+- impl MarketDataSubscription for HistoricalDataSubscription
+- impl Drop for HistoricalDataSubscription
+- pub struct HistoricalDataIterator
+- impl HistoricalDataIterator
+- impl Iterator for HistoricalDataIterator
+- impl MarketDataIterator for HistoricalDataIterator
+- impl HistoricalDataObserver for HistoricalDataInternalObserver
+- pub struct TaggedEvent
+- pub struct MultiSubscriptionBuilder
+- impl Default for MultiSubscriptionBuilder
+- impl MultiSubscriptionBuilder
+- pub struct MultiSubscriptionIterator
+- impl MultiSubscriptionIterator
+- impl Iterator for MultiSubscriptionIterator
+
+### src/scan_parameters.rs
+
+- pub struct MainScreenDefaultTickers
+- pub struct DefaultTickersScans
+- pub struct DefaultTickersScan
+- pub struct DefaultTickersFilter
+- pub struct ColumnSets
+- pub struct ColumnSet
+- pub struct SidecarScannerDefaults
+- pub struct DefaultSorts
+- pub struct DefaultSort
+- pub struct SidecarScannerTemplateList
+- pub struct SidecarScannerTemplate
+- pub struct ArString
+- pub struct ScannerProductTypeList
+- pub struct ScannerProductType
+- pub struct FieldsConfigurationList
+- pub struct FieldConfiguration
+- pub struct AdvancedScannerDefaults
+- pub struct InstrumentConfigurations
+- pub struct InstrumentConfiguration
+- pub struct ScanParameterResponse
+- impl Deserialize for ScanParameterResponse
+- pub struct InstrumentList
+- pub struct Instrument
+- pub struct LocationTree
+- pub struct Location
+- pub struct ScanTypeList
+- pub struct ScanType
+- pub struct Columns
+- impl Deserialize for Columns
+- pub struct ColumnSetRef
+- pub struct Column
+- pub struct MobileColumns
+- pub struct MobileColumn
+- pub struct SettingList
+- pub struct ComboSetting
+- pub struct ValueList
+- pub struct Value
+- pub struct RangeFilter
+- impl Deserialize for RangeFilter
+- pub struct SimpleFilter
+- impl Deserialize for SimpleFilter
+- pub struct TripleComboFilter
+- impl Deserialize for TripleComboFilter
+- pub struct FilterList
+- impl Deserialize for FilterList
+- pub struct FilterComponent
+- pub struct FilterComponents
+- pub struct VirtualFilter
+- pub struct CheckBoxTranslator
+- pub struct AbstractField
+- impl Deserialize for AbstractField
+- pub struct TripleComboField
+- pub struct ComboValues
+- pub struct ComboValue
+- pub struct ScannerLayoutList
+- pub struct ScannerLayout
+- pub struct LayoutComponent
+- pub struct ScannerParameter
+- pub struct InstrumentGroupList
+- pub struct InstrumentGroup
+- pub struct SimilarProductsDefaults
+- pub struct SimilarProductsDefault
+- pub struct CompressedScans
+- pub struct CompressedScan
+- pub struct AdvancedFilter
+
+### src/account.rs
+
+- pub struct AccountInfo
+- pub struct AccountState
+- pub struct AccountValue
+- pub enum AccountValueKey
+- impl std::fmt::Display for AccountValueKey
+- pub struct Position
+- pub struct ExecutionFilter
+- pub struct Execution
+- pub struct TickAttrib
+- pub trait AccountObserver
+
+### src/data_market_manager.rs
+
+- impl CompletableState for MarketDataInfo
+- impl CompletableState for RealTimeBarInfo
+- impl CompletableState for TickByTickInfo
+- impl CompletableState for MarketDepthInfo
+- impl CompletableState for ScannerInfoState
+- impl CompletableState for HistogramDataRequestState
+- impl CompletableState for HistoricalTicksRequestState
+- impl TryIntoStateHelper for MarketStream
+- impl TryIntoStateHelper for MarketStream
+- impl TryIntoStateHelper for MarketStream
+- impl TryIntoStateHelper for MarketStream
+- impl TryIntoStateHelper for MarketStream
+- impl TryIntoStateHelper for MarketStream
+- impl TryIntoStateHelper for MarketStream
+- impl MarketStream
+- impl OptionCalculationState
+- impl CompletableState for OptionCalculationState
+- impl TryIntoStateHelper for MarketStream
+- pub struct DataMarketManager
+- pub type Quote
+- impl DataMarketManager
+- impl MarketDataHandler for DataMarketManager
+
+### src/data_wsh.rs
+
+- pub enum WshEventData
+- pub struct WsheBod
+- pub struct WsheBybk
+- pub struct WsheBybkMod
+- pub struct WsheCc
+- pub struct WsheDiv
+- pub struct WsheDivSr
+- pub struct WsheEd
+- pub struct WsheEps
+- pub struct WsheFdaAdvComm
+- pub struct WsheFq
+- pub struct WsheIc
+- pub struct WsheIcPresenter
+- pub struct WsheIdx
+- pub struct WsheInterimDates
+- pub struct WsheIpo
+- pub struct WsheMergAcq
+- pub struct WsheMovies
+- pub struct WsheOption
+- pub struct WsheQe
+- pub struct WshSec
+- pub struct WsheSecondary
+- pub struct WsheSh
+- pub struct WsheSpinoffs
+- pub struct WsheSplits
+- pub struct WsheVideos
+- pub struct WshEventDataRequest
+
+### src/order_manager.rs
+
+- pub enum OrderEvent
+- impl OrderSubscriptionState
+- pub struct OrderSubscription
+- impl OrderSubscription
+- pub struct OrderSubscriptionIterator
+- impl OrderSubscriptionIterator
+- impl Iterator for OrderSubscriptionIterator
+- impl OrderObserver for OrderSubscriptionObserver
+- pub struct OrderManager
+- impl OrderManager
+- impl OrderHandler for OrderManager
+- pub trait OrderObserver
+
+### src/parser_client.rs
+
+- pub fn process_error_message
+- pub fn process_current_time
+- pub fn process_verify_message_api
+- pub fn process_verify_completed
+- pub fn process_verify_and_auth_message_api
+- pub fn process_verify_and_auth_completed
+- pub fn process_head_timestamp
+- pub fn process_user_info
+- pub fn process_display_group_list
+- pub fn process_display_group_updated
+
+### src/order_builder.rs
+
+- pub enum TriggerMethod
+- pub struct OrderBuilder
+- pub enum ConditionConjunction
+- impl OrderBuilder
+
+### src/data_news_manager.rs
+
+- pub struct DataNewsManager
+- impl DataNewsManager
+- impl NewsDataHandler for DataNewsManager
+
+### src/account_subscription.rs
+
+- pub enum AccountEvent
+- impl AccountObserver for InnerAccountObserver
+- pub struct AccountSubscription
+- impl AccountSubscription
+- impl Drop for AccountSubscription
+
+### src/message_parser.rs
+
+- pub fn process_message
+
+### src/base.rs
+
+- pub enum IBKRError
+- impl From for IBKRError
+
+### src/news.rs
+
+- pub struct NewsProvider
+- pub struct NewsArticleData
+- pub struct HistoricalNews
+- pub struct NewsArticle
+- pub trait NewsObserver
+
+### src/parser_data_market.rs
+
+- pub fn process_tick_price
+- pub fn process_tick_size
+- pub fn process_historical_data
+- pub fn process_market_depth
+- pub fn process_market_depth_l2
+- pub fn process_tick_efp
+- pub fn process_real_time_bars
+- pub fn process_delta_neutral_validation
+- pub fn process_tick_snapshot_end
+- pub fn process_market_data_type
+- pub fn process_tick_option_computation
+- pub fn process_histogram_data
+- pub fn process_historical_data_update
+- pub fn process_reroute_mkt_data_req
+- pub fn process_reroute_mkt_depth_req
+- pub fn process_historical_ticks
+- pub fn process_historical_ticks_bid_ask
+- pub fn process_historical_ticks_last
+- pub fn process_tick_by_tick
+- pub fn process_tick_generic
+- pub fn process_tick_string
+- pub fn process_scanner_parameters
+- pub fn process_scanner_data
+
+### src/protocol_decoder.rs
+
+- pub enum IncomingMessageType
+- pub enum ClientErrorCode
+- impl fmt::Display for ClientErrorCode
+- impl TryFrom for ClientErrorCode
+
+### src/handler.rs
+
+- pub trait ClientHandler
+- pub trait OrderHandler
+- pub trait AccountHandler
+- pub trait ReferenceDataHandler
+- pub trait MarketDataHandler
+- pub trait FinancialDataHandler
+- pub trait NewsDataHandler
+- pub trait FinancialAdvisorHandler
+- pub struct MessageHandler
+- impl MessageHandler
+
+### src/min_server_ver.rs
+
+- pub mod min_server_ver
+- pub const min_server_ver::REAL_TIME_BARS
+- pub const min_server_ver::SCALE_ORDERS
+- pub const min_server_ver::SNAPSHOT_MKT_DATA
+- pub const min_server_ver::SSHORT_COMBO_LEGS
+- pub const min_server_ver::WHAT_IF_ORDERS
+- pub const min_server_ver::CONTRACT_CONID
+- pub const min_server_ver::PTA_ORDERS
+- pub const min_server_ver::FUNDAMENTAL_DATA
+- pub const min_server_ver::DELTA_NEUTRAL
+- pub const min_server_ver::CONTRACT_DATA_CHAIN
+- pub const min_server_ver::SCALE_ORDERS2
+- pub const min_server_ver::ALGO_ORDERS
+- pub const min_server_ver::EXECUTION_DATA_CHAIN
+- pub const min_server_ver::NOT_HELD
+- pub const min_server_ver::SEC_ID_TYPE
+- pub const min_server_ver::PLACE_ORDER_CONID
+- pub const min_server_ver::MKT_DATA_CONID
+- pub const min_server_ver::CALC_IMPLIED_VOLAT
+- pub const min_server_ver::CALC_OPTION_PRICE
+- pub const min_server_ver::CANCEL_CALC_IMPLIED_VOLAT
+- pub const min_server_ver::CANCEL_CALC_OPTION_PRICE
+- pub const min_server_ver::SSHORTX_OLD
+- pub const min_server_ver::SSHORTX
+- pub const min_server_ver::GLOBAL_CANCEL
+- pub const min_server_ver::HEDGE_ORDERS
+- pub const min_server_ver::MARKET_DATA_TYPE
+- pub const min_server_ver::OPT_OUT_SMART_ROUTING
+- pub const min_server_ver::SMART_COMBO_ROUTING_PARAMS
+- pub const min_server_ver::DELTA_NEUTRAL_CONID
+- pub const min_server_ver::SCALE_ORDERS3
+- pub const min_server_ver::ORDER_COMBO_LEGS_PRICE
+- pub const min_server_ver::TRAILING_PERCENT
+- pub const min_server_ver::DELTA_NEUTRAL_OPEN_CLOSE
+- pub const min_server_ver::ACCT_SUMMARY
+- pub const min_server_ver::TRADING_CLASS
+- pub const min_server_ver::SCALE_TABLE
+- pub const min_server_ver::LINKING
+- pub const min_server_ver::ALGO_ID
+- pub const min_server_ver::OPTIONAL_CAPABILITIES
+- pub const min_server_ver::ORDER_SOLICITED
+- pub const min_server_ver::LINKING_AUTH
+- pub const min_server_ver::PRIMARYEXCH
+- pub const min_server_ver::RANDOMIZE_SIZE_AND_PRICE
+- pub const min_server_ver::FRACTIONAL_POSITIONS
+- pub const min_server_ver::PEGGED_TO_BENCHMARK
+- pub const min_server_ver::MODELS_SUPPORT
+- pub const min_server_ver::SEC_DEF_OPT_PARAMS_REQ
+- pub const min_server_ver::EXT_OPERATOR
+- pub const min_server_ver::SOFT_DOLLAR_TIER
+- pub const min_server_ver::FAMILY_CODES
+- pub const min_server_ver::MATCHING_SYMBOLS
+- pub const min_server_ver::PAST_LIMIT
+- pub const min_server_ver::MD_SIZE_MULTIPLIER
+- pub const min_server_ver::CASH_QTY
+- pub const min_server_ver::MKT_DEPTH_EXCHANGES
+- pub const min_server_ver::TICK_NEWS
+- pub const min_server_ver::SMART_COMPONENTS
+- pub const min_server_ver::NEWS_PROVIDERS
+- pub const min_server_ver::NEWS_ARTICLE
+- pub const min_server_ver::HISTORICAL_NEWS
+- pub const min_server_ver::HEAD_TIMESTAMP
+- pub const min_server_ver::HISTOGRAM
+- pub const min_server_ver::SERVICE_DATA_TYPE
+- pub const min_server_ver::AGG_GROUP
+- pub const min_server_ver::UNDERLYING_INFO
+- pub const min_server_ver::CANCEL_HEADTIMESTAMP
+- pub const min_server_ver::SYNT_REALTIME_BARS
+- pub const min_server_ver::CFD_REROUTE
+- pub const min_server_ver::MARKET_RULES
+- pub const min_server_ver::PNL
+- pub const min_server_ver::NEWS_QUERY_ORIGINS
+- pub const min_server_ver::UNREALIZED_PNL
+- pub const min_server_ver::HISTORICAL_TICKS
+- pub const min_server_ver::MARKET_CAP_PRICE
+- pub const min_server_ver::PRE_OPEN_BID_ASK
+- pub const min_server_ver::REAL_EXPIRATION_DATE
+- pub const min_server_ver::REALIZED_PNL
+- pub const min_server_ver::LAST_LIQUIDITY
+- pub const min_server_ver::TICK_BY_TICK
+- pub const min_server_ver::DECISION_MAKER
+- pub const min_server_ver::MIFID_EXECUTION
+- pub const min_server_ver::TICK_BY_TICK_IGNORE_SIZE
+- pub const min_server_ver::AUTO_PRICE_FOR_HEDGE
+- pub const min_server_ver::WHAT_IF_EXT_FIELDS
+- pub const min_server_ver::SCANNER_GENERIC_OPTS
+- pub const min_server_ver::API_BIND_ORDER
+- pub const min_server_ver::ORDER_CONTAINER
+- pub const min_server_ver::SMART_DEPTH
+- pub const min_server_ver::REMOVE_NULL_ALL_CASTING
+- pub const min_server_ver::D_PEG_ORDERS
+- pub const min_server_ver::MKT_DEPTH_PRIM_EXCHANGE
+- pub const min_server_ver::COMPLETED_ORDERS
+- pub const min_server_ver::PRICE_MGMT_ALGO
+- pub const min_server_ver::STOCK_TYPE
+- pub const min_server_ver::ENCODE_MSG_ASCII7
+- pub const min_server_ver::SEND_ALL_FAMILY_CODES
+- pub const min_server_ver::NO_DEFAULT_OPEN_CLOSE
+- pub const min_server_ver::PRICE_BASED_VOLATILITY
+- pub const min_server_ver::REPLACE_FA_END
+- pub const min_server_ver::DURATION
+- pub const min_server_ver::MARKET_DATA_IN_SHARES
+- pub const min_server_ver::POST_TO_ATS
+- pub const min_server_ver::WSHE_CALENDAR
+- pub const min_server_ver::AUTO_CANCEL_PARENT
+- pub const min_server_ver::FRACTIONAL_SIZE_SUPPORT
+- pub const min_server_ver::SIZE_RULES
+- pub const min_server_ver::HISTORICAL_SCHEDULE
+- pub const min_server_ver::ADVANCED_ORDER_REJECT
+- pub const min_server_ver::USER_INFO
+- pub const min_server_ver::CRYPTO_AGGREGATED_TRADES
+- pub const min_server_ver::MANUAL_ORDER_TIME
+- pub const min_server_ver::PEGBEST_PEGMID_OFFSETS
+- pub const min_server_ver::WSH_EVENT_DATA_FILTERS
+- pub const min_server_ver::IPO_PRICES
+- pub const min_server_ver::WSH_EVENT_DATA_FILTERS_DATE
+- pub const min_server_ver::INSTRUMENT_TIMEZONE
+- pub const min_server_ver::HMDS_MARKET_DATA_IN_SHARES
+- pub const min_server_ver::BOND_ISSUERID
+- pub const min_server_ver::FA_PROFILE_DESUPPORT
+- pub const min_server_ver::PENDING_PRICE_REVISION
+- pub const min_server_ver::FUND_DATA_FIELDS
+- pub const min_server_ver::MANUAL_ORDER_TIME_EXERCISE_OPTIONS
+- pub const min_server_ver::OPEN_ORDER_AD_STRATEGY
+- pub const min_server_ver::LAST_TRADE_DATE
+- pub const min_server_ver::CUSTOMER_ACCOUNT
+- pub const min_server_ver::PROFESSIONAL_CUSTOMER
+- pub const min_server_ver::BOND_ACCRUED_INTEREST
+- pub const min_server_ver::INELIGIBILITY_REASONS
+- pub const min_server_ver::RFQ_FIELDS
+- pub const min_server_ver::TIME_MSG
+- pub const min_server_ver::FINANCIAL_ADVISOR
+- pub const min_server_ver::MARKET_DATA_STREAMING
+- pub const min_server_ver::MARKET_DEPTH
+- pub const min_server_ver::NEWS_BULLETINS
+- pub const min_server_ver::AUTO_OPEN_ORDERS
+- pub const min_server_ver::ALL_OPEN_ORDERS
+- pub const min_server_ver::MANAGED_ACCOUNTS
+- pub const min_server_ver::REPLACE_FA
+- pub const min_server_ver::EXERCISE_OPTIONS
+- pub const min_server_ver::SCANNER_SUBSCRIPTION
+- pub const min_server_ver::SCANNER_PARAMETERS
+- pub const min_server_ver::CANCEL_HISTORICAL_DATA
+- pub const min_server_ver::CURRENT_TIME
+- pub const min_server_ver::CANCEL_REAL_TIME_BARS
+- pub const min_server_ver::CANCEL_FUNDAMENTAL_DATA
+- pub const min_server_ver::POSITIONS_MULTI
+- pub const min_server_ver::CANCEL_POSITIONS_MULTI
+- pub const min_server_ver::ACCOUNT_UPDATES_MULTI
+- pub const min_server_ver::CANCEL_ACCOUNT_UPDATES_MULTI
+- pub const min_server_ver::VERIFY_REQUEST
+- pub const min_server_ver::VERIFY_MESSAGE
+- pub const min_server_ver::QUERY_DISPLAY_GROUPS
+- pub const min_server_ver::SUBSCRIBE_TO_GROUP_EVENTS
+- pub const min_server_ver::UPDATE_DISPLAY_GROUP
+- pub const min_server_ver::UNSUBSCRIBE_FROM_GROUP_EVENTS
+- pub const min_server_ver::VERIFY_AND_AUTH_REQUEST
+- pub const min_server_ver::VERIFY_AND_AUTH_MESSAGE
+- pub const min_server_ver::CANCEL_HISTOGRAM_DATA
+- pub const min_server_ver::MAX_SUPPORTED_VERSION
+
+### src/parser_data_fin.rs
+
+- pub fn process_wsh_meta_data
+- pub fn process_wsh_event_data
+- pub fn process_fundamental_data
+
+### src/parser_account.rs
+
+- pub fn process_account_value
+- pub fn process_portfolio_value
+- pub fn process_account_update_time
+- pub fn process_account_download_end
+- pub fn process_managed_accounts
+- pub fn process_position
+- pub fn process_position_end
+- pub fn process_account_summary
+- pub fn process_account_summary_end
+- pub fn process_pnl
+- pub fn process_pnl_single
+- pub fn process_commission_report
+- pub fn process_position_multi
+- pub fn process_position_multi_end
+- pub fn process_account_update_multi
+- pub fn process_account_update_multi_end
+- pub fn process_execution_data
+- pub fn process_execution_data_end
+
+### src/parser_order.rs
+
+- impl OrderDecoder
+- pub fn process_next_valid_id
+- pub fn process_order_status
+- pub fn process_open_order
+- pub fn process_open_order_end
+- pub fn process_order_bound
+- pub fn process_completed_order
+- pub fn process_completed_orders_end
+
+### src/conn.rs
+
+- pub use socket::SocketConnection
+- pub struct MessageBroker
+- impl MessageBroker
+- pub trait Connection
+- pub struct socket::SocketConnection
+- impl socket::SocketConnection
+- impl Connection for socket::SocketConnection
+- impl Drop for socket::SocketConnection
+
+### src/parser_fin_adv.rs
+
+- pub fn process_replace_fa_end
+- pub fn process_receive_fa
+
+### src/account_manager.rs
+
+- pub struct AccountManager
+- impl AccountManager
+- impl AccountHandler for AccountManager
+
+### src/data.rs
+
+- pub enum Shortability
+- impl From for Shortability
+- pub enum ShortMarket
+- impl ShortMarket
+- pub enum MarginMarket
+- impl MarginMarket
+- pub struct ShortInventoryData
+- pub struct ShortMarginData
+- pub enum TickType
+- pub enum GenericTickType
+- impl fmt::Display for GenericTickType
+- impl FromStr for GenericTickType
+- pub enum DurationUnit
+- impl fmt::Display for DurationUnit
+- impl FromStr for DurationUnit
+- pub enum TimePeriodUnit
+- impl fmt::Display for TimePeriodUnit
+- impl FromStr for TimePeriodUnit
+- pub enum TickByTickRequestType
+- impl fmt::Display for TickByTickRequestType
+- impl FromStr for TickByTickRequestType
+- impl TickType
+- impl Default for TickType
+- pub struct MarketDataInfo
+- impl MarketDataInfo
+- pub struct RealTimeBarInfo
+- pub struct TickByTickInfo
+- pub struct ScannerInfoState
+- pub enum TickByTickData
+- pub struct MarketDepthInfo
+- pub struct MarketDepthRow
+- pub struct HistoricalDataRequestState
+- impl Default for HistoricalDataRequestState
+- pub enum MarketDataType
+- impl From for MarketDataType
+- pub struct TickAttrib
+- pub struct TickAttribLast
+- pub struct TickAttribBidAsk
+- pub struct TickOptionComputationData
+- pub struct TickNewsData
+- pub enum FundamentalReportType
+- impl FundamentalReportType
+- pub struct CompanyInformation
+- pub struct Ratio
+- pub struct Issue
+- pub struct CoGeneralInfo
+- pub struct TextInfoItem
+- pub struct ContactInfo
+- pub struct WebLink
+- pub struct Industry
+- pub struct PeerInfo
+- pub struct Officer
+- pub struct RatioGroup
+- pub struct ForecastDataItem
+- pub struct ForecastData
+- pub struct ReportSnapshot
+- pub struct EPSRecord
+- pub struct DividendPerShareRecord
+- pub struct TotalRevenueRecord
+- pub struct AnnouncedDividendRecord
+- pub enum FinancialStatementType
+- impl Default for FinancialStatementType
+- impl TryFrom for FinancialStatementType
+- pub enum PeriodType
+- impl Default for PeriodType
+- pub struct FinancialStatement
+- pub struct ReportsFinSummary
+- pub enum ParsedFundamentalData
+- pub struct HistogramEntry
+- pub struct HistogramDataRequestState
+- pub enum HistoricalTick
+- pub struct HistoricalTicksRequestState
+- impl HistoricalTicksRequestState
+
+### src/financial_report_parser.rs
+
+- pub fn parse_fundamental_xml
+
+### src/parser_data_ref.rs
+
+- pub fn process_bond_contract_data
+- pub fn process_contract_data_end
+- pub fn process_security_definition_option_parameter
+- pub fn process_security_definition_option_parameter_end
+- pub fn process_soft_dollar_tiers
+- pub fn process_family_codes
+- pub fn process_symbol_samples
+- pub fn process_mkt_depth_exchanges
+- pub fn process_tick_req_params
+- pub fn process_smart_components
+- pub fn process_market_rule
+- pub fn process_historical_schedule
+- pub fn process_contract_data
+
+### src/data_fin_manager.rs
+
+- pub struct DataFundamentalsManager
+- impl DataFundamentalsManager
+- impl FinancialDataHandler for DataFundamentalsManager
+
+### src/data_ref_manager.rs
+
+- pub struct SecDefOptParamsResult
+- pub struct HistoricalScheduleResult
+- pub struct DataRefManager
+- impl DataRefManager
+- impl ReferenceDataHandler for DataRefManager
+
+### src/options_strategy_builder.rs
+
+- pub struct OptionExchangeInfo
+- pub struct OptionChainParams
+- pub enum ExchangeSelectionStrategy
+- pub struct LiquidityEstimationConfig
+- impl Default for LiquidityEstimationConfig
+- pub struct OptionsStrategyBuilder
+- impl OptionsStrategyBuilder
+
+### src/order.rs
+
+- pub struct Order
+- pub struct OrderRequest
+- impl Default for OrderRequest
+- pub struct OrderCancel
+- pub struct OrderState
+- impl Default for OrderState
+- impl OrderState
+- pub struct OrderUpdates
+- pub enum OrderSide
+- impl fmt::Display for OrderSide
+- impl FromStr for OrderSide
+- pub enum OrderType
+- impl fmt::Display for OrderType
+- impl FromStr for OrderType
+- pub enum TimeInForce
+- impl fmt::Display for TimeInForce
+- impl FromStr for TimeInForce
+- pub enum OrderStatus
+- impl fmt::Display for OrderStatus
+- impl OrderStatus
+- pub enum ExerciseAction
+- pub enum AdaptivePriority
+- impl fmt::Display for AdaptivePriority
+- pub enum RiskAversion
+- impl fmt::Display for RiskAversion
+- pub enum TwapStrategyType
+- impl fmt::Display for TwapStrategyType
+- pub enum IBKRAlgo
+
+### src/conn_log.rs
+
+- pub enum LogDirection
+- impl fmt::Display for LogDirection
+- pub struct ConnectionLogger
+- impl ConnectionLogger
+
+### src/news_subscription.rs
+
+- pub enum NewsEvent
+- impl NewsObserver for NewsInternalObserver
+- pub struct NewsSubscriptionBuilder
+- impl NewsSubscriptionBuilder
+- pub struct NewsSubscription
+- impl MarketDataSubscription for NewsSubscription
+- impl Drop for NewsSubscription
+- pub struct NewsIterator
+- impl NewsIterator
+- impl Iterator for NewsIterator
+- impl MarketDataIterator for NewsIterator
+- pub enum HistoricalNewsEvent
+- pub struct HistoricalNewsSubscriptionBuilder
+- impl HistoricalNewsSubscriptionBuilder
+- pub struct HistoricalNewsSubscription
+- impl MarketDataSubscription for HistoricalNewsSubscription
+- impl Drop for HistoricalNewsSubscription
+- pub struct HistoricalNewsIterator
+- impl HistoricalNewsIterator
+- impl Iterator for HistoricalNewsIterator
+- impl MarketDataIterator for HistoricalNewsIterator
+
+### src/data_observer.rs
+
+- pub struct ObserverId
+- pub trait MarketDataObserver
+- pub trait RealTimeBarsObserver
+- pub trait TickByTickObserver
+- pub trait MarketDepthObserver
+- pub trait HistoricalDataObserver
+- pub trait HistoricalTicksObserver
+
+### src/lib.rs
+
+- pub mod order_build_types
+- pub use order_build_types::order_builder::TriggerMethod
+- pub use order_build_types::order_builder::ConditionConjunction
+- pub mod account
+- pub mod data
+- pub mod contract
+- pub mod order
+- pub mod data_wsh
+- pub mod news
+- pub mod financial_advisor
+- pub mod account_subscription
+- pub mod data_subscription
+- pub mod news_subscription
+- pub mod data_observer
+- pub mod account_manager
+- pub mod data_fin_manager
+- pub mod data_market_manager
+- pub mod data_news_manager
+- pub mod data_ref_manager
+- pub mod order_manager
+- pub mod scan_parameters
+- pub mod financial_advisor_manager
+- pub mod rate_limiter
+- pub use order_builder::OrderBuilder
+- pub use options_strategy_builder::OptionsStrategyBuilder
+- pub use base::IBKRError
+- pub use financial_report_parser::parse_fundamental_xml
+- pub use client::IBKRClient
+- pub use client::client_manager
+- pub use order_manager::{OrderEvent, OrderSubscription, OrderSubscriptionIterator}
+- pub const VERSION
+- pub const API_VERSION
+
+### src/parser_data_news.rs
+
+- pub fn process_news_article
+- pub fn process_news_providers
+- pub fn process_historical_news
+- pub fn process_historical_news_end
+- pub fn process_news_bulletins
+- pub fn process_tick_news
+
+### src/contract.rs
+
+- pub enum SecType
+- impl fmt::Display for SecType
+- pub struct ScannerInfo
+- pub struct ScanData
+- impl std::str::FromStr for SecType
+- pub enum SecIdType
+- impl fmt::Display for SecIdType
+- impl std::str::FromStr for SecIdType
+- pub struct ComboLeg
+- pub struct DeltaNeutralContract
+- pub struct YearMonth
+- impl Ord for YearMonth
+- impl PartialOrd for YearMonth
+- impl fmt::Display for YearMonth
+- pub enum DateOrMonth
+- impl fmt::Display for DateOrMonth
+- pub struct Contract
+- impl Contract
+- impl Default for Contract
+- impl PartialEq for Contract
+- impl Eq for Contract
+- impl Hash for Contract
+- pub enum OptionRight
+- impl fmt::Display for OptionRight
+- impl FromStr for OptionRight
+- pub struct ContractDetails
+- pub struct IneligibilityReason
+- pub struct BondDetails
+- impl Default for ContractDetails
+- impl Default for BondDetails
+- pub struct Bar
+- pub enum BarSize
+- impl fmt::Display for BarSize
+- pub enum WhatToShow
+- impl fmt::Display for WhatToShow
+- impl Default for WhatToShow
+- pub struct SoftDollarTier
+- pub struct FamilyCode
+- pub struct ContractDescription
+- pub struct DepthMktDataDescription
+- pub struct SmartComponent
+- pub struct PriceIncrement
+- pub struct MarketRule
+- pub struct HistoricalSession
+- pub struct TagValue
+
+### src/client.rs
+
+- pub struct IBKRClient
+- impl IBKRClient
+- impl Drop for IBKRClient
+- pub mod client_manager
+- pub struct client_manager::ClientManager
+- impl client_manager::ClientManager
+- impl ClientHandler for client_manager::ClientManager
+
+### src/conn_mock.rs
+
+- impl FromStr for LogDirection
+- pub struct MockConnection
+- impl MockConnection
+- impl MockConnection
+- impl Connection for MockConnection
+- impl MockConnection
+- impl Drop for MockConnectionState
+
+### src/financial_advisor.rs
+
+- pub enum FADataType
+- impl FADataType
+- pub struct FAGroup
+- pub struct FAProfileAllocation
+- pub struct FAProfile
+- pub struct FAAlias
+- pub struct FinancialAdvisorConfig
+
+### src/rate_limiter.rs
+
+- pub struct RateLimiterConfig
+- impl Default for RateLimiterConfig
+- pub struct RateLimiterStatus
+- pub struct TokenBucketRateLimiter
+- impl TokenBucketRateLimiter
+- pub struct CounterRateLimiter
+- impl CounterRateLimiter
+- pub struct RateLimiterManager
+- impl RateLimiterManager
+- impl RateLimitGuard
+- impl Drop for RateLimitGuard
+
+---
+
+## README.md
+
+### YATWS (Yet Another TWS API)
+
+A comprehensive, thread-safe, type-safe, and ergonomic Rust interface to the Interactive Brokers TWS API.
+
+#### Overview
+
+YATWS provides a modern Rust implementation for interacting with Interactive Brokers' Trader Workstation (TWS) and Gateway. The library's manager-based architecture and support for both synchronous and asynchronous patterns make it suitable for various trading applications, from simple data retrieval to complex automated trading systems.
+
+This library was born out of the need to place orders in rapid succession in response to market events, which is not easily accomplished with existing Rust crates. It takes about 3ms to place an order with this library. While order management was the primary focus, other interfaces (market data, account information, etc.) have been implemented for completeness.
+
+**Current Status**: Early stage but US equity trading is production-ready. The API has been used to trade 9 figures of dollars in volume.
+
+#### Features
+
+- **Comprehensive API Coverage**: Access to orders, accounts, market data, fundamentals, news, and reference data
+- **Book-keeping**: Keeps the portfolio with PNL and order book up-to-date
+- **Multiple Programming Patterns**:
+  - Synchronous blocking calls with timeouts
+  - Asynchronous observer pattern
+  - Subscription model
+- **Options Strategy Builder**: Simplified creation of common options strategies
+- **Strong Type Safety**: Leverages Rust's type system for safer API interactions
+- **Domain-Specific Managers**: Organized access to different API functionalities
+- **Rate limits**: pace the requests in accordance with IBKR rules
+- **Session Recording/Replay**: Record TWS interactions for testing and debugging
+
+#### Architecture
+
+YATWS follows a client-manager architecture:
+
+1. **Core Client (`IBKRClient`)**: Central connection point to TWS/Gateway
+2. **Specialized Managers**: Domain-specific functionality organized into managers:
+   - `OrderManager`: Order placement, modification, and tracking
+   - `AccountManager`: Account and portfolio data (summary, positions, P&L, executions, liquidation warnings)
+   - `DataMarketManager`: Real-time and historical market data
+   - `DataRefManager`: Reference data (contract details, etc.)
+   - `DataNewsManager`: News headlines and articles
+   - `DataFundamentalsManager`: Financial data
+   - `FinancialAdvisorManager`: Financial Advisor configurations (groups, profiles, aliases)
+
+#### Usage Examples
+
+##### Establishing a Connection
+
+```rust
+// Connect to TWS/Gateway
+let client = IBKRClient::new("127.0.0.1", 7497, 0, None)?;
+
+// Alternative: Record session to SQLite database
+let client = IBKRClient::new(
+    "127.0.0.1",
+    7497,
+    0,
+    Some(("sessions.db", "my_trading_session"))
+)?;
+
+// Replay a recorded session
+let replay_client = IBKRClient::from_db("sessions.db", "my_trading_session")?;
+```
+
+##### Account Information
+
+```rust
+// Subscribe to account updates
+client.account().subscribe_account_updates()?;
+
+// Get account summary
+let info = client.account().get_account_info()?;
+println!("Account Net Liq: {}", info.net_liquidation);
+
+// Get a single specific value.
+use yatws::account::AccountValueKey;
+let buying_power_value = client.account().get_account_value(AccountValueKey::BuyingPower)?;
+if let Some(bp) = buying_power_value {
+    println!("Buying Power: {} {}", bp.value, bp.currency.unwrap_or_default());
+}
+
+// List positions
+let positions = client.account().list_open_positions()?;
+
+// Get today's executions
+let executions = client.account().get_day_executions()?;
+
+// Check for pre-liquidation warning
+if client.account().has_received_pre_liquidation_warning() {
+    println!("Warning: Pre-liquidation warning received this session.");
+}
+```
+
+##### Order Management
+
+```rust
+// Create and place an order using OrderBuilder
+let (contract, order_request) = OrderBuilder::new(OrderSide::Buy, 100.0)
+    .for_stock("AAPL")
+    .with_exchange("SMART")
+    .with_currency("USD")
+    .limit(150.0)
+    .with_tif(TimeInForce::Day)
+    .build()?;
+
+let order_id = client.orders().place_order(contract, order_request)?;
+
+// Wait for order to be filled (with timeout)
+let status = client.orders().try_wait_order_executed(
+    &order_id,
+    Duration::from_secs(30)
+)?;
+```
+
+##### Order Subscription Pattern
+
+For tracking order lifecycle with real-time updates:
+
+```rust
+use yatws::{OrderBuilder, OrderSide, TimeInForce};
+use yatws::order_manager::OrderEvent;
+use std::time::Duration;
+
+// Create order specification
+let (contract, order_request) = OrderBuilder::new(OrderSide::Buy, 100.0)
+    .for_stock("AAPL")
+    .market()
+    .with_tif(TimeInForce::Day)
+    .build()?;
+
+// Subscribe to order lifecycle events
+let order_subscription = client.orders().subscribe_new_order(contract, order_request)?;
+let mut order_events = order_subscription.events();
+
+// Process order events until completion or error
+while let Some(event) = order_events.try_next(Duration::from_secs(1)) {
+    match event {
+        OrderEvent::Update(order) => {
+            println!("Order {} status: {:?}, filled: {}",
+                     order.id, order.state.status, order.state.filled_quantity);
+
+            if order.state.status.is_terminal() {
+                println!("Order completed with status: {:?}", order.state.status);
+                break;
+            }
+        }
+        OrderEvent::Error(error) => {
+            eprintln!("Order error: {:?}", error);
+            break;
+        }
+    }
+}
+```
+
+##### Market Data
+
+```rust
+// Get a simple quote
+let (bid, ask, last) = client.data_market().get_quote(
+    &contract,
+    None,
+    Duration::from_secs(5)
+)?;
+
+// Get historical data
+use yatws::data::DurationUnit;
+let bars = client.data_market().get_historical_data(
+    &contract,
+    None,                 // End time (None = now)
+    DurationUnit::Day(1),
+    yatws::contract::BarSize::Hour1,
+    yatws::contract::WhatToShow::Trades,
+    true,                 // Use RTH
+    1,                    // Date format
+    false,                // Keep up to date?
+    None,                 // Market data type
+    &[]                   // Chart options
+)?;
+```
+
+##### Options Strategies
+
+```rust
+// Create a bull call spread
+let builder = OptionsStrategyBuilder::new(
+    client.data_ref(),
+    "AAPL",
+    150.0,     // Current price
+    10.0,      // Quantity (10 spreads)
+    SecType::Stock
+)?;
+
+let (contract, order) = builder
+    .bull_call_spread(
+        NaiveDate::from_ymd_opt(2025, 12, 19).unwrap(),
+        150.0,  // Lower strike
+        160.0   // Higher strike
+    )?
+    .with_limit_price(3.50)  // Debit of $3.50 per spread
+    .build()?;
+
+let order_id = client.orders().place_order(contract, order)?;
+```
+
+##### Financial Advisor Configuration
+
+```rust
+// Access the FinancialAdvisorManager
+let fa_manager = client.financial_advisor();
+
+// Request FA Groups data
+fa_manager.request_fa_data(yatws::FADataType::Groups)?;
+
+// Get the current FA configuration
+let fa_config = fa_manager.get_config();
+println!("FA Groups: {:?}", fa_config.groups);
+```
+
+#### Asynchronous Event Handling
+
+YATWS supports an observer pattern for handling asynchronous events. This is a push programming model where events are pushed to you. You initiate the request and implement `on_event` methods. This is the closest to the official IBKR TWS API, except you have observers split by functionality rather than a single `EWrapper`.
+
+This is best suited for event-driven trading, such as reacting to news, order fills and buying power depletion.
+
+##### Market Data Observer Example
+
+```rust
+use yatws::{IBKRClient, IBKRError, contract::Contract, data::{MarketDataType, TickType, TickAttrib}, data_observer::MarketDataObserver};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+###[derive(Debug)]
+struct MyMarketObserver {
+    name: String,
+    tick_count: Arc<Mutex<usize>>,
+}
+
+impl MarketDataObserver for MyMarketObserver {
+    fn on_tick_price(&self, req_id: i32, tick_type: TickType, price: f64, attrib: TickAttrib) {
+        println!("[{}] TickPrice: ReqID={}, Type={:?}, Price={}, Attrib={:?}", self.name, req_id, tick_type, price, attrib);
+        *self.tick_count.lock().unwrap() += 1;
+    }
+    // Implement other MarketDataObserver methods as needed (on_tick_size, on_error, etc.)
+    fn on_error(&self, req_id: i32, error_code: i32, error_message: &str) {
+        eprintln!("[{}] Error: ReqID={}, Code={}, Msg='{}'", self.name, req_id, error_code, error_message);
+    }
+}
+
+fn main() -> Result<(), IBKRError> {
+    let client = IBKRClient::new("127.0.0.1", 7497, 2, None)?;
+    let market_mgr = client.data_market();
+    let contract = Contract::stock("AAPL");
+
+    let observer = MyMarketObserver {
+        name: "AAPL-Observer".to_string(),
+        tick_count: Arc::new(Mutex::new(0)),
+    };
+
+    // Request streaming data and associate it with the observer
+    let (req_id, _observer_id) = market_mgr.request_observe_market_data(
+        &contract,
+        &[GenericTickType::MiscellaneousStats], // Empty generic_tick_list for default ticks
+        false, // snapshot = false for streaming
+        false, // regulatory_snapshot
+        &[],   // mkt_data_options
+        Some(MarketDataType::Delayed), // Or RealTime if subscribed
+        observer,
+    )?;
+    println!("Observing market data for AAPL with ReqID: {}", req_id);
+
+    thread::sleep(Duration::from_secs(15)); // Observe for 15 seconds
+
+    market_mgr.cancel_market_data(req_id)?; // Cancel the stream
+    println!("Cancelled market data for AAPL.");
+
+    Ok(())
+}
+```
+
+#### Subscriptions
+Simimlar to the `ibapi` crate, you can use a subscription programming model. This is in-between the sync and async models desribed above. This is best suited for receiving a stream of data. This is a pull model where you receive an iterator of events.
+
+##### Account Subscription Example
+
+```rust
+use yatws::{IBKRClient, IBKRError};
+use yatws::account_subscription::{AccountSubscription, AccountEvent};
+use std::time::Duration;
+use std::thread;
+
+fn main() -> Result<(), IBKRError> {
+    let client = IBKRClient::new("127.0.0.1", 7497, 1, None)?; // Use a unique client_id
+    let account_manager = client.account();
+
+    let mut account_sub = AccountSubscription::new(account_manager)?;
+    println!("AccountSubscription created for account: {}", account_sub.account_id());
+
+    // Example: Print initial summary
+    if let Some(summary) = account_sub.last_known_summary() {
+        println!("Initial Net Liquidation: {}", summary.net_liquidation);
+    }
+
+    // Spawn a thread to listen for events
+    let event_receiver = account_sub.events(); // Get a receiver clone
+    let event_thread = thread::spawn(move || {
+        for event in event_receiver { // Iterates until channel is disconnected
+            match event {
+                AccountEvent::SummaryUpdate { info, .. } => {
+                    println!("[Thread] Account Summary Update: NetLiq = {}", info.net_liquidation);
+                }
+                AccountEvent::PositionUpdate { position, .. } => {
+                    println!("[Thread] Position Update: {} {} @ {}",
+                             position.symbol, position.quantity, position.market_price);
+                }
+                AccountEvent::ExecutionUpdate { execution, .. } => {
+                    println!("[Thread] Execution: {} {} {} @ {}",
+                             execution.side, execution.quantity, execution.symbol, execution.price);
+                }
+                AccountEvent::Error { error, .. } => {
+                    eprintln!("[Thread] AccountSubscription Error: {:?}", error);
+                }
+                AccountEvent::Closed { account_id, .. } => {
+                    println!("[Thread] AccountSubscription for {} closed.", account_id);
+                    break; // Exit loop
+                }
+            }
+        }
+    });
+
+    // Let the subscription run for a bit
+    thread::sleep(Duration::from_secs(60));
+
+    // Explicitly close the subscription
+    println!("Main thread: Closing AccountSubscription...");
+    account_sub.close()?; // This will send AccountEvent::Closed and disconnect the channel
+
+    // Wait for the event thread to finish
+    event_thread.join().expect("Event thread panicked");
+    println!("Main thread: Done.");
+
+    Ok(())
+}
+```
+
+##### News Subscription Example
+
+```rust
+use yatws::{IBKRClient, IBKRError, news_subscription::NewsEvent};
+use std::time::Duration;
+use std::thread;
+
+fn main() -> Result<(), IBKRError> {
+    let client = IBKRClient::new("127.0.0.1", 7497, 3, None)?;
+    let news_manager = client.data_news();
+
+    // Subscribe to new news bulletins
+    let mut news_sub = news_manager.subscribe_news_bulletins_stream(false).submit()?;
+    println!("Subscribed to news bulletins (ReqID: {}).", news_sub.request_id());
+
+    let event_receiver = news_sub.events();
+    let news_thread = thread::spawn(move || {
+        for event in event_receiver {
+            match event {
+                NewsEvent::Bulletin { article, .. } => {
+                    println!("[Thread] News Bulletin: Provider={}, ID={}, Headline='{}'",
+                             article.provider_code, article.article_id, article.headline);
+                }
+                NewsEvent::Error(e) => {
+                    eprintln!("[Thread] NewsSubscription Error: {:?}", e);
+                }
+                NewsEvent::Closed { .. } => {
+                    println!("[Thread] NewsSubscription closed.");
+                    break;
+                }
+            }
+        }
+    });
+
+    thread::sleep(Duration::from_secs(60)); // Listen for news for 60 seconds
+
+    println!("Main thread: Closing NewsSubscription...");
+    news_sub.cancel()?; // Explicitly cancel the subscription
+
+    news_thread.join().expect("News thread panicked");
+    println!("Main thread: Done with news.");
+
+    Ok(())
+}
+```
+
+#### Advanced Features
+
+##### Session Recording and Replay
+
+```rust
+// Enable session recording
+let client = IBKRClient::new(
+    "127.0.0.1",
+    7497,
+    0,
+    Some(("sessions.db", "my_trading_session"))
+)?;
+
+// Later, replay the session
+let replay_client = IBKRClient::from_db("sessions.db", "my_trading_session")?;
+```
+
+##### Order Conditions
+
+```rust
+// Create a price-conditional order
+let (contract, order) = OrderBuilder::new(OrderSide::Buy, 100.0)
+    .for_stock("AAPL")
+    .limit(150.0)
+    .add_price_condition(
+        265598,             // SPY con_id
+        "ISLAND",           // Exchange
+        400.0,              // Price
+        TriggerMethod::Last, // Trigger method
+        false               // Is less than 400
+    )
+    .build()?;
+```
+
+##### Rate Limiting
+
+YATWS provides built-in rate limiting to ensure compliance with Interactive Brokers' API limits:
+
+```rust
+// Enable rate limiting with default settings (50 msgs/sec, 50 historical requests, 100 market data lines)
+client.enable_rate_limiting()?;
+
+// Configure custom rate limiting settings
+let mut config = RateLimiterConfig::default();
+config.enabled = true;
+config.max_messages_per_second = 40;  // Be more conservative
+config.max_historical_requests = 30;  // Lower than default 50
+config.rate_limit_wait_timeout = Duration::from_secs(10);  // Longer timeout
+client.configure_rate_limiter(config)?;
+
+// Check current rate limiter status
+if let Some(status) = client.get_rate_limiter_status() {
+    println!("Rate limiting enabled: {}", status.enabled);
+    println!("Current message rate: {:.2} msgs/sec", status.current_message_rate);
+    println!("Active historical requests: {}/{}",
+             status.active_historical_requests,
+             config.max_historical_requests);
+}
+
+// Disable rate limiting when needed
+client.disable_rate_limiting()?;
+
+// Clean up stale requests (useful for long-running applications)
+let (hist_cleaned, mkt_cleaned) = client.cleanup_stale_rate_limiter_requests(
+    Duration::from_secs(300)  // Clean up requests older than 5 minutes
+)?;
+println!("Cleaned up {} historical and {} market data requests", hist_cleaned, mkt_cleaned);
+```
+
+#### Error Handling
+
+YATWS uses Rust's Result pattern consistently, with a custom `IBKRError` type:
+
+```rust
+match client.account().get_net_liquidation() {
+    Ok(net_liq_value) => println!("Account Net Liquidation Value: ${}", net_liq_value),
+    Err(IBKRError::Timeout) => println!("Operation timed out"),
+    Err(IBKRError::ApiError(code, msg)) => println!("API error {}: {}", code, msg),
+    Err(e) => println!("Other error: {:?}", e),
+}
+```
+
+#### API Reference
+
+For detailed information about the available functions, structs, and traits, please refer to the [API documentation on docs.rs](https://docs.rs/yatws) or the [API reference on GitHub](https://github.com/drpngx/yatws/blob/main/yatws/doc/api.md).
+
+Key components include:
+
+- `IBKRClient`: Primary client for interacting with the TWS API
+- `OrderManager`: Order-related operations
+- `AccountManager`: Account and portfolio data (including liquidation warning status)
+- `DataMarketManager`: Market data operations
+- `DataRefManager`: Reference data
+- `DataNewsManager`: News data
+- `DataFundamentalsManager`: Financial data
+- `FinancialAdvisorManager`: Financial Advisor configurations
+- `OrderBuilder`: Fluent API for creating orders
+- `OptionsStrategyBuilder`: Factory for common options strategies
+
+## Cargo.toml
+
+```toml
+[package]
+name = "yatws"
+version = "0.1.7"
+edition = "2024"
+authors = ["Patrick Nguyen <pub+yatws@drpng.com>"]
+description = "Yet Another TWS (Interactive Brokers TWS API) Implementation"
+license = "MIT"
+repository = "https://github.com/drpngx/yatws"
+readme = "README.md"
+keywords = ["finance", "trading", "interactive-brokers", "tws", "ibkr"]
+categories = ["api-bindings", "finance"]
+
+[dependencies]
+anyhow = "1.0.100"
+async-trait = "0.1.89"
+bincode = "2.0.1"
+bitmask-enum = "2.2.5"
+byteorder = "1.5.0"
+chrono = { version = "0.4.42", features = ["std", "serde"] }
+chrono-tz = "0.10.4"
+clap = { version = "4.5.53", features = ["derive"] }
+crossbeam = "0.8.4"
+crossbeam-channel = "0.5.15"
+env_logger = "0.11.8"
+futures = "0.3.31"
+glob = "0.3.3"
+inventory = "0.3.21"
+lazy_static = "1.5.0"
+log = "0.4.29"
+num_enum = "0.7.5"
+num-traits = "0.2.19"
+once_cell = "1.21.3"
+parking_lot = "0.12.5"
+rand = "0.9.2"
+rusqlite = { version = "0.37.0", features = ["vtab", "functions", "window", "blob", "bundled", "rusqlite-macros"] }
+rust_decimal = "1.39.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.145", features = ["raw_value"] }
+socket2 = { version = "0.6.1", features = ["all"] }
+thiserror = "2.0.17"
+time = { version = "0.3.44", features = ["macros", "parsing", "serde", "serde-human-readable"] }
+tokio = { version = "1.48.0", features = ["full"] }
+uuid = { version = "1.19.0", features = ["v4"] }
+quick-xml = { version = "0.38.4", features = ["serialize"] }
+suppaftp = { version = "7.0.7" }
+csv = { version = "1.4.0" }
+
+[dev-dependencies]
+tokio-test = "0.4.4"
+mockall = "0.14.0"
+serial_test = "3.2.0"
+tempfile = "3.23.0"
+
+[features]
+# shortinv = ["dep:suppaftp", "dep:csv"]
+shortinv = []
+
+[lib]
+name = "yatws"
+
+[[bin]]
+name = "tws_snoop"
+path = "tws_snoop.rs"
+
+[[bin]]
+name = "gen_goldens"
+path = "gen_goldens.rs"
+required-features = ["shortinv"]
+```
+
