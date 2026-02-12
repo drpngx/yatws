@@ -1,4 +1,5 @@
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test", "rust_doc", "rust_binary")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -140,5 +141,12 @@ rust_binary(
         "@crates//:rand",
     ],
     crate_features = ["shortinv"],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "gen_llms_txt",
+    srcs = ["gen_llms_txt.sh"],
+    data = ["@cargo_llms_txt//:cargo-llms-txt"],
     visibility = ["//visibility:public"],
 )

@@ -23,6 +23,9 @@ pip.parse(
 )
 use_repo(pip, "yatws_pip_deps")
 
+########## SHELL
+bazel_dep(name = "rules_shell", version = "0.4.0")
+
 ########## RUST
 bazel_dep(name = "rules_rust", version = "0.68.1")
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
@@ -42,7 +45,54 @@ crate.from_cargo(
     cargo_lockfile = "//:Cargo.lock",
     manifests = [
         "//:Cargo.toml",
-        "//yatws:Cargo.toml"
+        "//yatws:Cargo.toml",
     ],
 )
 use_repo(crate, "crates")
+
+dev_crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
+
+dev_crate.spec(package = "anyhow", version = "1.0")
+dev_crate.spec(
+    package = "chrono",
+    version = "0.4",
+    features = ["serde"],
+)
+dev_crate.spec(
+    package = "clap",
+    version = "4.5",
+    features = ["derive"],
+)
+dev_crate.spec(package = "ignore", version = "0.4")
+dev_crate.spec(package = "proc-macro2", version = "1.0")
+dev_crate.spec(package = "quote", version = "1.0")
+dev_crate.spec(
+    package = "serde",
+    version = "1.0",
+    features = ["derive"],
+)
+dev_crate.spec(
+    package = "syn",
+    version = "2.0",
+    features = ["full", "extra-traits", "visit"],
+)
+dev_crate.spec(package = "toml", version = "0.8")
+dev_crate.spec(package = "walkdir", version = "2.5")
+
+dev_crate.from_specs(
+    name = "dev_crates",
+    generate_binaries = True,
+)
+use_repo(dev_crate, "dev_crates")
+
+# For cargo-llms-txt binary (binary-only crate)
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "cargo_llms_txt",
+    build_file = "//third_party:cargo_llms_txt.BUILD.bazel",
+    sha256 = "fc920cb7b96872a88287b2c42b484dabc92b02cf565d0a08268a64e914a7aa10",
+    strip_prefix = "cargo-llms-txt-0.1.1",
+    type = "tar.gz",
+    urls = ["https://static.crates.io/crates/cargo-llms-txt/cargo-llms-txt-0.1.1.crate"],
+)
