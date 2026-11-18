@@ -2,12 +2,16 @@
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 PROJECT_NAME = "yatws"
@@ -70,23 +74,31 @@ def git_config_get(key):
     return val if res.returncode == 0 and val else None
 
 
+def resolve_commit_sha(ref):
+    res = subprocess.run(
+        ["git", "rev-parse", f"{ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return res.stdout.strip()
+
+
 def resolve_pqc_key(sq_bin, cli_pqc_key):
-    """Resolves the OpenPGP v6 PQC key fingerprint and algorithm from `sq-pqc`."""
+    """Resolves `(fingerprint, algo, error_msg)` for the OpenPGP v6 PQC key in `sq-pqc`."""
     export_cmd = [sq_bin, "cert", "export"]
     if cli_pqc_key:
         export_cmd += ["--cert", cli_pqc_key]
     else:
         email = git_config_get("user.email")
         if not email:
-            print("[ERROR] `git config user.email` is unset and `--pqc-key` was not provided.")
-            sys.exit(1)
+            return None, None, "`git config user.email` is unset and `--pqc-key` was not provided"
         export_cmd += ["--cert-email", email]
 
     exported = subprocess.run(export_cmd, capture_output=True, check=False)
     if exported.returncode != 0 or not exported.stdout:
         target = cli_pqc_key or git_config_get("user.email")
-        print(f"[ERROR] Could not find certificate for '{target}' in `{sq_bin}` cert store.")
-        sys.exit(1)
+        return None, None, f"no certificate for '{target}' in `{sq_bin}` cert store"
 
     inspected = subprocess.run(
         [sq_bin, "inspect"],
@@ -96,7 +108,6 @@ def resolve_pqc_key(sq_bin, cli_pqc_key):
     )
     text = inspected.stdout.decode("utf-8", errors="replace")
 
-    # Parse primary certificate blocks: pick a v6 (64-hex) / PQC cert if multiple exist.
     candidates = []
     for block in text.split("OpenPGP Certificate.")[1:]:
         fpr_match = re.search(r"Fingerprint:\s*([0-9A-Fa-f]{40,64})", block)
@@ -107,8 +118,7 @@ def resolve_pqc_key(sq_bin, cli_pqc_key):
             candidates.append((fpr, algo))
 
     if not candidates:
-        print(f"[ERROR] Unable to parse certificate fingerprint from `{sq_bin} inspect`.")
-        sys.exit(1)
+        return None, None, f"unable to parse certificate fingerprint from `{sq_bin} inspect`"
 
     pqc_candidates = [
         (fpr, algo)
@@ -117,7 +127,6 @@ def resolve_pqc_key(sq_bin, cli_pqc_key):
     ]
     selected_fpr, selected_algo = pqc_candidates[0] if pqc_candidates else candidates[0]
 
-    # Verify the private key material is available in `sq-pqc key list`.
     key_list = subprocess.run(
         [sq_bin, "key", "list"],
         capture_output=True,
@@ -125,94 +134,378 @@ def resolve_pqc_key(sq_bin, cli_pqc_key):
         check=False,
     )
     if key_list.returncode != 0 or selected_fpr not in key_list.stdout.upper():
-        print(f"[ERROR] Secret key for {selected_fpr} not found in `{sq_bin} key list`.")
-        sys.exit(1)
+        return None, None, f"secret key for {selected_fpr} not found in `{sq_bin} key list`"
 
-    return selected_fpr, selected_algo
+    return selected_fpr, selected_algo, None
 
 
-def verify_prerequisites(version, sq_bin, pqc_key, allow_missing_git_key=False, dry_run=False):
-    """Checks tools, keys, git state, and crate version before mutating tags or publishing."""
-    for tool in ("git", "cargo", "gh", sq_bin):
-        if shutil.which(tool) is None:
-            print(f"[ERROR] Required tool '{tool}' not found in PATH.")
-            sys.exit(1)
-
-    audit_check = subprocess.run(
-        ["cargo", "audit", "--version"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if audit_check.returncode != 0:
-        print(
-            "[ERROR] `cargo audit` is not installed.\n"
-            "        Install it first with: cargo install cargo-audit --locked"
-        )
-        sys.exit(1)
-
-    pqc_fpr, pqc_algo = resolve_pqc_key(sq_bin, pqc_key)
-
-    git_signing_key = git_config_get("user.signingkey")
-    git_gpg_format = git_config_get("gpg.format") or "openpgp"
-    if not git_signing_key and not allow_missing_git_key:
-        print(
-            "[ERROR] Git tag signing key (`user.signingkey`) is not configured.\n"
-            "        Note: GitHub does not verify OpenPGP v6 / PQC keys on Git tags yet.\n"
-            "        Recommended setup using your existing SSH key for GitHub's 'Verified' badge:\n"
-            "          gh auth refresh -h github.com -s admin:ssh_signing_key\n"
-            "          gh ssh-key add ~/.ssh/github.pub --type signing --title 'yatws release tag signing'\n"
-            "          git config --global gpg.format ssh\n"
-            "          git config --global user.signingkey ~/.ssh/github.pub"
-        )
-        sys.exit(1)
+def check_version_consistency(version):
+    """Ensures Cargo.toml, Cargo.lock, MODULE.bazel, and llms.txt all match `version`."""
+    mismatches = []
 
     cargo_toml = Path(PROJECT_NAME) / "Cargo.toml"
     with open(cargo_toml, "rb") as f:
         manifest = tomllib.load(f)
-    crate_version = manifest.get("package", {}).get("version")
-    if crate_version != version:
-        print(
-            f"[ERROR] Version mismatch: {cargo_toml} has version '{crate_version}', "
-            f"but release requested '{version}'."
-        )
-        sys.exit(1)
+    crate_ver = manifest.get("package", {}).get("version")
+    if crate_ver != version:
+        mismatches.append(f"{cargo_toml}={crate_ver}")
 
-    tag_name = f"v{version}"
-    tag_check = subprocess.run(
-        ["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag_name}"],
+    cargo_lock = Path("Cargo.lock")
+    if cargo_lock.exists():
+        with open(cargo_lock, "rb") as f:
+            lock_data = tomllib.load(f)
+        lock_vers = [
+            pkg.get("version")
+            for pkg in lock_data.get("package", [])
+            if pkg.get("name") == PROJECT_NAME
+        ]
+        if lock_vers and lock_vers[0] != version:
+            mismatches.append(f"Cargo.lock={lock_vers[0]}")
+
+    module_bazel = Path("MODULE.bazel")
+    if module_bazel.exists():
+        content = module_bazel.read_text(encoding="utf-8")
+        m = re.search(r'module\s*\([^)]*?version\s*=\s*"([^"]+)"', content, re.DOTALL)
+        if m and m.group(1) != version:
+            mismatches.append(f"MODULE.bazel={m.group(1)}")
+
+    llms_txt = Path(PROJECT_NAME) / "llms.txt"
+    if llms_txt.exists():
+        head = llms_txt.read_text(encoding="utf-8")[:512]
+        m = re.search(r"\*\*Version:\*\*\s*(\S+)", head)
+        if m and m.group(1) != version:
+            mismatches.append(
+                f"{llms_txt}={m.group(1)} (run `bazel run //yatws:gen_llms_txt`)"
+            )
+
+    return mismatches
+
+
+def check_crates_io(version):
+    """Checks crates.io credentials exist and `version` is not already published."""
+    has_token = bool(os.environ.get("CARGO_REGISTRY_TOKEN")) or (
+        Path.home() / ".cargo" / "credentials.toml"
+    ).exists() or (Path.home() / ".cargo" / "credentials").exists()
+    if not has_token:
+        return False, "no crates.io token found (run `cargo login`)"
+
+    url = f"https://index.crates.io/ya/tw/{PROJECT_NAME}"
+    req = urllib.request.Request(url, headers={"User-Agent": "yatws-release-preflight/0.1"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            published = {
+                json.loads(line)["vers"]
+                for line in resp.read().decode("utf-8").splitlines()
+                if line.strip()
+            }
+        if version in published:
+            return False, f"{PROJECT_NAME} {version} is already published on crates.io"
+    except urllib.error.HTTPError as e:
+        if e.code != 404:
+            return False, f"crates.io index HTTP {e.code}"
+    except Exception as e:
+        return False, f"could not query crates.io sparse index: {e}"
+
+    return True, f"credentials present; {PROJECT_NAME} {version} not yet on crates.io"
+
+
+def test_git_tag_signing(git_gpg_format, git_signing_key):
+    """Checks that the configured Git tag-signing key is ready without hanging on passphrase prompts."""
+    expanded_key = os.path.expanduser(git_signing_key)
+    if git_gpg_format == "ssh":
+        if shutil.which("ssh-keygen") is None:
+            return False, "`ssh-keygen` not found in PATH"
+        if not os.path.exists(expanded_key):
+            return False, f"SSH signing key file not found: {expanded_key}"
+
+        pub_path = Path(expanded_key if expanded_key.endswith(".pub") else f"{expanded_key}.pub")
+        if pub_path.exists() and shutil.which("ssh-add"):
+            pub_parts = pub_path.read_text(encoding="utf-8").strip().split()
+            pub_material = " ".join(pub_parts[:2])
+            agent_keys = subprocess.run(
+                ["ssh-add", "-L"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if agent_keys.returncode != 0 or pub_material not in agent_keys.stdout:
+                priv_hint = str(pub_path).removesuffix(".pub")
+                return (
+                    False,
+                    f"key not loaded in ssh-agent — run `ssh-add {priv_hint}`",
+                )
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                payload = Path(tmpdir) / "preflight.txt"
+                payload.write_text("yatws release preflight\n", encoding="utf-8")
+                res = subprocess.run(
+                    ["ssh-keygen", "-Y", "sign", "-f", str(pub_path), "-n", "git", str(payload)],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if res.returncode != 0:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    return False, f"`ssh-keygen -Y sign` failed ({err})"
+
+        return True, f"ssh ({git_signing_key})"
+
+    res = subprocess.run(
+        ["gpg", "--list-secret-keys", git_signing_key],
         capture_output=True,
         text=True,
         check=False,
     )
-    if tag_check.returncode == 0:
-        print(f"[ERROR] Git tag '{tag_name}' already exists locally.")
+    if res.returncode != 0 or not res.stdout.strip():
+        return False, f"GPG secret key '{git_signing_key}' not found"
+    return True, f"{git_gpg_format} ({git_signing_key})"
+
+
+def verify_prerequisites(
+    version,
+    sq_bin,
+    pqc_key,
+    expected_branch="main",
+    allow_missing_git_key=False,
+):
+    """Runs all upfront sanity checks identically for both `--dry-run` and real releases."""
+    print(f"\n=== Pre-flight Sanity Checks for {PROJECT_NAME} v{version} ===")
+    failures = []
+
+    def record(ok, label, detail=""):
+        status = "[OK]  " if ok else "[FAIL]"
+        suffix = f": {detail}" if detail else ""
+        print(f"  {status} {label}{suffix}")
+        if not ok:
+            failures.append(f"{label}{suffix}")
+
+    # 1. CLI tools
+    missing_tools = [t for t in ("git", "cargo", "gh", sq_bin) if shutil.which(t) is None]
+    audit_ok = (
+        "cargo" not in missing_tools
+        and subprocess.run(
+            ["cargo", "audit", "--version"], capture_output=True, check=False
+        ).returncode
+        == 0
+    )
+    if missing_tools:
+        record(False, "Required CLI tools", f"missing {', '.join(missing_tools)}")
+    elif not audit_ok:
+        record(
+            False,
+            "Required CLI tools",
+            "`cargo audit` missing (install with `cargo install cargo-audit --locked`)",
+        )
+    else:
+        record(True, "Required CLI tools", f"git, cargo, cargo-audit, gh, {sq_bin}")
+
+    if missing_tools:
+        print("\n[ABORT] Install missing CLI tools before continuing.")
         sys.exit(1)
 
-    dirty_check = subprocess.run(
+    # 2. Version consistency
+    mismatches = check_version_consistency(version)
+    if mismatches:
+        record(False, "Version consistency", f"expected {version}, found {', '.join(mismatches)}")
+    else:
+        record(
+            True,
+            "Version consistency",
+            f"Cargo.toml, Cargo.lock, MODULE.bazel, llms.txt == {version}",
+        )
+
+    # 3. Clean git working tree & crate directory
+    dirty_tracked = subprocess.run(
         ["git", "status", "--porcelain", "--untracked-files=no"],
         capture_output=True,
         text=True,
         check=False,
-    )
-    if dirty_check.stdout.strip() and not dry_run:
-        print(
-            "[ERROR] Working tree has uncommitted changes (cargo package will reject dirty state).\n"
-            "        Commit your changes first before running release."
-        )
-        sys.exit(1)
-
-    return pqc_fpr, pqc_algo, git_gpg_format, git_signing_key
-
-
-def resolve_commit_sha(ref):
-    res = subprocess.run(
-        ["git", "rev-parse", f"{ref}^{{commit}}"],
+    ).stdout.strip()
+    dirty_crate = subprocess.run(
+        ["git", "status", "--porcelain", PROJECT_NAME],
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
+    ).stdout.strip()
+    if dirty_tracked:
+        files = ", ".join(line.split()[-1] for line in dirty_tracked.splitlines())
+        record(False, "Clean git working tree", f"uncommitted changes in: {files}")
+    elif dirty_crate:
+        files = ", ".join(line.split()[-1] for line in dirty_crate.splitlines())
+        record(False, "Clean crate directory", f"untracked files inside {PROJECT_NAME}/: {files}")
+    else:
+        record(True, "Clean git working tree", "no uncommitted changes")
+
+    # 4. Branch & pushed-to-origin check (also verifies SSH access to origin!)
+    branch_res = subprocess.run(
+        ["git", "symbolic-ref", "--short", "-q", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    return res.stdout.strip()
+    current_branch = branch_res.stdout.strip()
+    head_sha = resolve_commit_sha("HEAD")
+    if expected_branch and current_branch != expected_branch:
+        record(
+            False,
+            "Git branch",
+            f"on '{current_branch or 'detached HEAD'}', expected '{expected_branch}' "
+            "(pass --allow-branch to override)",
+        )
+    else:
+        record(True, "Git branch", f"{current_branch} ({head_sha[:10]})")
+
+    tag_name = f"v{version}"
+    local_tag_exists = (
+        subprocess.run(
+            ["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag_name}"],
+            capture_output=True,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+    ls_remote = subprocess.run(
+        [
+            "git",
+            "ls-remote",
+            "origin",
+            f"refs/heads/{current_branch}" if current_branch else "HEAD",
+            f"refs/tags/{tag_name}",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if ls_remote.returncode != 0:
+        err_line = (ls_remote.stderr.strip().splitlines() or ["unknown error"])[0]
+        record(
+            False,
+            "Origin SSH access",
+            f"`git ls-remote origin` failed ({err_line}) — run `ssh-add ~/.ssh/github`",
+        )
+        # Fallback check via `gh api` so unpushed commits are still reported right away!
+        gh_head = subprocess.run(
+            ["gh", "api", f"repos/{{owner}}/{{repo}}/commits/{current_branch}", "--jq", ".sha"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        remote_sha = gh_head.stdout.strip()
+        if gh_head.returncode == 0 and remote_sha and remote_sha != head_sha:
+            record(
+                False,
+                "Origin branch pushed",
+                f"local HEAD ({head_sha[:10]}) != origin/{current_branch} ({remote_sha[:10]}) "
+                f"— run `git push origin {current_branch}` first",
+            )
+    else:
+        remote_refs = {}
+        for line in ls_remote.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                remote_refs[parts[1]] = parts[0]
+
+        remote_branch_sha = remote_refs.get(f"refs/heads/{current_branch}")
+        if not remote_branch_sha:
+            record(
+                False,
+                "Origin branch pushed",
+                f"origin/{current_branch} does not exist yet — run `git push -u origin {current_branch}`",
+            )
+        elif remote_branch_sha != head_sha:
+            record(
+                False,
+                "Origin branch pushed",
+                f"local HEAD ({head_sha[:10]}) != origin/{current_branch} ({remote_branch_sha[:10]}) "
+                f"— run `git push origin {current_branch}` first",
+            )
+        else:
+            record(True, "Origin branch pushed", f"HEAD == origin/{current_branch} ({head_sha[:10]})")
+
+        remote_tag_exists = f"refs/tags/{tag_name}" in remote_refs
+        if local_tag_exists or remote_tag_exists:
+            where = "locally and on origin" if (local_tag_exists and remote_tag_exists) else (
+                "locally" if local_tag_exists else "on origin"
+            )
+            record(False, f"Tag {tag_name} unused", f"already exists {where}")
+        else:
+            record(True, f"Tag {tag_name} unused", "free locally and on origin")
+
+    # 5. GitHub CLI auth & release uniqueness
+    gh_auth = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True, check=False)
+    if gh_auth.returncode != 0:
+        record(False, "GitHub CLI auth", "`gh auth status` failed — run `gh auth login`")
+    else:
+        gh_rel = subprocess.run(
+            ["gh", "release", "view", tag_name],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if gh_rel.returncode == 0:
+            record(False, "GitHub Release unused", f"GitHub Release {tag_name} already exists")
+        else:
+            record(True, "GitHub CLI & Release", f"authenticated; Release {tag_name} not yet created")
+
+    # 6. Crates.io credentials & version uniqueness
+    crates_ok, crates_msg = check_crates_io(version)
+    record(crates_ok, "Crates.io readiness", crates_msg)
+
+    # 7. Git tag signing key (live signature check)
+    git_signing_key = git_config_get("user.signingkey")
+    git_gpg_format = git_config_get("gpg.format") or "openpgp"
+    if allow_missing_git_key:
+        record(True, "Git tag signing", "annotated only (--unsigned-git-tag)")
+    elif not git_signing_key:
+        record(
+            False,
+            "Git tag signing",
+            "`user.signingkey` unset (configure SSH signing key or pass --unsigned-git-tag)",
+        )
+    else:
+        sig_ok, sig_msg = test_git_tag_signing(git_gpg_format, git_signing_key)
+        record(sig_ok, "Git tag signing", sig_msg)
+
+    # 8. Sequoia PQC key
+    pqc_fpr, pqc_algo, pqc_err = resolve_pqc_key(sq_bin, pqc_key)
+    if pqc_err:
+        record(False, "PQC artifact key", pqc_err)
+    else:
+        record(True, "PQC artifact key", f"{pqc_fpr[:16]}... ({pqc_algo})")
+
+    # 9. Unit tests (`cargo test --lib --all-features`)
+    test_res = subprocess.run(
+        ["cargo", "test", "-p", PROJECT_NAME, "--lib", "--all-features", "--quiet"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if test_res.returncode != 0:
+        record(False, "Unit tests", "`cargo test -p yatws --lib --all-features` failed")
+    else:
+        record(True, "Unit tests", "`cargo test -p yatws --lib --all-features` passed")
+
+    # 10. Cargo audit check (verifies 0 vulnerabilities upfront even in --dry-run)
+    if audit_ok:
+        audit_res = subprocess.run(
+            ["cargo", "audit"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if audit_res.returncode != 0:
+            record(False, "Cargo security audit", "`cargo audit` reported vulnerabilities")
+        else:
+            record(True, "Cargo security audit", "`cargo audit` passed (0 vulnerabilities)")
+
+    if failures:
+        print(f"\n[ABORT] {len(failures)} pre-flight sanity check(s) failed.")
+        sys.exit(1)
+
+    print("All pre-flight sanity checks passed!\n")
+    return pqc_fpr, pqc_algo, git_gpg_format, git_signing_key, audit_res.stdout
 
 
 def generate_sha256sums(directory, tag_name, commit_sha):
@@ -260,6 +553,10 @@ def parse_args():
         help="OpenPGP v6 PQC certificate fingerprint for artifact signing (auto-detected from git user.email if omitted)",
     )
     parser.add_argument(
+        "--allow-branch",
+        help="Allow releasing from a branch other than 'main'",
+    )
+    parser.add_argument(
         "--unsigned-git-tag",
         action="store_true",
         help="Create an annotated git tag (`git tag -a`) without SSH/GPG tag signing (artifacts remain PQC-signed)",
@@ -267,7 +564,7 @@ def parse_args():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Validate prerequisites and print release commands without tagging or publishing",
+        help="Run all pre-flight checks (including push sync, SSH sign, tests, audit, package) without tagging or publishing",
     )
     return parser.parse_args()
 
@@ -280,22 +577,31 @@ def main():
 
     version = args.version.lstrip("v")
     tag_name = f"v{version}"
+    expected_branch = args.allow_branch if args.allow_branch else "main"
 
-    pqc_fpr, pqc_algo, git_gpg_format, git_signing_key = verify_prerequisites(
+    pqc_fpr, pqc_algo, git_gpg_format, git_signing_key, audit_report = verify_prerequisites(
         version,
         sq_bin=args.sq_bin,
         pqc_key=args.pqc_key,
+        expected_branch=expected_branch,
         allow_missing_git_key=args.unsigned_git_tag,
-        dry_run=args.dry_run,
     )
 
-    # 0. Prep Environment
+    # Package & verify the crate upfront (even in `--dry-run`!) before creating any git tags.
+    print("--- Step 1: Cargo Package Verification ---")
+    print("[*] Running: cargo package -p yatws")
+    subprocess.run(["cargo", "package", "-p", PROJECT_NAME], check=True)
+    crate_source = Path(f"target/package/{PROJECT_NAME}-{version}.crate")
+    if not crate_source.exists():
+        print(f"[ERROR] Expected packaged crate not found at {crate_source}")
+        sys.exit(1)
+
     if not args.dry_run:
         if ASSETS_DIR.exists():
             shutil.rmtree(ASSETS_DIR)
         ASSETS_DIR.mkdir()
 
-    print(f"\n=== Starting Release Pipeline for {PROJECT_NAME} {tag_name} ===")
+    print(f"\n=== Release Pipeline for {PROJECT_NAME} {tag_name} ===")
     print(f"Workspace:        {Path.cwd()}")
     print(f"PQC artifact key: {pqc_fpr} ({pqc_algo})")
     if args.unsigned_git_tag:
@@ -304,27 +610,17 @@ def main():
         print(f"Git tag signing:  {git_gpg_format} ({git_signing_key})")
     print()
 
-    # 1. Cargo Audit
-    print("--- Step 1: Cargo Audit ---")
+    # 2. Save Cargo Audit Report
+    print("--- Step 2: Cargo Audit Report ---")
     audit_file = ASSETS_DIR / "cargo_audit_report.txt"
     if args.dry_run:
-        print(f"[dry-run] Would run: cargo audit > {audit_file}")
+        print(f"[dry-run] Would write verified cargo audit report -> {audit_file}")
     else:
-        with open(audit_file, "w") as f:
-            print(f"[*] Running cargo audit and writing to {audit_file.name}")
-            try:
-                subprocess.run(
-                    ["cargo", "audit"],
-                    stdout=f,
-                    stderr=subprocess.STDOUT,
-                    check=True,
-                )
-            except subprocess.CalledProcessError as e:
-                print(f"\n[ERROR] `cargo audit` failed (see {audit_file}): {e}")
-                sys.exit(1)
+        audit_file.write_text(audit_report, encoding="utf-8")
+        print(f"[*] Wrote cargo audit report to {audit_file}")
 
-    # 2. Git Tag & Export PQC Public Key + Source Archive
-    print("\n--- Step 2: Git Tag & Quantum-Safe Sign Source ---")
+    # 3. Git Tag & Export PQC Public Key + Source Archive
+    print("\n--- Step 3: Git Tag & Quantum-Safe Sign Source ---")
     git_tag_flag = "-a" if args.unsigned_git_tag else "-s"
     run_cmd(
         ["git", "tag", git_tag_flag, tag_name, "-m", f"Release {tag_name}"],
@@ -363,11 +659,8 @@ def main():
         dry_run=args.dry_run,
     )
 
-    # 3. Cargo Package, Sign, and Publish
-    print("\n--- Step 3: Cargo Package & Quantum-Safe Sign ---")
-    run_cmd(["cargo", "package", "-p", PROJECT_NAME], dry_run=args.dry_run)
-
-    crate_source = Path(f"target/package/{PROJECT_NAME}-{version}.crate")
+    # 4. Copy & Sign Packaged Crate + Publish
+    print("\n--- Step 4: Quantum-Safe Sign Crate & Publish ---")
     crate_dest = ASSETS_DIR / crate_source.name
     if args.dry_run:
         print(f"[dry-run] Would copy {crate_source} -> {crate_dest}")
@@ -387,11 +680,10 @@ def main():
         dry_run=args.dry_run,
     )
 
-    print("\n--- Step 3b: Cargo Publish ---")
     run_cmd(["cargo", "publish", "-p", PROJECT_NAME], dry_run=args.dry_run)
 
-    # 4. Generate and Quantum-Safe Cleartext-Sign Checksums
-    print("\n--- Step 4: Checksums (PQC Cleartext-Signed) ---")
+    # 5. Generate and Quantum-Safe Cleartext-Sign Checksums
+    print("\n--- Step 5: Checksums (PQC Cleartext-Signed) ---")
     sums_file = ASSETS_DIR / "SHA256SUMS"
     sums_asc = ASSETS_DIR / "SHA256SUMS.asc"
     if args.dry_run:
@@ -415,11 +707,10 @@ def main():
                 str(sums_file),
             ]
         )
-        # Clean up the unsigned SUMS file so we only upload the signed one (.asc)
         sums_file.unlink()
 
-    # 5. GitHub Release
-    print("\n--- Step 5: GitHub Release ---")
+    # 6. GitHub Release
+    print("\n--- Step 6: GitHub Release ---")
     run_cmd(["git", "push", "origin", tag_name], dry_run=args.dry_run)
 
     release_files = (
@@ -450,7 +741,7 @@ def main():
 
     run_cmd(gh_cmd, dry_run=args.dry_run)
 
-    print("\n=== Release Complete! ===")
+    print("\n=== Dry-Run Complete! ===" if args.dry_run else "\n=== Release Complete! ===")
     if not args.dry_run:
         print("Artifacts pushed to GitHub and crates.io.")
         print("Keep your manual backups of the .asc files safe.")
