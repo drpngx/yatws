@@ -133,6 +133,12 @@ pub trait AccountHandler: Send + Sync {
 
   /// Handles errors related to account data requests.
   fn handle_error(&self, req_id: i32, code: ClientErrorCode, msg: &str);
+
+  /// Attempts to handle an error if `req_id` belongs to an active account request.
+  /// Returns `true` if `req_id` matched an active request on this handler.
+  fn try_handle_request_error(&self, _req_id: i32, _code: ClientErrorCode, _msg: &str) -> bool {
+    false
+  }
 }
 
 pub trait ReferenceDataHandler: Send + Sync {

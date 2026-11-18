@@ -2066,6 +2066,23 @@ info.".to_string()));
     Ok(self.finish_encoding(cursor))
   }
 
+  /// Encodes a request to cancel account-level daily P&L updates.
+  pub fn encode_cancel_pnl(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
+    debug!("Encoding cancel PNL: ReqID={}", req_id);
+
+    if self.server_version < min_server_ver::PNL {
+      return Err(IBKRError::Unsupported(
+        "Server version does not support PnL cancellation.".to_string(),
+      ));
+    }
+
+    let mut cursor = self.start_encoding(OutgoingMessageType::CancelPnl as i32)?;
+    // Version is not explicitly sent for CANCEL_PNL. Structure: reqId
+    self.write_int_to_cursor(&mut cursor, req_id)?;
+
+    Ok(self.finish_encoding(cursor))
+  }
+
   /// Encodes a request to cancel single position P&L updates.
   pub fn encode_cancel_pnl_single(&self, req_id: i32) -> Result<Vec<u8>, IBKRError> {
     debug!("Encoding cancel PNL single: ReqID={}", req_id);

@@ -3,23 +3,28 @@
 use crate::base::IBKRError;
 use crate::handler::MessageHandler;
 pub use socket::SocketConnection;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 use crate::rate_limiter::TokenBucketRateLimiter;
 
 use crate::conn_log::{ConnectionLogger, LogDirection, bytes_to_center_dot_string};
 
+struct RateLimitState {
+  limiter: Option<Arc<TokenBucketRateLimiter>>,
+  timeout: Duration,
+}
+
 #[derive(Clone)]
 pub struct MessageBroker {
   // Connection is still Box<dyn Connection> behind an Arc<Mutex>
   connection: Arc<Mutex<Box<dyn Connection>>>,
-  next_req_id: Arc<AtomicUsize>,
+  server_version: i32,
+  next_req_id: Arc<AtomicI32>,
   // Add optional logger
   logger: Option<ConnectionLogger>, // Use the concrete type from conn_log
-  rate_limiter: Option<Arc<TokenBucketRateLimiter>>,
-  rate_limit_timeout: Duration,
+  rate_limit_state: Arc<RwLock<RateLimitState>>,
 }
 
 /// The start request ID.
@@ -29,18 +34,22 @@ pub struct MessageBroker {
 /// order ID. We assume that there are fewer than 1000 order requests per
 /// day. This counter is reset on the mandatory weekly reset. That way,
 /// the ambiguous ID spaces will not overlap.
-const START_REQUEST_ID: usize = 8000;
+const START_REQUEST_ID: i32 = 8000;
 
 impl MessageBroker {
   // Modify new to accept optional logger
   pub fn new(connection: Box<dyn Connection>, logger: Option<ConnectionLogger>) -> Self {
     log::info!("Creating new MessageBroker.");
+    let server_version = connection.get_server_version();
     Self {
       connection: Arc::new(Mutex::new(connection)),
-      next_req_id: Arc::new(AtomicUsize::new(START_REQUEST_ID)),
+      server_version,
+      next_req_id: Arc::new(AtomicI32::new(START_REQUEST_ID)),
       logger, // Store the logger
-      rate_limiter: None, // No rate limiter by default
-      rate_limit_timeout: Duration::from_secs(5), // Default timeout
+      rate_limit_state: Arc::new(RwLock::new(RateLimitState {
+        limiter: None, // No rate limiter by default
+        timeout: Duration::from_secs(5), // Default timeout
+      })),
     }
   }
 
@@ -51,9 +60,13 @@ impl MessageBroker {
 
   // Instrument send_message
   pub fn send_message(&self, message_body: &[u8]) -> Result<(), IBKRError> {
-    // Apply rate limiting if enabled
-    if let Some(limiter) = &self.rate_limiter {
-      if !limiter.acquire(self.rate_limit_timeout) {
+    // Apply rate limiting if enabled (clone Arc and drop read guard before sleeping in acquire)
+    let (limiter_opt, timeout) = {
+      let state = self.rate_limit_state.read();
+      (state.limiter.clone(), state.timeout)
+    };
+    if let Some(limiter) = limiter_opt {
+      if !limiter.acquire(timeout) {
         return Err(IBKRError::RateLimited("Message rate limit exceeded".to_string()));
       }
     }
@@ -70,13 +83,22 @@ impl MessageBroker {
   }
 
   pub fn next_request_id(&self) -> i32 {
-    let id = self.next_req_id.fetch_add(1, Ordering::SeqCst);
-    id as i32
+    // Wrap before reaching `i32::MAX` (which TWS treats as UNSET_INTEGER) or negative values.
+    self
+      .next_req_id
+      .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+        let next = if cur >= i32::MAX - 1 {
+          START_REQUEST_ID
+        } else {
+          cur + 1
+        };
+        Some(next)
+      })
+      .unwrap_or(START_REQUEST_ID)
   }
 
   pub fn get_server_version(&self) -> Result<i32, IBKRError> {
-    let conn_guard = self.connection.lock();
-    Ok(conn_guard.get_server_version())
+    Ok(self.server_version)
   }
 
   #[allow(dead_code)]
@@ -92,23 +114,13 @@ impl MessageBroker {
     } else {
       log::info!("Removing message rate limiter");
     }
-
-    // Use interior mutability to assign the new rate limiter
-    unsafe {
-      let me = self as *const Self as *mut Self;
-      (*me).rate_limiter = rate_limiter;
-    }
+    self.rate_limit_state.write().limiter = rate_limiter;
   }
 
   /// Set the timeout duration for rate limiting.
   pub fn set_rate_limit_timeout(&self, timeout: Duration) {
     log::debug!("Setting rate limit timeout to {:?}", timeout);
-
-    // Use interior mutability to assign the new timeout
-    unsafe {
-      let me = self as *const Self as *mut Self;
-      (*me).rate_limit_timeout = timeout;
-    }
+    self.rate_limit_state.write().timeout = timeout;
   }
 
   /// Disconnect the underlying connection.
@@ -714,3 +726,52 @@ mod socket {
     }
   }
 } // end mod socket
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  struct DummyConn;
+  impl Connection for DummyConn {
+    fn is_connected(&self) -> bool { true }
+    fn disconnect(&mut self) -> Result<(), IBKRError> { Ok(()) }
+    fn send_message_body(&mut self, _data: &[u8]) -> Result<(), IBKRError> { Ok(()) }
+    fn set_message_handler(&mut self, _handler: MessageHandler) {}
+    fn get_server_version(&self) -> i32 { 178 }
+  }
+
+  #[test]
+  fn test_request_id_wraps_before_i32_max() {
+    let broker = MessageBroker::new(Box::new(DummyConn), None);
+    broker.next_req_id.store(i32::MAX - 2, Ordering::SeqCst);
+    assert_eq!(broker.next_request_id(), i32::MAX - 2);
+    assert_eq!(broker.next_request_id(), i32::MAX - 1);
+    // Wraps to START_REQUEST_ID rather than returning i32::MAX (UNSET_INTEGER) or negative!
+    assert_eq!(broker.next_request_id(), START_REQUEST_ID);
+    assert_eq!(broker.next_request_id(), START_REQUEST_ID + 1);
+  }
+
+  #[test]
+  fn test_concurrent_rate_limiter_updates_and_sends() {
+    let broker = Arc::new(MessageBroker::new(Box::new(DummyConn), None));
+    let mut handles = Vec::new();
+    for i in 0..4 {
+      let b = broker.clone();
+      handles.push(std::thread::spawn(move || {
+        for _ in 0..200 {
+          if i % 2 == 0 {
+            let limiter = Arc::new(TokenBucketRateLimiter::new(1000, 1000));
+            b.set_rate_limiter(Some(limiter));
+            b.set_rate_limit_timeout(Duration::from_millis(10));
+            b.set_rate_limiter(None);
+          } else {
+            let _ = b.send_message(b"61\01\0");
+          }
+        }
+      }));
+    }
+    for h in handles {
+      h.join().unwrap();
+    }
+  }
+}

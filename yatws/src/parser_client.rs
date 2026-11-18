@@ -8,22 +8,74 @@ use crate::base::IBKRError;
 use crate::protocol_dec_parser::FieldParser;
 use log::{warn, error, info}; // Import logging levels
 
+const MAX_ERROR_MSG_BYTES: usize = 4096;
+
+#[inline]
+pub(crate) fn contains_ignore_ascii_case(haystack: &str, needle: &[u8]) -> bool {
+  needle.is_empty()
+    || haystack
+      .as_bytes()
+      .windows(needle.len())
+      .any(|w| w.eq_ignore_ascii_case(needle))
+}
+
+/// Caps abnormally large error messages and strips ASCII/Unicode control characters (except `\t`)
+/// to prevent log/ANSI injection and heap amplification, with zero allocation in the normal case
+/// (including normal non-ASCII UTF-8 text).
+pub(crate) fn sanitize_error_msg(raw: &str) -> std::borrow::Cow<'_, str> {
+  let needs_truncation = raw.len() > MAX_ERROR_MSG_BYTES;
+  let inspect_slice = if needs_truncation {
+    let mut end = MAX_ERROR_MSG_BYTES;
+    while end > 0 && !raw.is_char_boundary(end) {
+      end -= 1;
+    }
+    &raw[..end]
+  } else {
+    raw
+  };
+
+  // All Unicode `char::is_control()` codepoints are either ASCII C0/DEL (`< 0x20` or `0x7F`)
+  // or Latin-1 C1 (`U+0080..=U+009F`, UTF-8 `0xC2 0x80..=0x9F`).
+  let bytes = inspect_slice.as_bytes();
+  let has_ctrl = bytes.iter().enumerate().any(|(i, &b)| {
+    (b < 0x20 && b != b'\t')
+      || b == 0x7f
+      || (b == 0xc2 && bytes.get(i + 1).is_some_and(|&n| (0x80..=0x9f).contains(&n)))
+  });
+  if !needs_truncation && !has_ctrl {
+    return std::borrow::Cow::Borrowed(raw);
+  }
+
+  let mut sanitized = String::with_capacity(inspect_slice.len() + if needs_truncation { 3 } else { 0 });
+  for ch in inspect_slice.chars() {
+    if ch.is_control() && ch != '\t' {
+      sanitized.push(' ');
+    } else {
+      sanitized.push(ch);
+    }
+  }
+  if needs_truncation {
+    sanitized.push_str("...");
+  }
+  std::borrow::Cow::Owned(sanitized)
+}
+
 /// Process an error message (Type 4)
 pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser) -> Result<(), IBKRError> {
   let version = parser.read_int(false)?;
 
   let mut id: i32 = -1; // Default for version < 2 or errors not associated with a request
   let error_code_int: i32;
-  let error_msg_str: &str; // Temporarily read as &str
+  let raw_error_msg_str: &str; // Temporarily read as &str
 
   if version < 2 {
     // Very old format, just a single message string
-    error_msg_str = parser.read_str()?;
+    raw_error_msg_str = parser.read_str()?;
     error_code_int = 0; // No code provided in this format, treat as unknown or info?
   } else {
     id = parser.read_int(false)?;
     error_code_int = parser.read_int(false)?;
-    error_msg_str = parser.read_str()?;
+    raw_error_msg_str = parser.read_str()?;
     // Version >= 3 adds an optional 'advanced order reject' JSON string
     // TODO: Parse advanced_order_reject if server_version supports it
     // if handler.get_server_version() >= crate::versions::ADVANCED_ORDER_REJECT {
@@ -31,15 +83,18 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     // }
   }
 
+  let safe_msg = sanitize_error_msg(raw_error_msg_str);
+  let error_msg: &str = safe_msg.as_ref();
+
   // Convert integer code to ClientErrorCode enum
   let error_code = match ClientErrorCode::try_from(error_code_int) {
     Ok(code) => code,
     Err(_) => {
       if error_code_int >= 1000 && error_code_int < 2000 { // Example range for TWS info/warnings
-        info!("Received TWS Info/Warning (ID: {}, Code: {}): {}", id, error_code_int, error_msg_str);
+        info!("Received TWS Info/Warning (ID: {}, Code: {}): {}", id, error_code_int, error_msg);
         return Ok(());
       } else {
-        error!("Received unknown TWS Error Code (ID: {}, Code: {}): {}", id, error_code_int, error_msg_str);
+        error!("Received unknown TWS Error Code (ID: {}, Code: {}): {}", id, error_code_int, error_msg);
         return Ok(());
       }
     }
@@ -47,13 +102,10 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
 
   // Log based on severity
   if error_code_int >= 2000 && error_code_int < 3000 {
-    info!("TWS Info/Warning (ID: {}, Code: {:?}={}): {}", id, error_code, error_code_int, error_msg_str);
+    info!("TWS Info/Warning (ID: {}, Code: {:?}={}): {}", id, error_code, error_code_int, error_msg);
   } else {
-    error!("TWS Error (ID: {}, Code: {:?}={}): {}", id, error_code, error_code_int, error_msg_str);
+    error!("TWS Error (ID: {}, Code: {:?}={}): {}", id, error_code, error_code_int, error_msg);
   }
-
-  // Convert to owned String for the handler if it expects String
-  let error_msg_owned = error_msg_str.to_string();
 
   // --- Route to the appropriate handler based on error code ---
   match error_code {
@@ -123,7 +175,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::OrderTypeDoesNotSupportFractional | ClientErrorCode::SizeDoesNotConformToMinVariation | ClientErrorCode::FractionalNotSupportedForAllocationOrders |
     ClientErrorCode::NonClosePositionOrderDoesNotSupportFractional | ClientErrorCode::ClearAwayNotSupportedForMultiLegHedge | ClientErrorCode::InvalidOrderBondExpired |
     ClientErrorCode::EtradeOnlyAttributeNotSupported | ClientErrorCode::FirmQuoteOnlyAttributeNotSupported | ClientErrorCode::NbboPriceCapAttributeNotSupported => {
-      handler.order.handle_error(id, error_code, &error_msg_owned);
+      handler.order.handle_error(id, error_code, error_msg);
     }
 
     // Market Data Errors
@@ -144,7 +196,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InvalidRealTimeQuery | ClientErrorCode::NotSubscribedMarketData | ClientErrorCode::PartiallySubscribedMarketData |
     ClientErrorCode::MarketDataNotSubscribedDisplayDelayed | ClientErrorCode::MarketDataNotSubscribedDelayedDisabled | ClientErrorCode::NoMarketDataDuringCompetingSession |
     ClientErrorCode::BustEventDeactivatedSubscription => {
-      handler.data_market.handle_error(id, error_code, &error_msg_owned);
+      handler.data_market.handle_error(id, error_code, error_msg);
     }
 
     // Account/Position Errors
@@ -156,7 +208,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InstitutionalAccountMissingInfo | ClientErrorCode::SecurityNotAvailableOrAllowed | ClientErrorCode::InvalidAccountValueAction |
     ClientErrorCode::NotFinancialAdvisorAccount | ClientErrorCode::NotInstitutionalOrAwayClearingAccount | ClientErrorCode::NoAccountHasEnoughShares |
     ClientErrorCode::MustSpecifyAccount | ClientErrorCode::AccountDoesNotHaveFractionalPermission | ClientErrorCode::TradingNotAllowedInApi => {
-      handler.account.handle_error(id, error_code, &error_msg_owned);
+      handler.account.handle_error(id, error_code, error_msg);
     }
 
     // Reference Data Errors
@@ -170,7 +222,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::InvalidBetaValue | ClientErrorCode::InvalidHedgeRatio | ClientErrorCode::CurrencyNotSupportedForSmartCombo |
     ClientErrorCode::SmartRoutingApiErrorOptOutRequired | ClientErrorCode::PctChangeLimits | ClientErrorCode::ContractNotVisible |
     ClientErrorCode::ContractsNotVisible | ClientErrorCode::InstrumentDoesNotSupportFractional | ClientErrorCode::OnlySmartRoutingSupportsFractional => {
-      handler.data_ref.handle_error(id, error_code, &error_msg_owned);
+      handler.data_ref.handle_error(id, error_code, error_msg);
     }
 
     // Financial Data Errors
@@ -179,13 +231,13 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::FundamentalsDataNotAvailable | ClientErrorCode::DuplicateWshMetadataRequest | ClientErrorCode::FailedRequestWshMetadata |
     ClientErrorCode::FailedCancelWshMetadata | ClientErrorCode::DuplicateWshEventDataRequest | ClientErrorCode::WshMetadataNotRequested |
     ClientErrorCode::FailRequestWshEventData | ClientErrorCode::FailCancelWshEventData => {
-      handler.data_fin.handle_error(id, error_code, &error_msg_owned);
+      handler.data_fin.handle_error(id, error_code, error_msg);
     }
 
     // News Data Errors
     ClientErrorCode::FailSendReqNewsProviders | ClientErrorCode::FailSendReqNewsArticle | ClientErrorCode::FailSendReqHistoricalNews |
     ClientErrorCode::NewsFeedNotAllowed | ClientErrorCode::NewsFeedPermissionsRequired => {
-      handler.data_news.handle_error(id, error_code, &error_msg_owned);
+      handler.data_news.handle_error(id, error_code, error_msg);
     }
 
     // Financial Advisor Errors
@@ -193,7 +245,7 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::ManagedAccountsListRequiresFaStl | ClientErrorCode::FaStlHasNoManagedAccounts | ClientErrorCode::InvalidAccountCodesForOrderProfile |
     ClientErrorCode::FaOrderRequiresAllocation | ClientErrorCode::FaOrderRequiresManualAllocation | ClientErrorCode::InvalidAllocationPercentage |
     ClientErrorCode::UnsavedFaChanges | ClientErrorCode::FaGroupsProfilesContainInvalidAccounts | ClientErrorCode::AdvisorSetupWebAppCommunicationError => {
-      handler.fin_adv.handle_error(id, error_code, &error_msg_owned);
+      handler.fin_adv.handle_error(id, error_code, error_msg);
     }
 
     // General Client/Connection/API Errors & Warnings
@@ -214,31 +266,42 @@ pub fn process_error_message(handler: &MessageHandler, parser: &mut FieldParser)
     ClientErrorCode::EtradeOnlyNotSupportedWarning | ClientErrorCode::FirmQuoteOnlyNotSupportedWarning |
     ClientErrorCode::MaxMessagesPerSecondExceeded | ClientErrorCode::RequestIdNotInteger | ClientErrorCode::ParsingError |
     ClientErrorCode::RequestParsingErrorIgnored | ClientErrorCode::ErrorProcessingDdeRequest | ClientErrorCode::InvalidRequestTopic |
-    ClientErrorCode::MaxApiPagesReached | ClientErrorCode::InvalidLogLevel | ClientErrorCode::ServerErrorCause |
+    ClientErrorCode::MaxApiPagesReached | ClientErrorCode::InvalidLogLevel |
     ClientErrorCode::ServerErrorReadingDdeClientRequest | ClientErrorCode::ClientIdInUse | ClientErrorCode::AutoBindRequiresClientIdZero |
     ClientErrorCode::ClientVersionOutOfDate | ClientErrorCode::DdeDllNeedsUpgrade | ClientErrorCode::InvalidDdeArrayRequest |
     ClientErrorCode::ApplicationLocked => {
-      handler.client.handle_error(id, error_code, &error_msg_owned);
+      handler.client.handle_error(id, error_code, error_msg);
     }
 
     ClientErrorCode::ServerErrorReadingApiClientRequest |
     ClientErrorCode::ServerErrorValidatingApiClientRequest |
-    ClientErrorCode::ServerErrorProcessingApiClientRequest => {
-      // Manual routing:
-      match error_msg_str {
-        msg if msg.contains("account summary requests") => {
-          handler.account.handle_error(id, error_code, msg);
-        },
-        _ => { handler.client.handle_error(id, error_code, error_msg_str); }
+    ClientErrorCode::ServerErrorProcessingApiClientRequest |
+    ClientErrorCode::ServerErrorCause => {
+      // First dispatch by request-ID ownership if `id > 0` (avoids fragile TWS ProGuard tags),
+      // then fall back to non-cancel account summary / position request substrings only for `id <= 0`.
+      if id > 0 && handler.account.try_handle_request_error(id, error_code, error_msg) {
+        // Claimed and handled by AccountManager
+      } else if id <= 0
+        && !contains_ignore_ascii_case(error_msg, b"cancel")
+        && (contains_ignore_ascii_case(error_msg, b"account summary")
+          || contains_ignore_ascii_case(error_msg, b"position requests"))
+      {
+        handler.account.handle_error(id, error_code, error_msg);
+      } else {
+        handler.client.handle_error(id, error_code, error_msg);
       }
     }
     ClientErrorCode::NoSecurityDefinitionFound => {
-      // Broadcast to managers. Note that the client ID is in a separate space, so it might
-      // trigger a cancel accidentally.
-      handler.order.handle_error(id, error_code, &error_msg_owned);
-      handler.data_market.handle_error(id, error_code, &error_msg_owned);
-      handler.data_ref.handle_error(id, error_code, &error_msg_owned);
-      handler.data_news.handle_error(id, error_code, &error_msg_owned);
+      // If `id` belongs to an active AccountManager request (e.g., `reqPnlSingle` for an expired option),
+      // claim and clean it up directly; otherwise broadcast to order/data managers.
+      if id > 0 && handler.account.try_handle_request_error(id, error_code, error_msg) {
+        // Claimed and handled by AccountManager
+      } else {
+        handler.order.handle_error(id, error_code, error_msg);
+        handler.data_market.handle_error(id, error_code, error_msg);
+        handler.data_ref.handle_error(id, error_code, error_msg);
+        handler.data_news.handle_error(id, error_code, error_msg);
+      }
     }
   }
 
