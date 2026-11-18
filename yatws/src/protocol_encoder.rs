@@ -111,6 +111,7 @@ pub enum OutgoingMessageType {
 /// It's useful for logging/debugging the raw encoded messages before sending.
 ///
 /// Returns `Some(type_name)` or `None` if the type ID is not recognized or cannot be parsed.
+#[cfg_attr(not(any(feature = "log-sql", feature = "log-txt")), allow(dead_code))]
 pub fn identify_outgoing_type(msg_data: &[u8]) -> Option<&'static str> {
   if msg_data.is_empty() {
     return None;

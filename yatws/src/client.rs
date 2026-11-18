@@ -102,9 +102,10 @@ impl IBKRClient {
   /// * `port` - The port number TWS/Gateway is listening on.
   /// * `client_id` - A unique client ID for this connection. Each client ID
   ///   represents a separate connection to TWS.
-  /// * `log_config` - Optional configuration for logging interactions to a SQLite database.
-  ///   If `Some((db_path, session_name))`, interactions will be logged.
-  ///   `db_path` is the path to the SQLite file, and `session_name` is a label for this session.
+  /// * `log_config` - Optional configuration for logging interactions (`Some((log_path, session_name))`).
+  ///   The storage format depends on the enabled Cargo feature (`log-sql` by default uses SQLite via `rusqlite`;
+  ///   compile with `default-features = false, features = ["log-txt"]` for plain-text session logs without `rusqlite`,
+  ///   or `default-features = false, features = ["log-none"]` to disable session recording).
   ///
   /// # Errors
   /// Returns `IBKRError` if the connection fails, handshake is unsuccessful,
@@ -164,13 +165,14 @@ impl IBKRClient {
     })
   }
 
-  /// Creates a new `IBKRClient` for replaying a previously logged session from a database.
+  /// Creates a new `IBKRClient` for replaying a previously logged session (`log-sql` SQLite DB or `log-txt` text log).
   ///
   /// This is useful for testing and debugging by replaying recorded TWS interactions
-  /// without needing a live connection.
+  /// without needing a live connection. Returns `IBKRError::Unsupported` when compiled
+  /// in `log-none` mode (neither `log-sql` nor `log-txt` enabled).
   ///
   /// # Arguments
-  /// * `db_path` - Path to the SQLite database file containing the logged session.
+  /// * `db_path` - Path to the SQLite database (`log-sql`) or plain-text log file (`log-txt`) containing the session.
   /// * `session_name` - The name of the session to replay from the database.
   ///
   /// # Errors

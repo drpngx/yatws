@@ -9,6 +9,7 @@ use std::convert::TryFrom; // Add the import here
 /// Message tags for incoming messages
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(any(feature = "log-sql", feature = "log-txt")), allow(dead_code))]
 pub enum IncomingMessageType {
   TickPrice = 1,
   TickSize = 2,
