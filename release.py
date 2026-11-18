@@ -19,8 +19,8 @@ ASSETS_DIR = Path("release_artifacts")
 PQC_PUBKEY_FILENAME = f"{PROJECT_NAME}-pqc-pubkey.asc"
 
 
-def run_cmd(cmd, shell=False, cwd=None, dry_run=False):
-    """Executes a CLI command and halts on failure."""
+def run_cmd(cmd, shell=False, cwd=None, dry_run=False, cleanup_local_tag=None):
+    """Executes a CLI command and halts on failure (rolling back an unpushed local tag if requested)."""
     rendered = " ".join(cmd) if isinstance(cmd, list) else cmd
     if dry_run:
         print(f"[dry-run] Would run: {rendered}")
@@ -30,6 +30,9 @@ def run_cmd(cmd, shell=False, cwd=None, dry_run=False):
         subprocess.run(cmd, shell=shell, check=True, cwd=cwd)
     except subprocess.CalledProcessError as e:
         print(f"\n[ERROR] Command failed: {e}")
+        if cleanup_local_tag:
+            print(f"[*] Rolling back unpushed local tag '{cleanup_local_tag}'...")
+            subprocess.run(["git", "tag", "-d", cleanup_local_tag], check=False)
         sys.exit(1)
 
 
@@ -181,13 +184,76 @@ def check_version_consistency(version):
     return mismatches
 
 
+def load_crates_io_token():
+    """Loads the crates.io token from env or ~/.cargo/credentials[.toml] without printing it."""
+    for env_var in ("CARGO_REGISTRIES_CRATES_IO_TOKEN", "CARGO_REGISTRY_TOKEN"):
+        val = os.environ.get(env_var, "").strip()
+        if val:
+            return val
+
+    for cred_name in ("credentials.toml", "credentials"):
+        cred_path = Path.home() / ".cargo" / cred_name
+        if cred_path.exists():
+            try:
+                with open(cred_path, "rb") as f:
+                    data = tomllib.load(f)
+                token = (
+                    data.get("registries", {}).get("crates-io", {}).get("token")
+                    or data.get("registry", {}).get("token")
+                )
+                if token and token.strip():
+                    return token.strip()
+            except Exception:
+                continue
+    return None
+
+
+def verify_crates_io_token(token):
+    """Verifies the crates.io API token is active and not expired/revoked."""
+    req = urllib.request.Request(
+        "https://crates.io/api/v1/me",
+        headers={
+            "User-Agent": "yatws-release-preflight/0.1",
+            "Accept": "application/json",
+            "Authorization": token,
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            login = body.get("user", {}).get("login", "authenticated")
+            return True, f"token valid ({login})"
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace")
+        try:
+            details = "; ".join(
+                err.get("detail", "") for err in json.loads(raw).get("errors", [])
+            )
+        except Exception:
+            details = raw.strip()
+        lower = details.lower()
+        # Scoped tokens pass token validation in crates.io middleware first; `/api/v1/me`
+        # then returns a website-only notice rather than "authentication failed".
+        if e.code == 403 and "crates.io website" in lower and "authentication failed" not in lower:
+            return True, "scoped token valid"
+        return (
+            False,
+            f"crates.io rejected token (HTTP {e.code}: {details or 'authentication failed'}) "
+            "— create a token with `publish-update` scope at https://crates.io/settings/tokens and run `cargo login`",
+        )
+    except Exception as e:
+        return False, f"could not verify token against crates.io: {e}"
+
+
 def check_crates_io(version):
-    """Checks crates.io credentials exist and `version` is not already published."""
-    has_token = bool(os.environ.get("CARGO_REGISTRY_TOKEN")) or (
-        Path.home() / ".cargo" / "credentials.toml"
-    ).exists() or (Path.home() / ".cargo" / "credentials").exists()
-    if not has_token:
+    """Checks crates.io token validity and ensures `version` is not already published."""
+    token = load_crates_io_token()
+    if not token:
         return False, "no crates.io token found (run `cargo login`)"
+
+    token_ok, token_msg = verify_crates_io_token(token)
+    if not token_ok:
+        return False, token_msg
 
     url = f"https://index.crates.io/ya/tw/{PROJECT_NAME}"
     req = urllib.request.Request(url, headers={"User-Agent": "yatws-release-preflight/0.1"})
@@ -206,7 +272,7 @@ def check_crates_io(version):
     except Exception as e:
         return False, f"could not query crates.io sparse index: {e}"
 
-    return True, f"credentials present; {PROJECT_NAME} {version} not yet on crates.io"
+    return True, f"{token_msg}; {PROJECT_NAME} {version} not yet on crates.io"
 
 
 def test_git_tag_signing(git_gpg_format, git_signing_key):
@@ -631,6 +697,7 @@ def main():
     run_cmd(
         [args.sq_bin, "cert", "export", "--cert", pqc_fpr, "--output", str(pqc_pubkey_path)],
         dry_run=args.dry_run,
+        cleanup_local_tag=tag_name,
     )
 
     source_tar = ASSETS_DIR / f"{PROJECT_NAME}-{version}-source.tar.gz"
@@ -645,6 +712,7 @@ def main():
             str(source_tar),
         ],
         dry_run=args.dry_run,
+        cleanup_local_tag=tag_name,
     )
     run_cmd(
         [
@@ -657,6 +725,7 @@ def main():
             str(source_tar),
         ],
         dry_run=args.dry_run,
+        cleanup_local_tag=tag_name,
     )
 
     # 4. Copy & Sign Packaged Crate + Publish
@@ -678,9 +747,14 @@ def main():
             str(crate_dest),
         ],
         dry_run=args.dry_run,
+        cleanup_local_tag=tag_name,
     )
 
-    run_cmd(["cargo", "publish", "-p", PROJECT_NAME], dry_run=args.dry_run)
+    run_cmd(
+        ["cargo", "publish", "-p", PROJECT_NAME],
+        dry_run=args.dry_run,
+        cleanup_local_tag=tag_name,
+    )
 
     # 5. Generate and Quantum-Safe Cleartext-Sign Checksums
     print("\n--- Step 5: Checksums (PQC Cleartext-Signed) ---")
@@ -705,7 +779,8 @@ def main():
                 "--output",
                 str(sums_asc),
                 str(sums_file),
-            ]
+            ],
+            cleanup_local_tag=tag_name,
         )
         sums_file.unlink()
 
