@@ -1,5 +1,6 @@
 bazel-*
 target
+release_artifacts
 *.pyc
 rust-project.json
 IBJts
