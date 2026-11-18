@@ -55,7 +55,6 @@ _YATWS_PROC_MACRO_DEPS = [
 ]
 
 _YATWS_CORE_DEPS = [
-    "@crates//:bincode",
     "@crates//:byteorder",
     "@crates//:chrono",
     "@crates//:chrono-tz",

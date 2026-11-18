@@ -13,7 +13,7 @@ use crate::protocol_encoder::Encoder;
 use chrono::Utc;
 use log::{debug, error, info, warn, trace};
 use parking_lot::{Condvar, Mutex, RwLock};
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -195,46 +195,52 @@ impl FinancialAdvisorManager {
   }
 
   // --- XML Parsing Helpers ---
+  fn read_xml_text(reader: &mut Reader<&[u8]>, start: &BytesStart<'_>) -> Result<String, IBKRError> {
+    let raw = reader
+      .read_text(start.name())
+      .map_err(|e| IBKRError::ParseError(e.to_string()))?;
+    let unescaped = quick_xml::escape::unescape(&raw)
+      .map_err(|e| IBKRError::ParseError(e.to_string()))?;
+    Ok(unescaped.trim().to_string())
+  }
+
   fn parse_fa_groups(xml_data: &str) -> Result<HashMap<String, FAGroup>, IBKRError> {
     let mut reader = Reader::from_str(xml_data);
     reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
     let mut groups = HashMap::new();
     let mut current_group: Option<FAGroup> = None;
     let mut in_accounts_list = false;
-    let mut buf = Vec::new();
 
     loop {
-      match reader.read_event_into(&mut buf) {
+      match reader.read_event() {
         Ok(Event::Start(e)) => {
           match e.name().as_ref() {
-            b"Group" => current_group = Some(FAGroup::default()),
-            b"name" if current_group.is_some() => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_group.as_mut().unwrap().name = t.decode()?.into_owned();
+            "Group" => current_group = Some(FAGroup::default()),
+            "name" if current_group.is_some() => {
+              current_group.as_mut().unwrap().name = Self::read_xml_text(&mut reader, &e)?;
+            }
+            "ListOfAccts" if current_group.is_some() => in_accounts_list = true,
+            "String" if current_group.is_some() && in_accounts_list => {
+              let acct = Self::read_xml_text(&mut reader, &e)?;
+              if !acct.is_empty() {
+                current_group.as_mut().unwrap().accounts.push(acct);
               }
             }
-            b"ListOfAccts" if current_group.is_some() => in_accounts_list = true,
-            b"String" if current_group.is_some() && in_accounts_list => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_group.as_mut().unwrap().accounts.push(t.decode()?.into_owned());
-              }
-            }
-            b"DefaultMethod" if current_group.is_some() => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_group.as_mut().unwrap().default_method = t.decode()?.into_owned();
-              }
+            "DefaultMethod" if current_group.is_some() => {
+              current_group.as_mut().unwrap().default_method = Self::read_xml_text(&mut reader, &e)?;
             }
             _ => (),
           }
         }
         Ok(Event::End(e)) => {
           match e.name().as_ref() {
-            b"Group" => {
+            "Group" => {
               if let Some(group) = current_group.take() {
                 groups.insert(group.name.clone(), group);
               }
             }
-            b"ListOfAccts" => in_accounts_list = false,
+            "ListOfAccts" => in_accounts_list = false,
             _ => (),
           }
         }
@@ -242,7 +248,6 @@ impl FinancialAdvisorManager {
         Err(e) => return Err(IBKRError::ParseError(format!("XML parsing error for FA Groups: {}", e))),
         _ => (),
       }
-      buf.clear();
     }
     Ok(groups)
   }
@@ -250,53 +255,45 @@ impl FinancialAdvisorManager {
   fn parse_fa_profiles(xml_data: &str) -> Result<HashMap<String, FAProfile>, IBKRError> {
     let mut reader = Reader::from_str(xml_data);
     reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
     let mut profiles = HashMap::new();
     let mut current_profile: Option<FAProfile> = None;
     let mut current_allocation: Option<FAProfileAllocation> = None;
     let mut in_allocations_list = false;
-    let mut buf = Vec::new();
 
     loop {
-      match reader.read_event_into(&mut buf) {
+      match reader.read_event() {
         Ok(Event::Start(e)) => {
           match e.name().as_ref() {
-            b"Profile" => current_profile = Some(FAProfile::default()),
-            b"name" if current_profile.is_some() && !in_allocations_list => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_profile.as_mut().unwrap().name = t.decode()?.into_owned();
-              }
+            "Profile" => current_profile = Some(FAProfile::default()),
+            "name" if current_profile.is_some() && !in_allocations_list => {
+              current_profile.as_mut().unwrap().name = Self::read_xml_text(&mut reader, &e)?;
             }
-            b"type" if current_profile.is_some() => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_profile.as_mut().unwrap().profile_type = t.decode()?.into_owned();
-              }
+            "type" if current_profile.is_some() => {
+              current_profile.as_mut().unwrap().profile_type = Self::read_xml_text(&mut reader, &e)?;
             }
-            b"ListOfAllocations" if current_profile.is_some() => in_allocations_list = true,
-            b"Allocation" if current_profile.is_some() && in_allocations_list => {
+            "ListOfAllocations" if current_profile.is_some() => in_allocations_list = true,
+            "Allocation" if current_profile.is_some() && in_allocations_list => {
               current_allocation = Some(FAProfileAllocation::default());
             }
-            b"acct" if current_allocation.is_some() => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_allocation.as_mut().unwrap().account_id = t.decode()?.into_owned();
-              }
+            "acct" if current_allocation.is_some() => {
+              current_allocation.as_mut().unwrap().account_id = Self::read_xml_text(&mut reader, &e)?;
             }
-            b"amount" if current_allocation.is_some() => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_allocation.as_mut().unwrap().amount = t.decode()?.into_owned();
-              }
+            "amount" if current_allocation.is_some() => {
+              current_allocation.as_mut().unwrap().amount = Self::read_xml_text(&mut reader, &e)?;
             }
             _ => (),
           }
         }
         Ok(Event::End(e)) => {
           match e.name().as_ref() {
-            b"Profile" => {
+            "Profile" => {
               if let Some(profile) = current_profile.take() {
                 profiles.insert(profile.name.clone(), profile);
               }
             }
-            b"ListOfAllocations" => in_allocations_list = false,
-            b"Allocation" => {
+            "ListOfAllocations" => in_allocations_list = false,
+            "Allocation" => {
               if let Some(alloc) = current_allocation.take() {
                 if let Some(profile) = current_profile.as_mut() {
                   profile.allocations.push(alloc);
@@ -310,7 +307,6 @@ impl FinancialAdvisorManager {
         Err(e) => return Err(IBKRError::ParseError(format!("XML parsing error for FA Profiles: {}", e))),
         _ => (),
       }
-      buf.clear();
     }
     Ok(profiles)
   }
@@ -318,31 +314,27 @@ impl FinancialAdvisorManager {
   fn parse_fa_aliases(xml_data: &str) -> Result<HashMap<String, FAAlias>, IBKRError> {
     let mut reader = Reader::from_str(xml_data);
     reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
     let mut aliases = HashMap::new();
     let mut current_alias: Option<FAAlias> = None;
-    let mut buf = Vec::new();
 
     loop {
-      match reader.read_event_into(&mut buf) {
+      match reader.read_event() {
         Ok(Event::Start(e)) => {
           match e.name().as_ref() {
-            b"Alias" => current_alias = Some(FAAlias::default()),
-            b"alias" if current_alias.is_some() => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_alias.as_mut().unwrap().alias = t.decode()?.into_owned();
-              }
+            "Alias" => current_alias = Some(FAAlias::default()),
+            "alias" if current_alias.is_some() => {
+              current_alias.as_mut().unwrap().alias = Self::read_xml_text(&mut reader, &e)?;
             }
-            b"acct" if current_alias.is_some() => {
-              if let Ok(Event::Text(t)) = reader.read_event_into(&mut buf) {
-                current_alias.as_mut().unwrap().account_id = t.decode()?.into_owned();
-              }
+            "acct" if current_alias.is_some() => {
+              current_alias.as_mut().unwrap().account_id = Self::read_xml_text(&mut reader, &e)?;
             }
             _ => (),
           }
         }
         Ok(Event::End(e)) => {
           match e.name().as_ref() {
-            b"Alias" => {
+            "Alias" => {
               if let Some(alias_obj) = current_alias.take() {
                 aliases.insert(alias_obj.alias.clone(), alias_obj);
               }
@@ -354,7 +346,6 @@ impl FinancialAdvisorManager {
         Err(e) => return Err(IBKRError::ParseError(format!("XML parsing error for FA Aliases: {}", e))),
         _ => (),
       }
-      buf.clear();
     }
     Ok(aliases)
   }
