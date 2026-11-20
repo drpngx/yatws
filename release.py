@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
+import getpass
 import hashlib
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,9 @@ from pathlib import Path
 PROJECT_NAME = "yatws"
 ASSETS_DIR = Path("release_artifacts")
 PQC_PUBKEY_FILENAME = f"{PROJECT_NAME}-pqc-pubkey.asc"
+# gpg-agent cache id used by the `sq-pqc` wrapper (~/emacs/sq-pqc.sh: CACHE_ID).
+PQC_AGENT_CACHE_ID = "sq-pqc"
+PQC_UNLOCK_ATTEMPTS = 3
 
 
 def run_cmd(cmd, shell=False, cwd=None, dry_run=False, cleanup_local_tag=None):
@@ -28,8 +33,9 @@ def run_cmd(cmd, shell=False, cwd=None, dry_run=False, cleanup_local_tag=None):
     print(f"[*] Running: {rendered}")
     try:
         subprocess.run(cmd, shell=shell, check=True, cwd=cwd)
-    except subprocess.CalledProcessError as e:
-        print(f"\n[ERROR] Command failed: {e}")
+    except (subprocess.CalledProcessError, KeyboardInterrupt) as e:
+        reason = "interrupted" if isinstance(e, KeyboardInterrupt) else str(e)
+        print(f"\n[ERROR] Command failed: {reason}")
         if cleanup_local_tag:
             print(f"[*] Rolling back unpushed local tag '{cleanup_local_tag}'...")
             subprocess.run(["git", "tag", "-d", cleanup_local_tag], check=False)
@@ -140,6 +146,115 @@ def resolve_pqc_key(sq_bin, cli_pqc_key):
         return None, None, f"secret key for {selected_fpr} not found in `{sq_bin} key list`"
 
     return selected_fpr, selected_algo, None
+
+
+def _gpg_agent_request(commands, passphrase=None):
+    """Runs Assuan `commands` on gpg-agent; returns the final OK/ERR line (None if unreachable).
+
+    A `PASSPHRASE` inquiry (loopback pinentry) is answered with `passphrase`; any other
+    inquiry is cancelled, so this never pops up a pinentry.
+    """
+    if shutil.which("gpgconf") is None:
+        return None
+    sock_path = subprocess.run(
+        ["gpgconf", "--list-dirs", "agent-socket"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    if not sock_path:
+        return None
+    subprocess.run(["gpg-connect-agent", "/bye"], capture_output=True, check=False)  # autostart
+
+    def escape(data):
+        return "".join(
+            f"%{b:02X}" if b < 0x20 or b == ord("%") else chr(b) for b in data.encode("utf-8")
+        )
+
+    try:
+        with socket.socket(socket.AF_UNIX) as sock:
+            sock.settimeout(30)
+            sock.connect(sock_path)
+            stream = sock.makefile("rwb")
+
+            def read_response():
+                while True:
+                    line = stream.readline().decode("utf-8", errors="replace").rstrip("\n")
+                    if not line:
+                        return "ERR connection closed"
+                    if line.startswith("INQUIRE "):
+                        if line.split()[1] == "PASSPHRASE" and passphrase is not None:
+                            stream.write(f"D {escape(passphrase)}\nEND\n".encode("utf-8"))
+                        else:
+                            stream.write(b"CAN\n")
+                        stream.flush()
+                    elif line.startswith(("OK", "ERR")):
+                        return line
+
+            last = read_response()
+            for cmd in commands:
+                if not last.startswith("OK"):
+                    break
+                stream.write(f"{cmd}\n".encode("utf-8"))
+                stream.flush()
+                last = read_response()
+            return last
+    except OSError:
+        return None
+
+
+def pqc_password_cached():
+    """True/False if gpg-agent does/doesn't hold the `sq-pqc` password; None if no agent."""
+    res = _gpg_agent_request([f"GET_PASSPHRASE --no-ask {PQC_AGENT_CACHE_ID} X X X"])
+    return None if res is None else res.startswith("OK")
+
+
+def seed_pqc_password(passphrase):
+    """Stores `passphrase` in gpg-agent's cache via loopback pinentry (no curses/GUI dialog)."""
+    res = _gpg_agent_request(
+        [
+            "OPTION pinentry-mode=loopback",
+            f"GET_PASSPHRASE {PQC_AGENT_CACHE_ID} X Passphrase X",
+        ],
+        passphrase=passphrase,
+    )
+    return res is not None and res.startswith("OK")
+
+
+def unlock_pqc_key(sq_bin, fpr):
+    """Unlocks the PQC key once, up front, with a plain prompt instead of pinentry.
+
+    The `sq-pqc` wrapper fetches the password from gpg-agent, whose curses pinentry
+    garbles terminals like Emacs `M-x shell`. If the password isn't cached, prompt
+    with `getpass` (comint hides the input), seed gpg-agent's cache through loopback
+    mode, then prove it with a throwaway signature so a typo is caught before tagging.
+    """
+    for attempt in range(1, PQC_UNLOCK_ATTEMPTS + 1):
+        cached = pqc_password_cached()
+        if cached is False:
+            try:
+                pw = getpass.getpass(f"    Passphrase for sq-pqc key {fpr[:16]}...: ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return False, "passphrase entry aborted"
+            seeded = seed_pqc_password(pw)
+            del pw
+            if not seeded:
+                return False, "could not cache passphrase in gpg-agent (allow-loopback-pinentry?)"
+
+        test = subprocess.run(
+            [sq_bin, "sign", "--message", "--signer", fpr],
+            input=b"yatws release preflight\n",
+            capture_output=True,
+            check=False,
+        )
+        if test.returncode == 0:
+            return True, "unlocked (test signature OK)"
+
+        err = test.stderr.decode("utf-8", errors="replace").strip().splitlines()
+        err_line = err[-1].strip() if err else f"exit {test.returncode}"
+        if cached is None or attempt == PQC_UNLOCK_ATTEMPTS:
+            return False, f"test signature failed ({err_line})"
+        # The wrapper clears the cached password on a failed unlock, so we re-prompt.
+        print(f"    Unlock failed ({err_line}); try again.")
+    return False, "unlock failed"
 
 
 def check_version_consistency(version):
@@ -539,7 +654,8 @@ def verify_prerequisites(
     if pqc_err:
         record(False, "PQC artifact key", pqc_err)
     else:
-        record(True, "PQC artifact key", f"{pqc_fpr[:16]}... ({pqc_algo})")
+        unlock_ok, unlock_msg = unlock_pqc_key(sq_bin, pqc_fpr)
+        record(unlock_ok, "PQC artifact key", f"{pqc_fpr[:16]}... ({pqc_algo}) {unlock_msg}")
 
     # 9. Unit tests (`cargo test --lib --all-features`)
     test_res = subprocess.run(
