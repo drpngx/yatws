@@ -44,8 +44,12 @@ pub fn parse_tws_date_time(time_str: &str) -> Result<DateTime<Utc>, IBKRError> {
     let potential_dt_part = &trimmed[..space_pos];
     let potential_tz_part = &trimmed[space_pos..].trim();
 
-    // Check if the part after the last space looks like a timezone
-    if potential_tz_part.contains('/') || potential_tz_part.to_uppercase() == "UTC" {
+    // Check if the part after the last space looks like a timezone. IANA names without a slash are valid too: TWS
+    // sends exchange zones such as "Hongkong" (a legacy alias of Asia/Hong_Kong) in historical-data headers.
+    if potential_tz_part.contains('/')
+      || potential_tz_part.to_uppercase() == "UTC"
+      || potential_tz_part.chars().all(|c| c.is_ascii_alphabetic())
+    {
       match Tz::from_str(potential_tz_part) {
         Ok(tz) => {
           // Try parsing the datetime part with space or hyphen separator
@@ -435,4 +439,17 @@ pub fn parse_tws_time(time_str: &str) -> Result<NaiveTime, IBKRError> {
 #[allow(dead_code)]
 pub fn parse_opt_tws_time(time_opt_str: Option<&str>) -> Result<Option<NaiveTime>, IBKRError> {
   time_opt_str.map(|x| parse_tws_time(x)).transpose()
+}
+#[cfg(test)]
+mod tz_name_tests {
+  use super::*;
+
+  #[test]
+  fn parses_slashless_iana_zone_names() {
+    // TWS historical-data headers name HK contracts' zone "Hongkong"; 16:30 HKT is 08:30 UTC.
+    let t = parse_tws_date_time("20241103 16:30:00 Hongkong").unwrap();
+    assert_eq!(t.timestamp(), 1730622600);
+    let u = parse_tws_date_time("20241104 08:00:00 US/Eastern").unwrap();
+    assert_eq!(u.timestamp(), 1730725200);
+  }
 }
