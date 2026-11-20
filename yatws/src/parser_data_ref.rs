@@ -427,6 +427,13 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
   if server_version >= min_server_ver::AGG_GROUP {
     contract_details.agg_group = parser.read_int_max(false)?;
   }
+  if server_version >= min_server_ver::UNDERLYING_INFO {
+    // Matches Java EDecoder: underSymbol and underSecType sit between aggGroup and marketRuleIds.
+    contract_details.underlying_symbol = parser.read_str()?.to_string();
+    let under_sec_type = parser.read_str()?;
+    contract_details.underlying_sec_type =
+      if under_sec_type.is_empty() { None } else { SecType::from_str(under_sec_type).ok() };
+  }
   if server_version >= min_server_ver::MARKET_RULES {
     contract_details.market_rule_ids = parser.read_str()?.to_string();
   }
@@ -481,4 +488,63 @@ pub fn process_contract_data(handler: &Arc<dyn ReferenceDataHandler>, parser: &m
          req_id, contract_details.contract.symbol, contract_details.contract.sec_type, contract_details.contract.exchange, contract_details.contract.con_id);
   handler.contract_details(req_id, &contract_details);
   Ok(())
+}
+#[cfg(test)]
+mod contract_data_tests {
+  use super::*;
+  use std::sync::Mutex;
+  use crate::protocol_decoder::ClientErrorCode;
+
+  /// Keeps the last contract details it receives.
+  #[derive(Default)]
+  struct Capture(Mutex<Option<ContractDetails>>);
+
+  impl ReferenceDataHandler for Capture {
+    fn contract_details(&self, _req_id: i32, contract_details: &ContractDetails) {
+      *self.0.lock().unwrap() = Some(contract_details.clone());
+    }
+    fn bond_contract_details(&self, _req_id: i32, _contract_details: &ContractDetails) {}
+    fn contract_details_end(&self, _req_id: i32) {}
+    fn security_definition_option_parameter(&self, _req_id: i32, _exchange: &str, _underlying_con_id: i32,
+                                            _trading_class: &str, _multiplier: &str, _expirations: &[String],
+                                            _strikes: &[f64]) {}
+    fn security_definition_option_parameter_end(&self, _req_id: i32) {}
+    fn soft_dollar_tiers(&self, _req_id: i32, _tiers: &[SoftDollarTier]) {}
+    fn family_codes(&self, _family_codes: &[FamilyCode]) {}
+    fn symbol_samples(&self, _req_id: i32, _contract_descriptions: &[ContractDescription]) {}
+    fn mkt_depth_exchanges(&self, _descriptions: &[DepthMktDataDescription]) {}
+    fn tick_req_params(&self, _req_id: i32, _min_tick: f64, _bbo_exchange: &str, _snapshot_permissions: i32) {}
+    fn smart_components(&self, _req_id: i32, _components: &HashMap<i32, (String, char)>) {}
+    fn market_rule(&self, _market_rule_id: i32, _price_increments: &[PriceIncrement]) {}
+    fn historical_schedule(&self, _req_id: i32, _start_date_time: &str, _end_date_time: &str, _time_zone: &str,
+                           _sessions: &[HistoricalSession]) {}
+    fn handle_error(&self, _req_id: i32, _code: ClientErrorCode, _msg: &str) {}
+  }
+
+  #[test]
+  fn reads_underlying_info_before_market_rules() {
+    // Contract data for the HKFE HSI December 2024 future as sent by IB Gateway (server version 187), after the
+    // message id. The underlying symbol and type (HSI, IND) precede the market rule ids (68).
+    let fields = [
+      "8000", "HSI", "FUT", "20241230", "20241230", "0", "", "HKFE", "HKD", "HSIZ4", "HSI", "HSI", "363384131", "1",
+      "50", "LTH", "HKFE", "1", "1328298", "Hang Seng Stock Index", "", "202412", "", "", "", "", "", "", "", "",
+      "0", "2147483647", "HSI", "IND", "68", "20241230", "", "1", "1", "1", "0",
+    ];
+    let mut bytes = Vec::new();
+    for f in fields {
+      bytes.extend_from_slice(f.as_bytes());
+      bytes.push(0);
+    }
+    let capture = Arc::new(Capture::default());
+    let handler: Arc<dyn ReferenceDataHandler> = capture.clone();
+    let mut parser = FieldParser::new(&bytes);
+    process_contract_data(&handler, &mut parser, min_server_ver::MAX_SUPPORTED_VERSION).unwrap();
+    let details = capture.0.lock().unwrap().clone().unwrap();
+    assert_eq!(details.contract.con_id, 363384131);
+    assert_eq!(details.underlying_symbol, "HSI");
+    assert_eq!(details.underlying_sec_type, Some(SecType::Index));
+    assert_eq!(details.market_rule_ids, "68");
+    assert_eq!(details.real_expiration_date, chrono::NaiveDate::from_ymd_opt(2024, 12, 30));
+    assert_eq!(details.min_size, 1.);
+  }
 }
