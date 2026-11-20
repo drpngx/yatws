@@ -8,10 +8,7 @@ use crate::data::{
   TickAttribLast, TickByTickRequestType, TickType, // HistoricalTick removed
   TickOptionComputationData,
 };
-#[cfg(not(feature = "generate_bindings"))]
 use crate::data_market_manager::DataMarketManager;
-#[cfg(feature = "generate_bindings")]
-use crate::data_market_manager::DataMarketManagerTrait as DataMarketManager; // For testing/mocking
 
 use crate::data_observer::{
   HistoricalDataObserver, MarketDataObserver, MarketDepthObserver, ObserverId,
