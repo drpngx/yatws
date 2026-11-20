@@ -607,7 +607,7 @@ def parse_args():
     )
     parser.add_argument(
         "version",
-        help="Release version without leading 'v' (e.g. 0.1.8)",
+        help="Release version without leading 'v' (e.g. 0.1.9)",
     )
     parser.add_argument(
         "--sq-bin",
@@ -627,6 +627,16 @@ def parse_args():
         action="store_true",
         help="Create an annotated git tag (`git tag -a`) without SSH/GPG tag signing (artifacts remain PQC-signed)",
     )
+    note_group = parser.add_mutually_exclusive_group()
+    note_group.add_argument(
+        "--note",
+        help="Text (Markdown) to place at the beginning of the GitHub release notes",
+    )
+    note_group.add_argument(
+        "--note-file",
+        type=Path,
+        help="File whose contents (Markdown) are placed at the beginning of the GitHub release notes",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -644,6 +654,15 @@ def main():
     version = args.version.lstrip("v")
     tag_name = f"v{version}"
     expected_branch = args.allow_branch if args.allow_branch else "main"
+
+    release_note = args.note
+    if args.note_file:
+        try:
+            release_note = args.note_file.read_text(encoding="utf-8")
+        except OSError as e:
+            print(f"[ERROR] Could not read --note-file: {e}")
+            sys.exit(1)
+    release_note = (release_note or "").strip()
 
     pqc_fpr, pqc_algo, git_gpg_format, git_signing_key, audit_report = verify_prerequisites(
         version,
@@ -802,6 +821,13 @@ def main():
         f"  sq verify --signer-file {PQC_PUBKEY_FILENAME} --cleartext SHA256SUMS.asc | sha256sum -c -\n"
         f"  ```"
     )
+    if release_note:
+        release_notes = f"{release_note}\n\n---\n\n{release_notes}"
+
+    if args.dry_run:
+        print("[dry-run] Release notes:")
+        for line in release_notes.splitlines():
+            print(f"    {line}")
 
     gh_cmd = [
         "gh",
