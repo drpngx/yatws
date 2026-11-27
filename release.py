@@ -257,6 +257,137 @@ def unlock_pqc_key(sq_bin, fpr):
     return False, "unlock failed"
 
 
+def read_current_version():
+    """Reads the current crate version from yatws/Cargo.toml."""
+    cargo_toml = Path(PROJECT_NAME) / "Cargo.toml"
+    with open(cargo_toml, "rb") as f:
+        manifest = tomllib.load(f)
+    version = manifest.get("package", {}).get("version")
+    if not version:
+        print(f"[ERROR] Could not read [package].version from {cargo_toml}")
+        sys.exit(1)
+    return version
+
+
+def compute_next_version(current_version, target=None):
+    """Computes the next version from `current_version` and optional `target`.
+
+    If `target` is None or 'patch', increments the last numeric component (e.g. 0.1.9 -> 0.1.10).
+    Supports 'minor', 'major', or an explicit version string (with or without leading 'v').
+    """
+    if target is None or target == "patch":
+        base = current_version.split("-", 1)[0].split("+", 1)[0]
+        parts = base.split(".")
+        if not parts or not all(p.isdigit() for p in parts):
+            print(f"[ERROR] Cannot auto-bump non-numeric version '{current_version}'; pass an explicit version.")
+            sys.exit(1)
+        parts[-1] = str(int(parts[-1]) + 1)
+        return ".".join(parts)
+
+    if target in ("minor", "major"):
+        base = current_version.split("-", 1)[0].split("+", 1)[0]
+        parts = base.split(".")
+        if len(parts) < 3 or not all(p.isdigit() for p in parts[:3]):
+            print(f"[ERROR] Cannot apply '{target}' bump to '{current_version}'; pass an explicit version.")
+            sys.exit(1)
+        major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
+        if target == "minor":
+            return f"{major}.{minor + 1}.0"
+        return f"{major + 1}.0.0"
+
+    cleaned = target.lstrip("v")
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", cleaned):
+        print(f"[ERROR] Invalid target version '{target}' (expected e.g. 0.1.10, patch, minor, or major).")
+        sys.exit(1)
+    return cleaned
+
+
+def update_cargo_toml_version(cargo_toml_path, new_version):
+    """Updates `[package].version` in Cargo.toml in place, preserving formatting."""
+    lines = cargo_toml_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    in_package = False
+    replaced = False
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and not stripped.startswith("[["):
+            in_package = stripped == "[package]"
+            continue
+        if in_package:
+            m = re.match(r'^(\s*version\s*=\s*")([^"]+)(".*)$', line, re.DOTALL)
+            if m:
+                lines[idx] = f"{m.group(1)}{new_version}{m.group(3)}"
+                replaced = True
+                break
+    if not replaced:
+        print(f"[ERROR] Could not find [package].version in {cargo_toml_path}")
+        sys.exit(1)
+    cargo_toml_path.write_text("".join(lines), encoding="utf-8")
+
+
+def update_module_bazel_version(module_bazel_path, new_version):
+    """Updates `module(..., version = "...")` in MODULE.bazel in place."""
+    content = module_bazel_path.read_text(encoding="utf-8")
+    new_content, count = re.subn(
+        r'(module\s*\([^)]*?version\s*=\s*")([^"]+)(")',
+        lambda m: f"{m.group(1)}{new_version}{m.group(3)}",
+        content,
+        count=1,
+        flags=re.DOTALL,
+    )
+    if count != 1:
+        print(f"[ERROR] Could not find module(..., version = \"...\") in {module_bazel_path}")
+        sys.exit(1)
+    module_bazel_path.write_text(new_content, encoding="utf-8")
+
+
+def bump_version(target=None, dry_run=False):
+    """Bumps version across Cargo.toml, MODULE.bazel, Cargo.lock, and llms.txt in the working tree."""
+    current_version = read_current_version()
+    new_version = compute_next_version(current_version, target)
+
+    if new_version == current_version:
+        print(f"[ERROR] Target version {new_version} is already the current version.")
+        sys.exit(1)
+
+    cargo_toml = Path(PROJECT_NAME) / "Cargo.toml"
+    module_bazel = Path("MODULE.bazel")
+
+    print(f"=== Bumping {PROJECT_NAME} version: {current_version} -> {new_version} ===")
+
+    missing_tools = [t for t in ("cargo", "bazel") if shutil.which(t) is None]
+    if missing_tools:
+        print(f"[ERROR] Missing required CLI tool(s) for version bump: {', '.join(missing_tools)}")
+        sys.exit(1)
+
+    if dry_run:
+        print(f"[dry-run] Would update {cargo_toml}: {current_version} -> {new_version}")
+        if module_bazel.exists():
+            print(f"[dry-run] Would update {module_bazel}: {current_version} -> {new_version}")
+        print("[dry-run] Would run: cargo update --workspace --offline")
+        print("[dry-run] Would run: bazel run //yatws:gen_llms_txt")
+        return new_version
+
+    update_cargo_toml_version(cargo_toml, new_version)
+    print(f"[*] Updated {cargo_toml} -> {new_version}")
+
+    if module_bazel.exists():
+        update_module_bazel_version(module_bazel, new_version)
+        print(f"[*] Updated {module_bazel} -> {new_version}")
+
+    run_cmd(["cargo", "update", "--workspace", "--offline"])
+    run_cmd(["bazel", "run", "//yatws:gen_llms_txt"])
+
+    mismatches = check_version_consistency(new_version)
+    if mismatches:
+        print(f"[ERROR] Version consistency check failed after bump: {', '.join(mismatches)}")
+        sys.exit(1)
+
+    print(f"\n=== Bumped {PROJECT_NAME} to {new_version} ===")
+    print("Review with `git status` / `git diff`, commit & push, then run:")
+    print(f"  bazel run //:release -- {new_version}")
+    return new_version
+
+
 def check_version_consistency(version):
     """Ensures Cargo.toml, Cargo.lock, MODULE.bazel, and llms.txt all match `version`."""
     mismatches = []
@@ -723,7 +854,24 @@ def parse_args():
     )
     parser.add_argument(
         "version",
-        help="Release version without leading 'v' (e.g. 0.1.9)",
+        nargs="?",
+        help=(
+            "Release version without leading 'v' (e.g. 0.1.10), or 'bump' to bump version files "
+            "in the working tree and exit."
+        ),
+    )
+    parser.add_argument(
+        "bump_target",
+        nargs="?",
+        help="Optional target version or 'patch'/'minor'/'major' when using 'bump' (default: bump last number).",
+    )
+    parser.add_argument(
+        "--bump",
+        action="store_true",
+        help=(
+            "Alias for 'bump': bump version in yatws/Cargo.toml, MODULE.bazel, Cargo.lock, and llms.txt "
+            "in the working tree (defaults to incrementing the last version number) and exit"
+        ),
     )
     parser.add_argument(
         "--sq-bin",
@@ -766,6 +914,15 @@ def main():
     ensure_local_bins_in_path()
     configure_gpg_tty()
     args = parse_args()
+
+    if args.bump or args.version == "bump":
+        target = args.bump_target if args.version == "bump" else args.version
+        bump_version(target=target, dry_run=args.dry_run)
+        return
+
+    if not args.version:
+        print("[ERROR] Release version is required (or run `release.py bump` to bump the version).")
+        sys.exit(1)
 
     version = args.version.lstrip("v")
     tag_name = f"v{version}"
